@@ -64,6 +64,8 @@ Inspired by Spore and D&D:
 - **RimWorld** – Emergent NPC dynamics, world AI events, colony management
 - **Factorio** – Systems thinking, resource flow, automation (selectively)
 - **D&D** – Skill checks, power scaling, character expression
+- *Inspirational Links*
+    - [Story Generators reddit post](https://www.reddit.com/r/gamedesign/comments/1o312ry/story_generators_the_final_frontier_of_game_design/)
 
 ## Repository Structure
 ``` text
