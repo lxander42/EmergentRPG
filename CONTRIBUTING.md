@@ -17,7 +17,7 @@ This project is early-stage and experimental, and we value clarity, curiosity, a
 - Downlad and install latest version of unity [Unity](https://unity.com/download)
 - Clone repo to folder of your choice
 - Create new branch from dev branch (see - Branching Model)
-- Open project from disk ![Open project](ASSETS\DOCUMENTATION\openproject.png)
+- Open project from disk ![Open project](DOCUMENTATION\openproject.png)
 - Select project folder from repo
 - Create features and pull requests as needed
 
