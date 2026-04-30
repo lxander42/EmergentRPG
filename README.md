@@ -76,7 +76,6 @@ EmergentRPG is built as a mobile-first web app, designed to be developed from a 
 | UI chrome | Tailwind CSS 4 |
 | State | Zustand |
 | Persistence | Dexie.js (IndexedDB) for local saves |
-| LLM | Vercel AI SDK + `@ai-sdk/anthropic` (Claude) for emergent narration & dialogue |
 | Mobile | Installable PWA (manifest + viewport) |
 | Hosting | Vercel (zero-config) |
 
@@ -87,23 +86,18 @@ EmergentRPG is built as a mobile-first web app, designed to be developed from a 
 ├── app/                    # Next.js App Router
 │   ├── layout.tsx          # Root layout, viewport + PWA meta
 │   ├── page.tsx            # Landing (New Game / Continue)
-│   ├── play/page.tsx       # Game shell (Phaser + HUD + panels)
-│   └── api/
-│       ├── narrate/        # Streamed world-event narration via Claude
-│       └── npc-dialogue/   # Streamed NPC dialogue via Claude
+│   └── play/page.tsx       # Game shell (Phaser + HUD + panels)
 ├── components/             # React UI (HUD, panels, Phaser wrapper)
 ├── lib/
 │   ├── sim/                # Deterministic world simulation
 │   ├── render/             # Phaser scenes + React↔Phaser event bus
 │   ├── state/              # Zustand store
-│   ├── save/               # Dexie schema (IndexedDB)
-│   └── ai/                 # Claude prompts + streaming helpers
+│   └── save/               # Dexie schema (IndexedDB)
 ├── content/                # Data-driven content (factions, traits)
 ├── public/
 │   ├── manifest.webmanifest
 │   └── icons/              # Placeholder PWA icons
 ├── .claude/                # SessionStart hook + permissions
-├── .env.example            # ANTHROPIC_API_KEY=
 ├── CONTRIBUTING.md
 └── README.md
 ```
@@ -114,8 +108,6 @@ Requirements: Node 20+, npm.
 
 ```bash
 npm install
-cp .env.example .env.local
-# add your Anthropic API key to .env.local
 npm run dev
 ```
 
@@ -131,7 +123,6 @@ Open <http://localhost:3000>. The landing page offers **New Game** / **Continue*
 ### Vercel setup
 
 - Connect this repo on the [Vercel dashboard](https://vercel.com/new). Framework is auto-detected as Next.js.
-- Add `ANTHROPIC_API_KEY` to **Project Settings → Environment Variables** (Production + Preview).
 - Every push to a branch deploys a preview build. Pushes to `main` deploy production.
 
 ### Scripts

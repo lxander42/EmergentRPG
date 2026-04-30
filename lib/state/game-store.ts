@@ -52,9 +52,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!current) return;
     const { world, event } = tickWorld(current);
     set({ world, lastEvent: event ?? get().lastEvent });
-    if (event) {
-      bus.emit("narration:request", { topic: event.topic, context: event.context });
-    }
     if (world.ticks % AUTOSAVE_EVERY_TICKS === 0) {
       void saveWorld("default", world);
     }

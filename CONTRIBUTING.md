@@ -12,8 +12,6 @@ EmergentRPG is now a mobile-first web app (Next.js + Phaser, deployed on Vercel)
 git clone https://github.com/lxander42/emergentrpg
 cd emergentrpg
 npm install
-cp .env.example .env.local
-# add your ANTHROPIC_API_KEY to .env.local
 npm run dev
 ```
 
@@ -44,7 +42,6 @@ If you're unsure about direction, open an issue or draft PR early.
 - Favor systems over scripts.
 - Favor data-driven design — new factions, traits, and biomes should live in `content/` as plain TypeScript data, not as code branches.
 - The simulation in `lib/sim/` should be **deterministic** given a seed. Anything stochastic must go through the seeded RNG in `lib/sim/rng.ts` so saves are reproducible.
-- LLM-generated text in `app/api/*` is for flavor; it should never be authoritative for game state. Keep the source of truth in `lib/sim/world.ts`.
 - Optimize for emergent behavior, not hard-coded outcomes.
 - Avoid premature optimization.
 
@@ -56,8 +53,7 @@ See `README.md` → "Repository Structure" for the canonical layout. Quick map:
 - `lib/render/` — Phaser scenes, camera, input, React ↔ Phaser bus
 - `lib/state/` — Zustand store (the bridge between sim, UI, and Phaser)
 - `lib/save/` — IndexedDB persistence
-- `lib/ai/` — Claude prompts and streaming helpers
-- `app/` — Next.js routes (UI + Claude API endpoints)
+- `app/` — Next.js routes (UI)
 - `components/` — React UI (HUD, panels, Phaser wrapper)
 - `content/` — data-driven content
 

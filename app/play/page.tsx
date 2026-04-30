@@ -4,7 +4,6 @@ import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect } from "react";
 import HUD from "@/components/hud/HUD";
-import NarratorPanel from "@/components/panels/NarratorPanel";
 import NpcPanel from "@/components/panels/NpcPanel";
 import { useGameStore } from "@/lib/state/game-store";
 
@@ -35,7 +34,6 @@ function PlayInner() {
       </div>
       <HUD />
       <NpcPanel />
-      <NarratorPanel />
     </main>
   );
 }
