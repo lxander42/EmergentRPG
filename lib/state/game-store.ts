@@ -1,17 +1,36 @@
 "use client";
 
 import { create } from "zustand";
-import { claimHome, createWorld, tickWorld, WORLD_VERSION, type World } from "@/lib/sim/world";
+import {
+  claimHome as claimHomeWorld,
+  createWorld,
+  ensureInteriorsForRegion,
+  tickWorld,
+  WORLD_VERSION,
+  MAP_W,
+  MAP_H,
+  type World,
+} from "@/lib/sim/world";
 import { loadWorld, saveWorld } from "@/lib/save/db";
 import { bus } from "@/lib/render/bus";
 import type { WorldEvent } from "@/lib/sim/events";
-import type { PendingAction } from "@/lib/sim/player";
-import { resourceAt, walkTo } from "@/lib/sim/home";
+import {
+  globalToLocal,
+  isLocalObstacle,
+  regionCenterGlobal,
+  regionKey,
+  resourceAtLocal,
+  INTERIOR_W,
+  INTERIOR_H,
+} from "@/lib/sim/biome-interior";
+import { bfsPredicate } from "@/lib/sim/path";
+import type { PendingAction, Player } from "@/lib/sim/player";
 
 const AUTOSAVE_EVERY_TICKS = 60;
+export const WALK_MAX_RADIUS = 80;
 
 export type SelectedRegion = { rx: number; ry: number };
-export type View = "world" | "home";
+export type View = "world" | "biome";
 
 type GameStore = {
   world: World | null;
@@ -35,7 +54,9 @@ type GameStore = {
 
   claimHome: (rx: number, ry: number) => void;
   setView: (v: View) => void;
-  walkPlayerTo: (px: number, py: number) => void;
+  walkPlayerTo: (gx: number, gy: number) => void;
+  travelToRegion: (rx: number, ry: number) => void;
+  resetAfterDeath: () => void;
 };
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -65,11 +86,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (loaded && loaded.version === WORLD_VERSION) {
       set({
         world: loaded,
-        view: loaded.home ? "home" : "world",
+        view: loaded.home ? "biome" : "world",
         homePending: !loaded.home,
+        paused: false,
       });
     } else {
-      set({ world: createWorld(), view: "world", homePending: true });
+      set({ world: createWorld(), view: "world", homePending: true, paused: false });
     }
   },
 
@@ -82,7 +104,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const current = get().world;
     if (!current) return;
     const { world, event } = tickWorld(current);
-    set({ world, lastEvent: event ?? get().lastEvent });
+    const patch: Partial<GameStore> = {
+      world,
+      lastEvent: event ?? get().lastEvent,
+    };
+    if (world.gameOver && !current.gameOver) patch.paused = true;
+    set(patch);
     if (world.ticks % AUTOSAVE_EVERY_TICKS === 0) {
       void saveWorld("default", world);
     }
@@ -91,7 +118,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
   togglePause: () => set({ paused: !get().paused }),
   setSpeed: (s) => set({ speed: s }),
 
-  // Selection is mutually exclusive: only one slide-up panel at a time.
   selectNpc: (id) => {
     set({ selectedNpcId: id, selectedRegion: id ? null : get().selectedRegion });
     if (!id) bus.emit("npc:deselected");
@@ -104,12 +130,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
   claimHome: (rx, ry) => {
     const current = get().world;
     if (!current) return;
-    const next = claimHome(current, rx, ry);
+    const next = claimHomeWorld(current, rx, ry);
     if (!next) return;
     set({
       world: next,
       homePending: false,
-      view: "home",
+      view: "biome",
       selectedNpcId: null,
       selectedRegion: null,
     });
@@ -122,13 +148,88 @@ export const useGameStore = create<GameStore>((set, get) => ({
     bus.emit("npc:deselected");
   },
 
-  walkPlayerTo: (px, py) => {
+  walkPlayerTo: (gx, gy) => {
     const current = get().world;
-    if (!current || !current.home || !current.player) return;
-    const target = resourceAt(current.home, px, py);
-    const action: PendingAction | null =
-      target && target.respawnAt === null ? { kind: "collect", resourceId: target.id } : null;
-    const player = walkTo(current.home, current.player, px, py, action);
-    set({ world: { ...current, player } });
+    if (!current || !current.player) return;
+    if (current.gameOver) return;
+
+    // Make sure source + target regions (and a small buffer around the
+    // target) are generated before BFS reads obstacles. Without this,
+    // unvisited tiles look passable, which would break "feels like a wall".
+    const startingPlayer: Player = current.player;
+    let world = current;
+    const src = globalToLocal(startingPlayer.gx, startingPlayer.gy);
+    const dst = globalToLocal(gx, gy);
+    world = ensureInteriorsForRegion(world, src.rx, src.ry);
+    world = ensureInteriorsForRegion(world, dst.rx, dst.ry);
+
+    const isObstacle = (tgx: number, tgy: number): boolean => {
+      const { rx, ry, lx, ly } = globalToLocal(tgx, tgy);
+      if (rx < 0 || ry < 0 || rx >= MAP_W || ry >= MAP_H) return true;
+      if (lx < 0 || ly < 0 || lx >= INTERIOR_W || ly >= INTERIOR_H) return true;
+      const interior = world.biomeInteriors[regionKey(rx, ry)];
+      if (!interior) {
+        const w2 = ensureInteriorsForRegion(world, rx, ry);
+        if (w2 !== world) world = w2;
+        const fresh = world.biomeInteriors[regionKey(rx, ry)];
+        if (!fresh) return true;
+        return isLocalObstacle(fresh, lx, ly);
+      }
+      return isLocalObstacle(interior, lx, ly);
+    };
+
+    const path = bfsPredicate(
+      isObstacle,
+      startingPlayer.gx,
+      startingPlayer.gy,
+      gx,
+      gy,
+      WALK_MAX_RADIUS,
+    );
+
+    let pendingAction: PendingAction | null = null;
+    if (path) {
+      const interior = world.biomeInteriors[regionKey(dst.rx, dst.ry)];
+      if (interior) {
+        const r = resourceAtLocal(interior, dst.lx, dst.ly);
+        if (r) pendingAction = { kind: "collect", resourceId: r.id };
+      }
+    }
+
+    const player: Player = path
+      ? {
+          ...startingPlayer,
+          route: path.length === 0 ? null : path,
+          stepCooldown: path.length === 0 ? 0 : Math.max(1, startingPlayer.stats.speed),
+          pendingAction,
+        }
+      : { ...startingPlayer, pendingAction: null };
+
+    set({ world: { ...world, player } });
+  },
+
+  travelToRegion: (rx, ry) => {
+    const w = get().world;
+    if (!w?.player || w.gameOver) return;
+    set({
+      view: "biome",
+      selectedNpcId: null,
+      selectedRegion: null,
+    });
+    bus.emit("npc:deselected");
+    const center = regionCenterGlobal(rx, ry);
+    get().walkPlayerTo(center.gx, center.gy);
+  },
+
+  resetAfterDeath: () => {
+    set({
+      world: createWorld(),
+      selectedNpcId: null,
+      selectedRegion: null,
+      lastEvent: null,
+      paused: false,
+      view: "world",
+      homePending: true,
+    });
   },
 }));

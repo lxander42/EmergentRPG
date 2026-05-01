@@ -2,16 +2,26 @@ import { createRng } from "@/lib/sim/rng";
 import { initialFactions, type FactionState } from "@/lib/sim/faction";
 import { spawnNpc, tickNpc, type Npc } from "@/lib/sim/npc";
 import { maybeEmitEvent, type WorldEvent } from "@/lib/sim/events";
-import { createHome, tickHome, type HomeBase, type Inventory } from "@/lib/sim/home";
+import {
+  generateInterior,
+  globalToLocal,
+  isLocalObstacle,
+  regionCenterGlobal,
+  regionKey,
+  type BiomeInterior,
+} from "@/lib/sim/biome-interior";
 import type { Player } from "@/lib/sim/player";
+import { createPlayer } from "@/lib/sim/player";
+import { tickPlayer } from "@/lib/sim/player-tick";
+import type { Inventory } from "@/lib/sim/inventory";
 import { biomeAt, isPassable, type Biome } from "@/lib/sim/biome";
 
 export { biomeAt, isPassable, type Biome } from "@/lib/sim/biome";
 
-export const WORLD_VERSION = 4;
-export const MAP_W = 12;
-export const MAP_H = 12;
-export const NPC_COUNT = 14;
+export const WORLD_VERSION = 5;
+export const MAP_W = 32;
+export const MAP_H = 32;
+export const NPC_COUNT = 200;
 
 export type World = {
   version: number;
@@ -22,8 +32,13 @@ export type World = {
   factions: FactionState[];
   recentEvents: WorldEvent[];
   player: Player | null;
-  home: HomeBase | null;
+  home: { rx: number; ry: number } | null;
+  biomeInteriors: Record<string, BiomeInterior>;
   inventory: Inventory;
+  // Set as the player visits regions. Phase 4 reads this for fog-of-war
+  // on the world map; for Phase 1 it's just bookkeeping.
+  discoveredRegions: Record<string, true>;
+  gameOver: boolean;
 };
 
 export function createWorld(seed = Date.now() & 0xffffffff): World {
@@ -40,37 +55,89 @@ export function createWorld(seed = Date.now() & 0xffffffff): World {
     recentEvents: [],
     player: null,
     home: null,
+    biomeInteriors: {},
     inventory: {},
+    discoveredRegions: {},
+    gameOver: false,
   };
+}
+
+export function findNpc(world: World, id: string): Npc | undefined {
+  return world.npcs.find((n) => n.id === id);
+}
+
+export function ensureInteriorsForRegion(world: World, rx: number, ry: number): World {
+  const targets: Array<[number, number]> = [];
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const x = rx + dx;
+      const y = ry + dy;
+      if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
+      if (!world.biomeInteriors[regionKey(x, y)]) targets.push([x, y]);
+    }
+  }
+  if (targets.length === 0) return world;
+  const next = { ...world.biomeInteriors };
+  for (const [x, y] of targets) {
+    next[regionKey(x, y)] = generateInterior(world.seed, x, y);
+  }
+  return { ...world, biomeInteriors: next };
 }
 
 export function claimHome(world: World, rx: number, ry: number): World | null {
   if (!isPassable(rx, ry, MAP_W, MAP_H)) return null;
   const biome: Biome = biomeAt(rx, ry);
   if (biome === "water") return null;
-  const rng = createRng(world.rngState);
-  const { home, player } = createHome(rng, biome, rx, ry);
+
+  const seeded = ensureInteriorsForRegion(world, rx, ry);
+  const center = regionCenterGlobal(rx, ry);
+  const interior = seeded.biomeInteriors[regionKey(rx, ry)];
+  if (!interior) return null;
+
+  // Player spawn might land on an obstacle; nudge to the nearest open tile.
+  const spawn = nudgeToOpen(seeded, center.gx, center.gy);
+  const player = createPlayer(spawn);
+  const discoveredRegions = { ...seeded.discoveredRegions, [regionKey(rx, ry)]: true as const };
   return {
-    ...world,
-    rngState: rng.state(),
+    ...seeded,
     player,
-    home,
+    home: { rx, ry },
+    discoveredRegions,
   };
 }
 
 export function tickWorld(world: World): { world: World; event: WorldEvent | null } {
+  if (world.gameOver) return { world, event: null };
+
   const rng = createRng(world.rngState);
   const npcs = world.npcs.map((n) => tickNpc(n, rng, MAP_W, MAP_H));
   const ticks = world.ticks + 1;
 
-  let home = world.home;
   let player = world.player;
+  let interiors = world.biomeInteriors;
   let inventory = world.inventory;
-  if (home && player) {
-    const stepped = tickHome(ticks, home, player, inventory);
-    home = stepped.home;
+  let gameOver: boolean = world.gameOver;
+  let discoveredRegions = world.discoveredRegions;
+
+  if (player) {
+    const stepped = tickPlayer({ player, interiors, inventory });
     player = stepped.player;
+    interiors = stepped.interiors;
     inventory = stepped.inventory;
+    if (stepped.death) {
+      gameOver = true;
+      // Strip any active walk so the renderer doesn't keep showing a
+      // stale dotted route after the game-over overlay opens.
+      player = { ...player, route: null, pendingAction: null, stepCooldown: 0 };
+    }
+
+    const cur = globalToLocal(player.gx, player.gy);
+    const key = regionKey(cur.rx, cur.ry);
+    if (!discoveredRegions[key]) {
+      discoveredRegions = { ...discoveredRegions, [key]: true as const };
+    }
+    // Make sure the camera always has generated land around the player.
+    interiors = ensureNeighbors(interiors, world.seed, cur.rx, cur.ry);
   }
 
   const next: World = {
@@ -78,9 +145,11 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
     ticks,
     npcs,
     rngState: rng.state(),
-    home,
     player,
+    biomeInteriors: interiors,
     inventory,
+    discoveredRegions,
+    gameOver,
   };
   const event = maybeEmitEvent(next, rng);
   if (event) {
@@ -90,14 +159,40 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
   return { world: next, event };
 }
 
-export function summarizeWorld(world: World): string {
-  return [
-    `Tick ${world.ticks}.`,
-    `Factions: ${world.factions.map((f) => `${f.name} (power ${f.power})`).join(", ")}.`,
-    `${world.npcs.length} named NPCs are in play.`,
-  ].join(" ");
+function ensureNeighbors(
+  interiors: Record<string, BiomeInterior>,
+  seed: number,
+  rx: number,
+  ry: number,
+): Record<string, BiomeInterior> {
+  let next = interiors;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const x = rx + dx;
+      const y = ry + dy;
+      if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
+      const key = regionKey(x, y);
+      if (next[key]) continue;
+      if (next === interiors) next = { ...interiors };
+      next[key] = generateInterior(seed, x, y);
+    }
+  }
+  return next;
 }
 
-export function findNpc(world: World, id: string): Npc | undefined {
-  return world.npcs.find((n) => n.id === id);
+function nudgeToOpen(world: World, gx: number, gy: number): { gx: number; gy: number } {
+  for (let r = 0; r <= 4; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+        const nx = gx + dx;
+        const ny = gy + dy;
+        const { rx, ry, lx, ly } = globalToLocal(nx, ny);
+        const interior = world.biomeInteriors[regionKey(rx, ry)];
+        if (!interior) continue;
+        if (!isLocalObstacle(interior, lx, ly)) return { gx: nx, gy: ny };
+      }
+    }
+  }
+  return { gx, gy };
 }

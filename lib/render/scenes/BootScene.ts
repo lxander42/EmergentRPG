@@ -8,6 +8,6 @@ export class BootScene extends Phaser.Scene {
 
   create() {
     const view = useGameStore.getState().view;
-    this.scene.start(view === "home" ? "Home" : "World");
+    this.scene.start(view === "biome" ? "Biome" : "World");
   }
 }

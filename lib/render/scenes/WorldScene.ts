@@ -3,17 +3,19 @@ import { bus } from "@/lib/render/bus";
 import { useGameStore } from "@/lib/state/game-store";
 import { biomeAt } from "@/lib/sim/biome";
 import { MAP_W, MAP_H } from "@/lib/sim/world";
+import { FACTIONS } from "@/content/factions";
+import { drawFactionShape } from "@/lib/render/shapes";
+import { globalToLocal } from "@/lib/sim/biome-interior";
+import type { Npc } from "@/lib/sim/npc";
 
-// One region cell = REGION px on a side. PADDING is the bezel between
-// neighbouring region tiles -- the cream background shows through.
-const REGION = 96;
-const PADDING = 8;
-const RADIUS = 12;
+const REGION = 64;
+const PADDING = 6;
+const RADIUS = 10;
 const INNER = REGION - PADDING * 2;
 
-const NPC_SIZE = 26;
-const NPC_RADIUS = 6;
-const MOVE_DURATION_MS = 750; // how long the visual transition between regions takes
+const STACK_SHAPE_SIZE = 14;
+const SOLO_SHAPE_SIZE = 22;
+const HOME_GLYPH_SIZE = 18;
 
 const COLORS = {
   bg: 0xf6f1e8,
@@ -23,62 +25,88 @@ const COLORS = {
   water: 0xa8c8d8,
   sand: 0xe8d8b0,
   stone: 0xb8b0a0,
-  npcStroke: 0xfbf6ed,
-  npcShadow: 0x2c2820,
+  // Near-black warm fg colour, matches --color-fg in globals.css.
+  outline: 0x2c2820,
+  shadow: 0x2c2820,
   selection: 0xd96846,
+  player: 0xd96846,
 };
 
-type NpcView = {
-  shadow: Phaser.GameObjects.Graphics;
-  body: Phaser.GameObjects.Graphics;
-  trail: Phaser.GameObjects.Graphics;
-  intent: Phaser.GameObjects.Graphics;
-  hit: Phaser.GameObjects.Rectangle;
-  prevRx: number;
-  prevRy: number;
-  rx: number;
-  ry: number;
-  transitionStart: number; // 0 when idle
+// Tracks where each NPC was last drawn so a single global pointerup
+// hit-test can resolve which NPC was tapped without spawning a Phaser
+// game object per NPC. With 200 NPCs the per-frame cost of 200 hit
+// rectangles dominated the world map's CPU budget.
+type NpcHitTarget = {
+  id: string;
+  x: number;
+  y: number;
+  half: number;
 };
 
 export class WorldScene extends Phaser.Scene {
   private tileLayer!: Phaser.GameObjects.Graphics;
+  private telegraphLayer!: Phaser.GameObjects.Graphics;
   private selectionRing!: Phaser.GameObjects.Graphics;
   private homeMarker!: Phaser.GameObjects.Graphics;
-  private npcLayer!: Phaser.GameObjects.Container;
-  private npcViews = new Map<string, NpcView>();
+  private playerHere!: Phaser.GameObjects.Graphics;
+  private playerLabel!: Phaser.GameObjects.Text;
+  private npcLayer!: Phaser.GameObjects.Graphics;
+  private overflowText = new Map<string, Phaser.GameObjects.Text>();
+  private npcHits: NpcHitTarget[] = [];
 
   private dragStart: { x: number; y: number } | null = null;
   private pinchInitial: { dist: number; zoom: number } | null = null;
   private pointerDownAt = 0;
   private pointerDownPos = { x: 0, y: 0 };
-  // Set when an NPC's pointerdown handler fires, so the scene-level
-  // pointerup logic doesn't double-up and treat it as a region tap.
-  private tappedNpcId: string | null = null;
+  private dragMoved = false;
 
   private accumulator = 0;
   private readonly tickStepMs = 250;
+  private lastDrawnTick = -1;
+  private dpr = 1;
+  // Trail of recent regions the player crossed through, oldest first.
+  // Drawn as fading accent dots so the user can see where they came from
+  // when watching from the world map.
+  private readonly playerTrailMax = 6;
+  private playerTrail: Array<{ rx: number; ry: number }> = [];
+  private lastPlayerRegion: { rx: number; ry: number } | null = null;
 
   constructor() {
     super("World");
   }
 
   create() {
+    this.dpr = (this.game.registry.get("dpr") as number) ?? 1;
     this.cameras.main.setBackgroundColor(COLORS.bg);
-
     this.tileLayer = this.add.graphics();
     this.drawTiles();
 
-    this.npcLayer = this.add.container(0, 0);
+    this.telegraphLayer = this.add.graphics();
+    this.npcLayer = this.add.graphics();
     this.homeMarker = this.add.graphics();
     this.homeMarker.setVisible(false);
+    this.playerHere = this.add.graphics();
+    this.playerHere.setVisible(false);
+    this.playerLabel = this.add.text(0, 0, "you", {
+      fontFamily: "ui-monospace, monospace",
+      fontSize: "10px",
+      color: "#d96846",
+    });
+    this.playerLabel.setOrigin(0.5, 0);
+    this.playerLabel.setVisible(false);
     this.selectionRing = this.add.graphics();
     this.selectionRing.setVisible(false);
 
     const worldPx = MAP_W * REGION;
     this.cameras.main.setBounds(-200, -200, worldPx + 400, worldPx + 400);
+    // setZoom must happen BEFORE centerOn -- centerOn uses the current zoom
+    // to compute scrollX/Y, so doing it the other way puts the camera in
+    // the wrong place and the world map looks empty / offset on first paint.
+    this.cameras.main.setZoom(0.45 * this.dpr);
     this.cameras.main.centerOn(worldPx / 2, worldPx / 2);
-    this.cameras.main.setZoom(0.7);
+    this.lastDrawnTick = -1;
+    this.playerTrail = [];
+    this.lastPlayerRegion = null;
 
     this.input.addPointer(2);
     this.input.on("pointerdown", this.onPointerDown, this);
@@ -88,24 +116,28 @@ export class WorldScene extends Phaser.Scene {
 
     bus.on("npc:deselected", this.clearSelection);
     this.scale.on("resize", this.handleResize, this);
+    this.game.events.on("dprchange", this.onDprChange, this);
   }
 
   shutdown() {
     bus.off("npc:deselected", this.clearSelection);
     this.scale.off("resize", this.handleResize, this);
-    for (const view of this.npcViews.values()) view.body.destroy();
-    this.npcViews.clear();
+    this.game.events.off("dprchange", this.onDprChange, this);
+    for (const t of this.overflowText.values()) t.destroy();
+    this.overflowText.clear();
+    this.npcHits = [];
   }
+
+  // Player marker animates on time.now so it must redraw every frame, not
+  // gated behind world-tick changes. The pulsing happens in renderPlayerHere.
 
   update(_time: number, delta: number) {
     const store = useGameStore.getState();
-
-    if (store.view === "home") {
-      this.scene.start("Home");
+    if (store.view === "biome") {
+      this.scene.start("Biome");
       return;
     }
-
-    if (!store.paused) {
+    if (!store.paused && !store.world?.gameOver) {
       this.accumulator += delta * store.speed;
       while (this.accumulator >= this.tickStepMs) {
         this.accumulator -= this.tickStepMs;
@@ -114,8 +146,17 @@ export class WorldScene extends Phaser.Scene {
       }
     }
 
-    this.renderNpcs();
+    const world = store.world;
+    if (!world) return;
+
+    if (world.ticks !== this.lastDrawnTick) {
+      this.renderNpcs(world.npcs);
+      this.renderTelegraphs(world.npcs);
+      this.lastDrawnTick = world.ticks;
+    }
     this.renderHomeMarker();
+    this.renderPlayerHere();
+    this.renderSelection();
   }
 
   private drawTiles() {
@@ -143,119 +184,141 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
-  private renderNpcs() {
-    const world = useGameStore.getState().world;
-    if (!world) return;
-    const npcs = world.npcs;
-    const now = this.time.now;
+  private renderTelegraphs(npcs: Npc[]) {
+    this.telegraphLayer.clear();
+    for (const n of npcs) {
+      if (!n.intent) continue;
+      const fromX = n.rx * REGION + REGION / 2;
+      const fromY = n.ry * REGION + REGION / 2;
+      const toX = n.intent.rx * REGION + REGION / 2;
+      const toY = n.intent.ry * REGION + REGION / 2;
+      const shape = factionShape(n.factionId);
+      drawFactionShape(this.telegraphLayer, shape, n.factionColor, toX, toY, SOLO_SHAPE_SIZE - 4, {
+        alpha: 0.32,
+      });
+      this.telegraphLayer.lineStyle(2, n.factionColor, 0.45);
+      const dx = toX - fromX;
+      const dy = toY - fromY;
+      const len = Math.hypot(dx, dy) || 1;
+      const ux = dx / len;
+      const uy = dy / len;
+      const margin = SOLO_SHAPE_SIZE * 0.55;
+      const sx = fromX + ux * margin;
+      const sy = fromY + uy * margin;
+      const ex = toX - ux * margin;
+      const ey = toY - uy * margin;
+      const segLen = 6;
+      const gapLen = 5;
+      let cur = 0;
+      const total = Math.hypot(ex - sx, ey - sy);
+      while (cur < total) {
+        const a = Math.min(cur + segLen, total);
+        const x1 = sx + ux * cur;
+        const y1 = sy + uy * cur;
+        const x2 = sx + ux * a;
+        const y2 = sy + uy * a;
+        this.telegraphLayer.beginPath();
+        this.telegraphLayer.moveTo(x1, y1);
+        this.telegraphLayer.lineTo(x2, y2);
+        this.telegraphLayer.strokePath();
+        cur = a + gapLen;
+      }
+    }
+  }
 
-    const seen = new Set<string>();
-
+  // Buckets NPCs by region tile then renders up to 4 nested faction shapes
+  // per tile, with a "+N" overflow label when more occupy a single region.
+  // Hit targets are stored as plain objects in npcHits[] -- no per-NPC
+  // game object, so 200 NPCs cost ~200 number triples instead of 200 Phaser
+  // Rectangles + transforms.
+  private renderNpcs(npcs: Npc[]) {
+    const buckets = new Map<string, Npc[]>();
     for (const npc of npcs) {
-      seen.add(npc.id);
-      let view = this.npcViews.get(npc.id);
+      const key = `${npc.rx},${npc.ry}`;
+      const list = buckets.get(key);
+      if (list) list.push(npc);
+      else buckets.set(key, [npc]);
+    }
 
-      if (!view) {
-        view = this.createNpcView(npc.id, npc.factionColor, npc.rx, npc.ry);
-        this.npcViews.set(npc.id, view);
+    this.npcLayer.clear();
+    const hits: NpcHitTarget[] = [];
+    const liveLabelKeys = new Set<string>();
+
+    for (const [, list] of buckets) {
+      const head = list[0]!;
+      const cx = head.rx * REGION + REGION / 2;
+      const cy = head.ry * REGION + REGION / 2;
+      liveLabelKeys.add(`${head.rx},${head.ry}`);
+
+      if (list.length === 1) {
+        this.npcLayer.fillStyle(COLORS.shadow, 0.18);
+        this.npcLayer.fillCircle(cx, cy + 2, SOLO_SHAPE_SIZE / 2);
+        const shape = factionShape(head.factionId);
+        drawFactionShape(this.npcLayer, shape, head.factionColor, cx, cy, SOLO_SHAPE_SIZE, {
+          stroke: 2,
+          strokeColor: COLORS.outline,
+        });
+        hits.push({ id: head.id, x: cx, y: cy, half: SOLO_SHAPE_SIZE / 2 + 6 });
+        continue;
       }
 
-      // Detect a region change -- start a fresh transition.
-      if (npc.rx !== view.rx || npc.ry !== view.ry) {
-        view.prevRx = view.rx;
-        view.prevRy = view.ry;
-        view.rx = npc.rx;
-        view.ry = npc.ry;
-        view.transitionStart = now;
-      }
+      const visible = list.slice(0, 4);
+      const offsets = [
+        { dx: -SOLO_SHAPE_SIZE * 0.32, dy: -SOLO_SHAPE_SIZE * 0.32 },
+        { dx: SOLO_SHAPE_SIZE * 0.32, dy: -SOLO_SHAPE_SIZE * 0.32 },
+        { dx: -SOLO_SHAPE_SIZE * 0.32, dy: SOLO_SHAPE_SIZE * 0.32 },
+        { dx: SOLO_SHAPE_SIZE * 0.32, dy: SOLO_SHAPE_SIZE * 0.32 },
+      ];
+      visible.forEach((npc, i) => {
+        const off = offsets[i]!;
+        const x = cx + off.dx;
+        const y = cy + off.dy;
+        const shape = factionShape(npc.factionId);
+        this.npcLayer.fillStyle(COLORS.shadow, 0.16);
+        this.npcLayer.fillCircle(x, y + 1.5, STACK_SHAPE_SIZE / 2);
+        drawFactionShape(this.npcLayer, shape, npc.factionColor, x, y, STACK_SHAPE_SIZE, {
+          stroke: 1.2,
+          strokeColor: COLORS.outline,
+        });
+        hits.push({ id: npc.id, x, y, half: STACK_SHAPE_SIZE / 2 + 4 });
+      });
 
-      const t = view.transitionStart === 0 ? 1 : Math.min(1, (now - view.transitionStart) / MOVE_DURATION_MS);
-      const eased = easeOutCubic(t);
-
-      const fromX = view.prevRx * REGION + REGION / 2;
-      const fromY = view.prevRy * REGION + REGION / 2;
-      const toX = view.rx * REGION + REGION / 2;
-      const toY = view.ry * REGION + REGION / 2;
-      const cx = fromX + (toX - fromX) * eased;
-      const cy = fromY + (toY - fromY) * eased;
-
-      view.shadow.x = cx;
-      view.shadow.y = cy + 2;
-      view.body.x = cx;
-      view.body.y = cy;
-      view.hit.x = cx;
-      view.hit.y = cy;
-
-      // Trail: thin coloured line from the previous region centre to the
-      // current sprite position. Visible only mid-transition.
-      view.trail.clear();
-      if (t < 1) {
-        const trailAlpha = 0.55 * (1 - t * 0.5);
-        view.trail.lineStyle(3, npc.factionColor, trailAlpha);
-        view.trail.beginPath();
-        view.trail.moveTo(fromX, fromY);
-        view.trail.lineTo(cx, cy);
-        view.trail.strokePath();
-      } else if (view.transitionStart !== 0) {
-        // Transition just finished -- stop redrawing the trail next frame.
-        view.transitionStart = 0;
-      }
-
-      // Telegraph: when the NPC has committed to a move but hasn't started
-      // tweening yet, paint a faded ghost square at the target plus a thin
-      // dotted connector. Pulses subtly so it reads as "about to happen".
-      view.intent.clear();
-      if (npc.intent && t >= 1) {
-        const tx = npc.intent.rx * REGION + REGION / 2;
-        const ty = npc.intent.ry * REGION + REGION / 2;
-        const pulse = 0.5 + 0.5 * Math.sin(now * 0.005);
-
-        // Dotted connector: 6 segments, every other one drawn.
-        view.intent.lineStyle(2, npc.factionColor, 0.3 + 0.15 * pulse);
-        const segments = 6;
-        for (let i = 0; i < segments; i += 2) {
-          const a = i / segments;
-          const b = (i + 1) / segments;
-          view.intent.beginPath();
-          view.intent.moveTo(cx + (tx - cx) * a, cy + (ty - cy) * a);
-          view.intent.lineTo(cx + (tx - cx) * b, cy + (ty - cy) * b);
-          view.intent.strokePath();
+      const overflow = list.length - visible.length;
+      const labelKey = `${head.rx},${head.ry}`;
+      if (overflow > 0) {
+        let label = this.overflowText.get(labelKey);
+        const txt = `+${overflow}`;
+        if (!label) {
+          label = this.add.text(0, 0, txt, {
+            fontFamily: "ui-monospace, monospace",
+            fontSize: "10px",
+            color: "#7a7368",
+          });
+          label.setOrigin(1, 1);
+          this.overflowText.set(labelKey, label);
         }
-
-        // Ghost tile at the target.
-        const fillAlpha = 0.18 + 0.12 * pulse;
-        view.intent.fillStyle(npc.factionColor, fillAlpha);
-        view.intent.fillRoundedRect(
-          tx - NPC_SIZE / 2,
-          ty - NPC_SIZE / 2,
-          NPC_SIZE,
-          NPC_SIZE,
-          NPC_RADIUS,
+        label.setText(txt);
+        label.setPosition(
+          head.rx * REGION + REGION - PADDING - 4,
+          head.ry * REGION + REGION - PADDING - 4,
         );
-        view.intent.lineStyle(1.5, npc.factionColor, 0.5 + 0.25 * pulse);
-        view.intent.strokeRoundedRect(
-          tx - NPC_SIZE / 2,
-          ty - NPC_SIZE / 2,
-          NPC_SIZE,
-          NPC_SIZE,
-          NPC_RADIUS,
-        );
+      } else {
+        const label = this.overflowText.get(labelKey);
+        if (label) {
+          label.destroy();
+          this.overflowText.delete(labelKey);
+        }
       }
     }
 
-    // Drop views for NPCs that disappeared (e.g., after starting a new game).
-    for (const [id, view] of this.npcViews) {
-      if (!seen.has(id)) {
-        view.shadow.destroy();
-        view.body.destroy();
-        view.trail.destroy();
-        view.intent.destroy();
-        view.hit.destroy();
-        this.npcViews.delete(id);
+    for (const [key, label] of this.overflowText) {
+      if (!liveLabelKeys.has(key)) {
+        label.destroy();
+        this.overflowText.delete(key);
       }
     }
 
-    this.renderSelection();
+    this.npcHits = hits;
   }
 
   private renderHomeMarker() {
@@ -271,31 +334,138 @@ export class WorldScene extends Phaser.Scene {
     this.homeMarker.strokeRoundedRect(px, py, INNER, INNER, RADIUS);
     const cx = home.rx * REGION + REGION / 2;
     const cy = home.ry * REGION + REGION / 2;
-    const size = 18;
     this.homeMarker.fillStyle(COLORS.selection, 0.9);
-    this.homeMarker.fillTriangle(cx, cy - size * 0.7, cx - size * 0.7, cy, cx + size * 0.7, cy);
-    this.homeMarker.fillRect(cx - size * 0.5, cy - size * 0.05, size, size * 0.55);
+    this.homeMarker.fillTriangle(
+      cx,
+      cy - HOME_GLYPH_SIZE * 0.7,
+      cx - HOME_GLYPH_SIZE * 0.7,
+      cy,
+      cx + HOME_GLYPH_SIZE * 0.7,
+      cy,
+    );
+    this.homeMarker.fillRect(
+      cx - HOME_GLYPH_SIZE * 0.5,
+      cy - HOME_GLYPH_SIZE * 0.05,
+      HOME_GLYPH_SIZE,
+      HOME_GLYPH_SIZE * 0.55,
+    );
     this.homeMarker.setVisible(true);
   }
 
-  // Draws a single coral outline around either the selected NPC or the
-  // selected region (they're mutually exclusive in the store).
+  private renderPlayerHere() {
+    const player = useGameStore.getState().world?.player;
+    this.playerHere.clear();
+    if (!player) {
+      this.playerHere.setVisible(false);
+      this.playerLabel.setVisible(false);
+      return;
+    }
+    const { rx, ry } = globalToLocal(player.gx, player.gy);
+    const cx = rx * REGION + REGION / 2;
+    const cy = ry * REGION + REGION / 2;
+
+    // Track region transitions so we can draw a fading breadcrumb trail.
+    if (
+      !this.lastPlayerRegion ||
+      this.lastPlayerRegion.rx !== rx ||
+      this.lastPlayerRegion.ry !== ry
+    ) {
+      if (this.lastPlayerRegion) {
+        this.playerTrail.push(this.lastPlayerRegion);
+        if (this.playerTrail.length > this.playerTrailMax) {
+          this.playerTrail.shift();
+        }
+      }
+      this.lastPlayerRegion = { rx, ry };
+    }
+
+    // Trail of recent regions: line from each to the next, plus a dot at
+    // each. Fades from the oldest (most transparent) to the newest.
+    const trailWithCurrent = [...this.playerTrail, { rx, ry }];
+    for (let i = 0; i < trailWithCurrent.length - 1; i++) {
+      const a = trailWithCurrent[i]!;
+      const b = trailWithCurrent[i + 1]!;
+      const ax = a.rx * REGION + REGION / 2;
+      const ay = a.ry * REGION + REGION / 2;
+      const bx = b.rx * REGION + REGION / 2;
+      const by = b.ry * REGION + REGION / 2;
+      const alpha = 0.15 + (i / Math.max(1, trailWithCurrent.length - 1)) * 0.4;
+      this.playerHere.lineStyle(3, COLORS.selection, alpha);
+      this.playerHere.beginPath();
+      this.playerHere.moveTo(ax, ay);
+      this.playerHere.lineTo(bx, by);
+      this.playerHere.strokePath();
+    }
+    this.playerTrail.forEach((r, i) => {
+      const px = r.rx * REGION + REGION / 2;
+      const py = r.ry * REGION + REGION / 2;
+      const alpha = 0.18 + (i / this.playerTrailMax) * 0.4;
+      this.playerHere.fillStyle(COLORS.selection, alpha);
+      this.playerHere.fillCircle(px, py, 5);
+    });
+
+    // Forward indicator: thin line from the player to the destination
+    // region of the current walk so the user can see where they're going
+    // without needing to enter the biome view.
+    if (player.route && player.route.length > 0) {
+      const last = player.route[player.route.length - 1]!;
+      const dst = globalToLocal(last.gx, last.gy);
+      if (dst.rx !== rx || dst.ry !== ry) {
+        const dx = dst.rx * REGION + REGION / 2;
+        const dy = dst.ry * REGION + REGION / 2;
+        const t = this.time.now * 0.004;
+        const pulse = 0.5 + 0.5 * Math.sin(t);
+        this.playerHere.lineStyle(2, COLORS.selection, 0.3 + 0.25 * pulse);
+        this.playerHere.beginPath();
+        this.playerHere.moveTo(cx, cy);
+        this.playerHere.lineTo(dx, dy);
+        this.playerHere.strokePath();
+        this.playerHere.fillStyle(COLORS.selection, 0.4 + 0.3 * pulse);
+        this.playerHere.fillCircle(dx, dy, 5);
+      }
+    }
+
+    // Pulsing accent halo so the player's region is unmissable on a
+    // map of 200 NPCs. Two concentric rings, ~1.5s pulse cycle.
+    const t = this.time.now * 0.003;
+    const pulse = (Math.sin(t) + 1) / 2;
+    const haloRadius = 18 + pulse * 10;
+    const haloAlpha = 0.5 - pulse * 0.3;
+    this.playerHere.lineStyle(3, COLORS.selection, haloAlpha);
+    this.playerHere.strokeCircle(cx, cy, haloRadius);
+    this.playerHere.lineStyle(2, COLORS.selection, haloAlpha * 0.7);
+    this.playerHere.strokeCircle(cx, cy, haloRadius + 6);
+
+    // Player square -- bigger than NPC tokens so it pops at any zoom.
+    const playerSize = 24;
+    this.playerHere.fillStyle(COLORS.shadow, 0.22);
+    this.playerHere.fillRoundedRect(
+      cx - playerSize / 2,
+      cy - playerSize / 2 + 2,
+      playerSize,
+      playerSize,
+      5,
+    );
+    drawFactionShape(this.playerHere, "square", COLORS.player, cx, cy, playerSize, {
+      stroke: 2,
+      strokeColor: COLORS.outline,
+    });
+    this.playerHere.setVisible(true);
+
+    this.playerLabel.setPosition(cx, cy + playerSize / 2 + 2);
+    this.playerLabel.setVisible(true);
+  }
+
   private renderSelection() {
     const { selectedNpcId, selectedRegion } = useGameStore.getState();
     this.selectionRing.clear();
 
     if (selectedNpcId) {
-      const v = this.npcViews.get(selectedNpcId);
-      if (v) {
-        const half = NPC_SIZE / 2 + 5;
+      const hit = this.npcHits.find((h) => h.id === selectedNpcId);
+      if (hit) {
+        const half = hit.half + 2;
         this.selectionRing.lineStyle(2.5, COLORS.selection, 1);
-        this.selectionRing.strokeRoundedRect(
-          v.body.x - half,
-          v.body.y - half,
-          half * 2,
-          half * 2,
-          NPC_RADIUS + 2,
-        );
+        this.selectionRing.strokeRoundedRect(hit.x - half, hit.y - half, half * 2, half * 2, 6);
         this.selectionRing.setVisible(true);
         return;
       }
@@ -313,63 +483,16 @@ export class WorldScene extends Phaser.Scene {
     this.selectionRing.setVisible(false);
   }
 
-  private createNpcView(id: string, color: number, rx: number, ry: number): NpcView {
-    const cx = rx * REGION + REGION / 2;
-    const cy = ry * REGION + REGION / 2;
-
-    // Intent draws beneath everything else so the live NPC sits on top of
-    // both its trail and its target ghost.
-    const intent = this.add.graphics();
-    const trail = this.add.graphics();
-
-    const shadow = this.add.graphics();
-    shadow.fillStyle(COLORS.npcShadow, 0.18);
-    shadow.fillRoundedRect(-NPC_SIZE / 2, -NPC_SIZE / 2, NPC_SIZE, NPC_SIZE, NPC_RADIUS);
-    shadow.x = cx;
-    shadow.y = cy + 2;
-
-    const body = this.add.graphics();
-    body.fillStyle(color, 1);
-    body.fillRoundedRect(-NPC_SIZE / 2, -NPC_SIZE / 2, NPC_SIZE, NPC_SIZE, NPC_RADIUS);
-    body.lineStyle(2, COLORS.npcStroke, 1);
-    body.strokeRoundedRect(-NPC_SIZE / 2, -NPC_SIZE / 2, NPC_SIZE, NPC_SIZE, NPC_RADIUS);
-    body.x = cx;
-    body.y = cy;
-
-    // Invisible rect handles input -- bigger than the visual for easier tapping.
-    const hit = this.add.rectangle(cx, cy, NPC_SIZE + 16, NPC_SIZE + 16, 0xffffff, 0);
-    hit.setInteractive({ useHandCursor: true });
-    hit.on(
-      "pointerdown",
-      (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
-        e.stopPropagation();
-        this.tappedNpcId = id;
-        useGameStore.getState().selectNpc(id);
-        bus.emit("npc:selected", { id });
-      },
-    );
-
-    this.npcLayer.add([intent, trail, shadow, body, hit]);
-
-    return {
-      shadow,
-      body,
-      trail,
-      intent,
-      hit,
-      prevRx: rx,
-      prevRy: ry,
-      rx,
-      ry,
-      transitionStart: 0,
-    };
-  }
-
   private clearSelection = () => {
     this.selectionRing.setVisible(false);
   };
 
+  private gameOver(): boolean {
+    return useGameStore.getState().world?.gameOver ?? false;
+  }
+
   private onPointerDown(pointer: Phaser.Input.Pointer) {
+    if (this.gameOver()) return;
     if (this.input.pointer1.isDown && this.input.pointer2.isDown) {
       const dist = Phaser.Math.Distance.Between(
         this.input.pointer1.x,
@@ -382,11 +505,13 @@ export class WorldScene extends Phaser.Scene {
       return;
     }
     this.dragStart = { x: pointer.x, y: pointer.y };
+    this.dragMoved = false;
     this.pointerDownAt = this.time.now;
     this.pointerDownPos = { x: pointer.x, y: pointer.y };
   }
 
   private onPointerMove(pointer: Phaser.Input.Pointer) {
+    if (this.gameOver()) return;
     if (this.input.pointer1.isDown && this.input.pointer2.isDown && this.pinchInitial) {
       const dist = Phaser.Math.Distance.Between(
         this.input.pointer1.x,
@@ -395,13 +520,14 @@ export class WorldScene extends Phaser.Scene {
         this.input.pointer2.y,
       );
       const factor = dist / this.pinchInitial.dist;
-      const zoom = Phaser.Math.Clamp(this.pinchInitial.zoom * factor, 0.4, 2.5);
+      const zoom = Phaser.Math.Clamp(this.pinchInitial.zoom * factor, 0.25 * this.dpr, 2.0 * this.dpr);
       this.cameras.main.setZoom(zoom);
       return;
     }
     if (this.dragStart && pointer.isDown) {
       const dx = pointer.x - this.dragStart.x;
       const dy = pointer.y - this.dragStart.y;
+      if (Math.abs(dx) + Math.abs(dy) > 6) this.dragMoved = true;
       this.cameras.main.scrollX -= dx / this.cameras.main.zoom;
       this.cameras.main.scrollY -= dy / this.cameras.main.zoom;
       this.dragStart = { x: pointer.x, y: pointer.y };
@@ -409,8 +535,12 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private onPointerUp(pointer: Phaser.Input.Pointer) {
-    const wasNpcTap = this.tappedNpcId !== null;
-    this.tappedNpcId = null;
+    if (this.gameOver()) {
+      this.dragStart = null;
+      this.dragMoved = false;
+      this.pinchInitial = null;
+      return;
+    }
 
     const dt = this.time.now - this.pointerDownAt;
     const moved = Phaser.Math.Distance.Between(
@@ -420,35 +550,60 @@ export class WorldScene extends Phaser.Scene {
       pointer.y,
     );
 
-    if (!wasNpcTap && dt < 250 && moved < 8) {
-      // Convert screen coords to a region cell and select it.
+    if (!this.dragMoved && dt < 350 && moved < 10) {
       const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-      const rx = Math.floor(world.x / REGION);
-      const ry = Math.floor(world.y / REGION);
-      if (rx >= 0 && rx < MAP_W && ry >= 0 && ry < MAP_H) {
-        useGameStore.getState().selectRegion({ rx, ry });
+      const tappedNpc = this.hitNpcAt(world.x, world.y);
+      if (tappedNpc) {
+        useGameStore.getState().selectNpc(tappedNpc);
+        bus.emit("npc:selected", { id: tappedNpc });
       } else {
-        // Tap outside the map area -- treat as a "clear selection".
-        useGameStore.getState().selectNpc(null);
-        useGameStore.getState().selectRegion(null);
+        const rx = Math.floor(world.x / REGION);
+        const ry = Math.floor(world.y / REGION);
+        if (rx >= 0 && rx < MAP_W && ry >= 0 && ry < MAP_H) {
+          useGameStore.getState().selectRegion({ rx, ry });
+        } else {
+          useGameStore.getState().selectNpc(null);
+          useGameStore.getState().selectRegion(null);
+        }
       }
     }
 
     this.dragStart = null;
+    this.dragMoved = false;
     this.pinchInitial = null;
   }
 
+  private hitNpcAt(wx: number, wy: number): string | null {
+    let best: { id: string; d2: number } | null = null;
+    for (const h of this.npcHits) {
+      const dx = wx - h.x;
+      const dy = wy - h.y;
+      const d2 = dx * dx + dy * dy;
+      const r2 = h.half * h.half;
+      if (d2 > r2) continue;
+      if (best === null || d2 < best.d2) best = { id: h.id, d2 };
+    }
+    return best ? best.id : null;
+  }
+
   private onWheel(_p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) {
-    const zoom = Phaser.Math.Clamp(this.cameras.main.zoom - dy * 0.001, 0.4, 2.5);
+    const zoom = Phaser.Math.Clamp(this.cameras.main.zoom - dy * 0.001, 0.25 * this.dpr, 2.0 * this.dpr);
     this.cameras.main.setZoom(zoom);
   }
 
   private handleResize = (gameSize: Phaser.Structs.Size) => {
     this.cameras.main.setSize(gameSize.width, gameSize.height);
   };
+
+  private onDprChange = (dpr: number) => {
+    const ratio = dpr / this.dpr;
+    if (!Number.isFinite(ratio) || ratio === 0) return;
+    this.dpr = dpr;
+    this.cameras.main.setZoom(this.cameras.main.zoom * ratio);
+  };
 }
 
-function easeOutCubic(t: number): number {
-  const u = 1 - t;
-  return 1 - u * u * u;
+function factionShape(factionId: string): "triangle" | "hex" | "diamond" | "square" {
+  const f = FACTIONS.find((x) => x.id === factionId);
+  return f?.shape ?? "diamond";
 }

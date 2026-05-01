@@ -6,6 +6,7 @@ import { Suspense, useEffect } from "react";
 import HUD from "@/components/hud/HUD";
 import NpcPanel from "@/components/panels/NpcPanel";
 import RegionPanel from "@/components/panels/RegionPanel";
+import RecenterButton from "@/components/RecenterButton";
 import { useGameStore } from "@/lib/state/game-store";
 
 const PhaserGame = dynamic(() => import("@/components/PhaserGame"), {
@@ -30,10 +31,17 @@ function PlayInner() {
 
   return (
     <main className="relative h-[100dvh] w-screen overflow-hidden bg-[var(--color-bg)]">
-      <div className="no-touch-scroll absolute inset-0">
+      {/*
+        The canvas lives below the HUD strip rather than under it.
+        Putting Phaser inside its own DOM rect that already excludes
+        the HUD means centerOn(player) naturally lands at the centre
+        of what the user can see -- no camera-viewport gymnastics.
+      */}
+      <div className="no-touch-scroll absolute inset-x-0 bottom-0 top-24">
         <PhaserGame />
       </div>
       <HUD />
+      <RecenterButton />
       <NpcPanel />
       <RegionPanel />
     </main>

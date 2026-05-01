@@ -4,6 +4,7 @@ import { X } from "@phosphor-icons/react/dist/ssr";
 import { useGameStore } from "@/lib/state/game-store";
 import { findNpc } from "@/lib/sim/world";
 import type { Npc } from "@/lib/sim/npc";
+import { FACTIONS, type FactionShape } from "@/content/factions";
 
 export default function NpcPanel() {
   const selectedId = useGameStore((s) => s.selectedNpcId);
@@ -17,6 +18,7 @@ export default function NpcPanel() {
 function NpcPanelInner({ npc }: { npc: Npc }) {
   const select = useGameStore((s) => s.selectNpc);
   const factionColorHex = "#" + npc.factionColor.toString(16).padStart(6, "0");
+  const shape = FACTIONS.find((f) => f.id === npc.factionId)?.shape ?? "diamond";
 
   return (
     <aside
@@ -27,11 +29,7 @@ function NpcPanelInner({ npc }: { npc: Npc }) {
       <div className="mx-auto max-w-2xl">
         <header className="mb-4 flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
-            <span
-              aria-hidden
-              className="h-9 w-9 shrink-0 rounded-lg border border-[var(--color-border-strong)]"
-              style={{ background: factionColorHex }}
-            />
+            <ShapeBadge shape={shape} color={factionColorHex} />
             <div>
               <h2 className="text-lg font-medium leading-tight text-[var(--color-fg)]">
                 {npc.name}
@@ -84,4 +82,37 @@ function NpcPanelInner({ npc }: { npc: Npc }) {
       </div>
     </aside>
   );
+}
+
+function ShapeBadge({ shape, color }: { shape: FactionShape; color: string }) {
+  return (
+    <span
+      aria-hidden
+      className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-warm)]"
+    >
+      <svg width="22" height="22" viewBox="-12 -12 24 24" aria-hidden>
+        <ShapePath shape={shape} color={color} />
+      </svg>
+    </span>
+  );
+}
+
+function ShapePath({ shape, color }: { shape: FactionShape; color: string }) {
+  const stroke = "rgba(44,40,32,0.4)";
+  switch (shape) {
+    case "square":
+      return <rect x="-9" y="-9" width="18" height="18" rx="3" fill={color} stroke={stroke} strokeWidth="1" />;
+    case "triangle":
+      return <polygon points="0,-9 9,7 -9,7" fill={color} stroke={stroke} strokeWidth="1" />;
+    case "diamond":
+      return <polygon points="0,-10 10,0 0,10 -10,0" fill={color} stroke={stroke} strokeWidth="1" />;
+    case "hex": {
+      const pts: string[] = [];
+      for (let i = 0; i < 6; i++) {
+        const a = (Math.PI / 3) * i + Math.PI / 6;
+        pts.push(`${(10 * Math.cos(a)).toFixed(2)},${(10 * Math.sin(a)).toFixed(2)}`);
+      }
+      return <polygon points={pts.join(" ")} fill={color} stroke={stroke} strokeWidth="1" />;
+    }
+  }
 }
