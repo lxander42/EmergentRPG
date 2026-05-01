@@ -26,7 +26,14 @@ export const WORLD_VERSION = 6;
 export const MAP_W = 32;
 export const MAP_H = 32;
 export const NPC_COUNT = 200;
-const CONTROL_REBUILD_EVERY = 4;
+// Presence accumulates per tick and decays slowly so faction zones develop
+// and persist a while after NPCs leave. Tuned so a single NPC sitting on a
+// region for ~5 ticks (~1.25s at 1x) crosses the control threshold, and a
+// region keeps its controller for ~30s after the last visitor walks away.
+const CONTROL_DECAY_EVERY = 16;
+const CONTROL_DECAY_FACTOR = 0.85;
+const CONTROL_THRESHOLD = 5;
+const CONTROL_DROP_BELOW = 0.5;
 
 export type World = {
   version: number;
@@ -154,13 +161,13 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
     interiors = ensureNeighbors(interiors, world.seed, cur.rx, cur.ry);
   }
 
-  let regionPresence = world.regionPresence;
-  let regionControl = world.regionControl;
-  if (ticks % CONTROL_REBUILD_EVERY === 0) {
-    const built = buildPresence(npcs);
-    regionPresence = built.presence;
-    regionControl = built.control;
-  }
+  const built = updatePresence(
+    world.regionPresence,
+    npcs,
+    ticks % CONTROL_DECAY_EVERY === 0,
+  );
+  const regionPresence = built.presence;
+  const regionControl = built.control;
 
   const next: World = {
     ...world,
@@ -197,11 +204,30 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
   return { world: next, event };
 }
 
-function buildPresence(npcs: Npc[]): {
+function updatePresence(
+  prev: Record<string, Partial<Record<string, number>>>,
+  npcs: Npc[],
+  decay: boolean,
+): {
   presence: Record<string, Partial<Record<string, number>>>;
   control: Record<string, string>;
 } {
   const presence: Record<string, Partial<Record<string, number>>> = {};
+  for (const key of Object.keys(prev)) {
+    const cell = prev[key];
+    if (!cell) continue;
+    const nextCell: Partial<Record<string, number>> = {};
+    let any = false;
+    for (const [factionId, score] of Object.entries(cell)) {
+      const s = score ?? 0;
+      const decayed = decay ? s * CONTROL_DECAY_FACTOR : s;
+      if (decayed >= CONTROL_DROP_BELOW) {
+        nextCell[factionId] = decayed;
+        any = true;
+      }
+    }
+    if (any) presence[key] = nextCell;
+  }
   for (const n of npcs) {
     const key = regionKey(n.rx, n.ry);
     const cell = presence[key] ?? (presence[key] = {});
@@ -211,19 +237,21 @@ function buildPresence(npcs: Npc[]): {
   for (const key of Object.keys(presence)) {
     const cell = presence[key]!;
     let bestId: string | null = null;
-    let bestCount = 0;
+    let bestScore = 0;
     let tied = false;
-    for (const [factionId, count] of Object.entries(cell)) {
-      const c = count ?? 0;
-      if (c > bestCount) {
-        bestCount = c;
+    for (const [factionId, score] of Object.entries(cell)) {
+      const s = score ?? 0;
+      if (s > bestScore) {
+        bestScore = s;
         bestId = factionId;
         tied = false;
-      } else if (c === bestCount && c > 0) {
+      } else if (s === bestScore && s > 0) {
         tied = true;
       }
     }
-    if (bestId && !tied) control[key] = bestId;
+    if (bestId && !tied && bestScore >= CONTROL_THRESHOLD) {
+      control[key] = bestId;
+    }
   }
   return { presence, control };
 }
