@@ -49,6 +49,7 @@ export class WorldScene extends Phaser.Scene {
   private selectionRing!: Phaser.GameObjects.Graphics;
   private homeMarker!: Phaser.GameObjects.Graphics;
   private playerHere!: Phaser.GameObjects.Graphics;
+  private playerLabel!: Phaser.GameObjects.Text;
   private npcLayer!: Phaser.GameObjects.Graphics;
   private overflowText = new Map<string, Phaser.GameObjects.Text>();
   private npcHits: NpcHitTarget[] = [];
@@ -80,6 +81,13 @@ export class WorldScene extends Phaser.Scene {
     this.homeMarker.setVisible(false);
     this.playerHere = this.add.graphics();
     this.playerHere.setVisible(false);
+    this.playerLabel = this.add.text(0, 0, "you", {
+      fontFamily: "ui-monospace, monospace",
+      fontSize: "10px",
+      color: "#d96846",
+    });
+    this.playerLabel.setOrigin(0.5, 0);
+    this.playerLabel.setVisible(false);
     this.selectionRing = this.add.graphics();
     this.selectionRing.setVisible(false);
 
@@ -111,6 +119,9 @@ export class WorldScene extends Phaser.Scene {
     this.overflowText.clear();
     this.npcHits = [];
   }
+
+  // Player marker animates on time.now so it must redraw every frame, not
+  // gated behind world-tick changes. The pulsing happens in renderPlayerHere.
 
   update(_time: number, delta: number) {
     const store = useGameStore.getState();
@@ -338,16 +349,42 @@ export class WorldScene extends Phaser.Scene {
     this.playerHere.clear();
     if (!player) {
       this.playerHere.setVisible(false);
+      this.playerLabel.setVisible(false);
       return;
     }
     const { rx, ry } = globalToLocal(player.gx, player.gy);
     const cx = rx * REGION + REGION / 2;
     const cy = ry * REGION + REGION / 2;
-    drawFactionShape(this.playerHere, "square", COLORS.player, cx, cy, 18, {
+
+    // Pulsing accent halo so the player's region is unmissable on a
+    // map of 200 NPCs. Two concentric rings, ~1.5s pulse cycle.
+    const t = this.time.now * 0.003;
+    const pulse = (Math.sin(t) + 1) / 2;
+    const haloRadius = 18 + pulse * 10;
+    const haloAlpha = 0.5 - pulse * 0.3;
+    this.playerHere.lineStyle(3, COLORS.selection, haloAlpha);
+    this.playerHere.strokeCircle(cx, cy, haloRadius);
+    this.playerHere.lineStyle(2, COLORS.selection, haloAlpha * 0.7);
+    this.playerHere.strokeCircle(cx, cy, haloRadius + 6);
+
+    // Player square -- bigger than NPC tokens so it pops at any zoom.
+    const playerSize = 24;
+    this.playerHere.fillStyle(COLORS.shadow, 0.22);
+    this.playerHere.fillRoundedRect(
+      cx - playerSize / 2,
+      cy - playerSize / 2 + 2,
+      playerSize,
+      playerSize,
+      5,
+    );
+    drawFactionShape(this.playerHere, "square", COLORS.player, cx, cy, playerSize, {
       stroke: 2,
       strokeColor: COLORS.outline,
     });
     this.playerHere.setVisible(true);
+
+    this.playerLabel.setPosition(cx, cy + playerSize / 2 + 2);
+    this.playerLabel.setVisible(true);
   }
 
   private renderSelection() {
