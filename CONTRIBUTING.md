@@ -1,85 +1,90 @@
 # Contributing to Emergent RPG
 
-Thanks for your interest in contributing!  
-This project is early-stage and experimental, and we value clarity, curiosity, and collaboration.
+Thanks for your interest in contributing! This project is early-stage and experimental, and we value clarity, curiosity, and collaboration.
 
-**Resources**: 
-- [Unity Download](https://unity.com/download)
-- [Github desktop](https://desktop.github.com/download/)
-- [Cloning a repo](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository)
-- [1Password SSH](https://developer.1password.com/docs/ssh/get-started/?utm_medium=organic&utm_source=oph&utm_campaign=windows)
-- [Generating an SSH key](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent)
+EmergentRPG is now a mobile-first web app (Next.js + Phaser, deployed on Vercel). All you need is Node 20+ and a phone or a laptop. No Unity required.
 
 ---
 
 ## Quick Start
 
-- Downlad and install latest version of unity [Unity](https://unity.com/download)
-- Clone repo to folder of your choice
-- Create new branch from dev branch (see - Branching Model)
-- Open project from disk ![Open project](DOCUMENTATION\openproject.png)
-- Select project folder from repo
-- Create features and pull requests as needed
+```bash
+git clone https://github.com/lxander42/emergentrpg
+cd emergentrpg
+npm install
+npm run dev
+```
+
+Open <http://localhost:3000>.
+
+### Phone-first workflow
+
+The intended development flow is from a phone, using [Claude Code](https://claude.ai/code) and Vercel preview deploys:
+
+1. Create a feature branch off `dev`.
+2. Push commits — Vercel builds a preview URL for every push.
+3. Open the preview URL on your phone, **Add to Home Screen** to install the PWA, and test on real hardware.
+4. Open a PR into `dev`.
+
+The `.claude/hooks/session-start.sh` hook installs npm deps automatically on fresh Claude Code on the web sessions, so a brand-new remote session is ready to run `npm run dev`, `npm run typecheck`, or `npm run lint` without any manual setup.
 
 ## General Guidelines
 
-- Keep changes focused and easy to review
-- Prefer small, incremental pull requests
-- Document systems, assumptions, and intent
-- Expect iteration — ideas may evolve or be discarded
+- Keep changes focused and easy to review.
+- Prefer small, incremental pull requests.
+- Document systems, assumptions, and intent.
+- Expect iteration — ideas may evolve or be discarded.
 
 If you're unsure about direction, open an issue or draft PR early.
 
----
+## Code & Design Philosophy
+
+- Favor systems over scripts.
+- Favor data-driven design — new factions, traits, and biomes should live in `content/` as plain TypeScript data, not as code branches.
+- The simulation in `lib/sim/` should be **deterministic** given a seed. Anything stochastic must go through the seeded RNG in `lib/sim/rng.ts` so saves are reproducible.
+- Optimize for emergent behavior, not hard-coded outcomes.
+- Avoid premature optimization.
+
+## Project Layout
+
+See `README.md` → "Repository Structure" for the canonical layout. Quick map:
+
+- `lib/sim/` — game rules, world tick, NPC behavior, factions
+- `lib/render/` — Phaser scenes, camera, input, React ↔ Phaser bus
+- `lib/state/` — Zustand store (the bridge between sim, UI, and Phaser)
+- `lib/save/` — IndexedDB persistence
+- `app/` — Next.js routes (UI)
+- `components/` — React UI (HUD, panels, Phaser wrapper)
+- `content/` — data-driven content
 
 ## Branching Model
 
-- **main**
-  - Protected
-  - Must always remain stable
-
-- **dev**
-  - Active development branch
-  - Create feature branches off `dev`
-  - Periodically merged into `main` when stable
-
----
+- **main** — protected, must always remain stable.
+- **dev** — active development. Create feature branches off `dev`. Periodically merged into `main` when stable.
 
 ## Signed Commits (Required)
 
-All commits **must be signed**.
-
-Signed commits help maintain authorship clarity and accountability as the project grows.
-
-### How to Sign Commits
-
-Sign a commit manually:
+All commits **must be signed**. Signed commits help maintain authorship clarity and accountability as the project grows.
 
 ```bash
 git commit -S -m "Your commit message"
 ```
 
-Or configure Git to sign all commits by default:
+Or configure once:
 
 ```bash
 git config --global commit.gpgsign true
 ```
 
-Pull requests containing unsigned commits may be rejected or asked to be amended.
+PRs containing unsigned commits may be rejected or asked to be amended.
 
 ## Pull Requests
 
-- Open pull requests against the dev branch
-- Clearly describe what you changed and why
-- Reference related issues or spec documents when applicable
-- Ensure all commits are signed before requesting review
-
-## Code & Design Philosophy
-
-- Favor systems over scripts
-- Favor data-driven design
-- Optimize for emergent behavior, not hard-coded outcomes
-- Avoid premature optimization
+- Open PRs against `dev`.
+- Clearly describe what you changed and why.
+- Reference related issues or design docs when applicable.
+- Run `npm run lint` and `npm run typecheck` locally before requesting review.
+- Vercel will post a preview URL on the PR — try it on a phone before merging.
 
 ## Questions & Discussion
 
