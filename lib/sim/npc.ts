@@ -3,6 +3,8 @@ import { isPassable } from "@/lib/sim/biome";
 import { FACTIONS } from "@/content/factions";
 import { NAMES, TRAITS } from "@/content/traits";
 
+export type Intent = { rx: number; ry: number };
+
 export type Npc = {
   id: string;
   name: string;
@@ -12,7 +14,15 @@ export type Npc = {
   values: string[];
   rx: number;
   ry: number;
-  moveCooldown: number; // ticks remaining before next movement attempt
+  // When set, the NPC has committed to moving to this region. While
+  // intent is non-null, moveCooldown counts down a short telegraph
+  // window before the move executes -- giving the player a chance to
+  // see where they're headed.
+  intent: Intent | null;
+  // Ticks remaining in the current cycle. While intent is null, this is
+  // an idle window between movement decisions. While intent is set,
+  // it's the telegraph window.
+  moveCooldown: number;
   goal: string;
 };
 
@@ -25,9 +35,10 @@ const GOALS = [
   "praying",
 ];
 
-const MIN_COOLDOWN = 12; // 250ms ticks * 12 = 3s minimum between moves
-const MAX_COOLDOWN = 30; // up to 7.5s
-const MOVE_CHANCE = 0.4; // chance to actually move once cooldown expires
+const IDLE_MIN = 12; // 250ms ticks * 12 = 3s minimum idle between cycles
+const IDLE_MAX = 30; // up to 7.5s
+const TELEGRAPH_TICKS = 8; // ~2s of "I'm about to go there" before the move fires
+const MOVE_CHANCE = 0.5; // chance to actually pick a target when idle expires
 
 export function spawnNpc(rng: Rng, id: number, mapW: number, mapH: number): Npc {
   const faction = rng.pick(FACTIONS);
@@ -60,24 +71,34 @@ export function spawnNpc(rng: Rng, id: number, mapW: number, mapH: number): Npc 
     values: [...faction.values],
     rx,
     ry,
-    moveCooldown: rng.int(MIN_COOLDOWN, MAX_COOLDOWN),
+    intent: null,
+    moveCooldown: rng.int(IDLE_MIN, IDLE_MAX),
     goal: rng.pick(GOALS),
   };
 }
 
 export function tickNpc(npc: Npc, rng: Rng, mapW: number, mapH: number): Npc {
-  // Defensive default for saves that predate the moveCooldown field.
   const cooldown = npc.moveCooldown ?? 0;
+
   if (cooldown > 0) {
     return { ...npc, moveCooldown: cooldown - 1 };
   }
 
-  // Cooldown expired -- decide whether to move at all this window.
-  if (!rng.chance(MOVE_CHANCE)) {
-    return { ...npc, moveCooldown: rng.int(MIN_COOLDOWN, MAX_COOLDOWN) };
+  // Cooldown is up. Either execute the telegraphed move, or roll a new cycle.
+  if (npc.intent) {
+    return {
+      ...npc,
+      rx: npc.intent.rx,
+      ry: npc.intent.ry,
+      intent: null,
+      moveCooldown: rng.int(IDLE_MIN, IDLE_MAX),
+    };
   }
 
-  // Pick an adjacent passable region.
+  if (!rng.chance(MOVE_CHANCE)) {
+    return { ...npc, moveCooldown: rng.int(IDLE_MIN, IDLE_MAX) };
+  }
+
   const candidates: Array<[number, number]> = [];
   for (const [dx, dy] of [
     [1, 0],
@@ -87,20 +108,18 @@ export function tickNpc(npc: Npc, rng: Rng, mapW: number, mapH: number): Npc {
   ] as const) {
     const nx = npc.rx + dx;
     const ny = npc.ry + dy;
-    if (nx < 0 || ny < 0 || nx >= mapW || ny >= mapH) continue;
     if (!isPassable(nx, ny, mapW, mapH)) continue;
     candidates.push([nx, ny]);
   }
 
   if (candidates.length === 0) {
-    return { ...npc, moveCooldown: rng.int(MIN_COOLDOWN, MAX_COOLDOWN) };
+    return { ...npc, moveCooldown: rng.int(IDLE_MIN, IDLE_MAX) };
   }
 
   const [nx, ny] = rng.pick(candidates);
   return {
     ...npc,
-    rx: nx,
-    ry: ny,
-    moveCooldown: rng.int(MIN_COOLDOWN, MAX_COOLDOWN),
+    intent: { rx: nx, ry: ny },
+    moveCooldown: TELEGRAPH_TICKS,
   };
 }

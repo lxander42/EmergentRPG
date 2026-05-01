@@ -32,6 +32,7 @@ type NpcView = {
   shadow: Phaser.GameObjects.Graphics;
   body: Phaser.GameObjects.Graphics;
   trail: Phaser.GameObjects.Graphics;
+  intent: Phaser.GameObjects.Graphics;
   hit: Phaser.GameObjects.Rectangle;
   prevRx: number;
   prevRy: number;
@@ -186,6 +187,47 @@ export class WorldScene extends Phaser.Scene {
         // Transition just finished -- stop redrawing the trail next frame.
         view.transitionStart = 0;
       }
+
+      // Telegraph: when the NPC has committed to a move but hasn't started
+      // tweening yet, paint a faded ghost square at the target plus a thin
+      // dotted connector. Pulses subtly so it reads as "about to happen".
+      view.intent.clear();
+      if (npc.intent && t >= 1) {
+        const tx = npc.intent.rx * REGION + REGION / 2;
+        const ty = npc.intent.ry * REGION + REGION / 2;
+        const pulse = 0.5 + 0.5 * Math.sin(now * 0.005);
+
+        // Dotted connector: 6 segments, every other one drawn.
+        view.intent.lineStyle(2, npc.factionColor, 0.3 + 0.15 * pulse);
+        const segments = 6;
+        for (let i = 0; i < segments; i += 2) {
+          const a = i / segments;
+          const b = (i + 1) / segments;
+          view.intent.beginPath();
+          view.intent.moveTo(cx + (tx - cx) * a, cy + (ty - cy) * a);
+          view.intent.lineTo(cx + (tx - cx) * b, cy + (ty - cy) * b);
+          view.intent.strokePath();
+        }
+
+        // Ghost tile at the target.
+        const fillAlpha = 0.18 + 0.12 * pulse;
+        view.intent.fillStyle(npc.factionColor, fillAlpha);
+        view.intent.fillRoundedRect(
+          tx - NPC_SIZE / 2,
+          ty - NPC_SIZE / 2,
+          NPC_SIZE,
+          NPC_SIZE,
+          NPC_RADIUS,
+        );
+        view.intent.lineStyle(1.5, npc.factionColor, 0.5 + 0.25 * pulse);
+        view.intent.strokeRoundedRect(
+          tx - NPC_SIZE / 2,
+          ty - NPC_SIZE / 2,
+          NPC_SIZE,
+          NPC_SIZE,
+          NPC_RADIUS,
+        );
+      }
     }
 
     // Drop views for NPCs that disappeared (e.g., after starting a new game).
@@ -194,6 +236,7 @@ export class WorldScene extends Phaser.Scene {
         view.shadow.destroy();
         view.body.destroy();
         view.trail.destroy();
+        view.intent.destroy();
         view.hit.destroy();
         this.npcViews.delete(id);
       }
@@ -214,6 +257,9 @@ export class WorldScene extends Phaser.Scene {
     const cx = rx * REGION + REGION / 2;
     const cy = ry * REGION + REGION / 2;
 
+    // Intent draws beneath everything else so the live NPC sits on top of
+    // both its trail and its target ghost.
+    const intent = this.add.graphics();
     const trail = this.add.graphics();
 
     const shadow = this.add.graphics();
@@ -242,12 +288,13 @@ export class WorldScene extends Phaser.Scene {
       },
     );
 
-    this.npcLayer.add([trail, shadow, body, hit]);
+    this.npcLayer.add([intent, trail, shadow, body, hit]);
 
     return {
       shadow,
       body,
       trail,
+      intent,
       hit,
       prevRx: rx,
       prevRy: ry,

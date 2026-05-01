@@ -5,7 +5,7 @@ import { maybeEmitEvent, type WorldEvent } from "@/lib/sim/events";
 
 export { biomeAt, isPassable, type Biome } from "@/lib/sim/biome";
 
-export const WORLD_VERSION = 2;
+export const WORLD_VERSION = 3;
 export const MAP_W = 12;
 export const MAP_H = 12;
 export const NPC_COUNT = 14;
