@@ -138,6 +138,10 @@ function buildGather(ctx: GoalCtx): Goal | null {
   const maxR = 8;
   for (let dy = -maxR; dy <= maxR; dy++) {
     for (let dx = -maxR; dx <= maxR; dx++) {
+      // Skip the NPC's current region so gather always means "go somewhere".
+      // Otherwise distance-sorted candidates always pick self, the goal
+      // immediately registers as "at target", and the NPC just stands.
+      if (dx === 0 && dy === 0) continue;
       const rx = npc.rx + dx;
       const ry = npc.ry + dy;
       if (!isPassable(rx, ry, mapW, mapH)) continue;

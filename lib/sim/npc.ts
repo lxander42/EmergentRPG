@@ -71,10 +71,11 @@ export function spawnNpc(rng: Rng, id: number, mapW: number, mapH: number): Npc 
     intent: null,
     moveCooldown: rng.int(IDLE_MIN, IDLE_MAX),
     goal: { kind: "wander" },
-    // Stagger initial goal re-picks across NPCs so the population doesn't
-    // synchronize a 200-call pickGoal on tick 1. pickGoal needs the live
-    // world state (regionControl, npcs) which spawnNpc doesn't have.
-    goalTtl: rng.int(0, GOAL_TTL_TICKS),
+    // Stagger initial goal re-picks across the first ~15s so the population
+    // gets varied goals quickly without synchronising 200 pickGoal calls
+    // on tick 1. pickGoal needs live world state (regionControl, npcs)
+    // which spawnNpc doesn't have.
+    goalTtl: rng.int(1, 60),
     stuckCounter: 0,
     lastDistance: -1,
   };
@@ -92,7 +93,10 @@ export function tickNpc(npc: Npc, ctx: TickNpcCtx): Npc {
   const { rng, mapW, mapH } = ctx;
 
   let goal = npc.goal;
-  let goalTtl = npc.goalTtl;
+  // Decrement once at the top so the TTL counts wall-clock ticks rather
+  // than decision cycles. With cooldowns of 12-30 ticks per cycle, the
+  // old per-branch decrement made a 600-tick TTL last 15+ minutes.
+  let goalTtl = Math.max(0, npc.goalTtl - 1);
   let homeRegion = npc.homeRegion;
   let stuckCounter = npc.stuckCounter;
   let lastDistance = npc.lastDistance;
@@ -116,7 +120,7 @@ export function tickNpc(npc: Npc, ctx: TickNpcCtx): Npc {
     const moved: Npc = {
       ...npc,
       goal,
-      goalTtl: goalTtl - 1,
+      goalTtl,
       homeRegion,
       stuckCounter,
       lastDistance,
@@ -135,7 +139,7 @@ export function tickNpc(npc: Npc, ctx: TickNpcCtx): Npc {
     return {
       ...npc,
       goal,
-      goalTtl: goalTtl - 1,
+      goalTtl,
       homeRegion,
       stuckCounter,
       lastDistance,
@@ -148,7 +152,7 @@ export function tickNpc(npc: Npc, ctx: TickNpcCtx): Npc {
       return {
         ...npc,
         goal,
-        goalTtl: goalTtl - 1,
+        goalTtl,
         homeRegion,
         stuckCounter: 0,
         lastDistance: -1,
@@ -159,7 +163,7 @@ export function tickNpc(npc: Npc, ctx: TickNpcCtx): Npc {
     return {
       ...npc,
       goal,
-      goalTtl: goalTtl - 1,
+      goalTtl,
       homeRegion,
       stuckCounter: 0,
       lastDistance: -1,
@@ -190,7 +194,7 @@ export function tickNpc(npc: Npc, ctx: TickNpcCtx): Npc {
   return {
     ...npc,
     goal,
-    goalTtl: goalTtl - 1,
+    goalTtl,
     homeRegion,
     stuckCounter: nextStuck,
     lastDistance: best.d,
