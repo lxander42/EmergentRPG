@@ -21,15 +21,12 @@ const PLAYER_SIZE = 22;
 const NPC_SIZE = 18;
 const RESOURCE_SIZE = 10;
 const BLEND_RADIUS = 1;
-const VIEWPORT_PADDING_TILES = 3;
+// Padding tiles beyond the camera viewport. Generous so the cream
+// background never shows along an edge if the camera happens to overshoot
+// the tile rect by a frame or two during pan/zoom transitions.
+const VIEWPORT_PADDING_TILES = 10;
 const VISIT_BUCKET_TICKS = 24;
 const PAN_THRESHOLD_PX = 6;
-// HUD bar + health/energy/inventory strips cover roughly the top 80
-// logical px of the canvas. Shift the camera target up so the player
-// appears at the centre of the area visible below the HUD, not at the
-// canvas's geometric centre. World units == logical pixels here because
-// camera zoom equals devicePixelRatio.
-const HUD_OFFSET_LOGICAL_PX = 40;
 
 const COLORS = {
   bg: 0xf6f1e8,
@@ -126,7 +123,7 @@ export class BiomeScene extends Phaser.Scene {
       const center = tileCenter(player.gx, player.gy);
       this.playerCx = center.x;
       this.playerCy = center.y;
-      this.cameras.main.centerOn(center.x, center.y - HUD_OFFSET_LOGICAL_PX);
+      this.cameras.main.centerOn(center.x, center.y);
     }
 
     this.input.addPointer(2);
@@ -195,7 +192,7 @@ export class BiomeScene extends Phaser.Scene {
     // Camera is pinned to the player by default; once the user drags it
     // sticks where they put it until the recenter button is tapped.
     if (!this.cameraPanned) {
-      this.cameras.main.centerOn(this.playerCx, this.playerCy - HUD_OFFSET_LOGICAL_PX);
+      this.cameras.main.centerOn(this.playerCx, this.playerCy);
     }
 
     this.drawTiles(world);
@@ -562,7 +559,7 @@ export class BiomeScene extends Phaser.Scene {
 
   private onRecenterRequest = () => {
     this.setCameraPanned(false);
-    this.cameras.main.centerOn(this.playerCx, this.playerCy - HUD_OFFSET_LOGICAL_PX);
+    this.cameras.main.centerOn(this.playerCx, this.playerCy);
   };
 
   private hitVisitorAt(wx: number, wy: number): string | null {

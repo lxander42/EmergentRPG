@@ -64,6 +64,12 @@ export class WorldScene extends Phaser.Scene {
   private readonly tickStepMs = 250;
   private lastDrawnTick = -1;
   private dpr = 1;
+  // Trail of recent regions the player crossed through, oldest first.
+  // Drawn as fading accent dots so the user can see where they came from
+  // when watching from the world map.
+  private readonly playerTrailMax = 6;
+  private playerTrail: Array<{ rx: number; ry: number }> = [];
+  private lastPlayerRegion: { rx: number; ry: number } | null = null;
 
   constructor() {
     super("World");
@@ -99,6 +105,8 @@ export class WorldScene extends Phaser.Scene {
     this.cameras.main.setZoom(0.45 * this.dpr);
     this.cameras.main.centerOn(worldPx / 2, worldPx / 2);
     this.lastDrawnTick = -1;
+    this.playerTrail = [];
+    this.lastPlayerRegion = null;
 
     this.input.addPointer(2);
     this.input.on("pointerdown", this.onPointerDown, this);
@@ -355,6 +363,67 @@ export class WorldScene extends Phaser.Scene {
     const { rx, ry } = globalToLocal(player.gx, player.gy);
     const cx = rx * REGION + REGION / 2;
     const cy = ry * REGION + REGION / 2;
+
+    // Track region transitions so we can draw a fading breadcrumb trail.
+    if (
+      !this.lastPlayerRegion ||
+      this.lastPlayerRegion.rx !== rx ||
+      this.lastPlayerRegion.ry !== ry
+    ) {
+      if (this.lastPlayerRegion) {
+        this.playerTrail.push(this.lastPlayerRegion);
+        if (this.playerTrail.length > this.playerTrailMax) {
+          this.playerTrail.shift();
+        }
+      }
+      this.lastPlayerRegion = { rx, ry };
+    }
+
+    // Trail of recent regions: line from each to the next, plus a dot at
+    // each. Fades from the oldest (most transparent) to the newest.
+    const trailWithCurrent = [...this.playerTrail, { rx, ry }];
+    for (let i = 0; i < trailWithCurrent.length - 1; i++) {
+      const a = trailWithCurrent[i]!;
+      const b = trailWithCurrent[i + 1]!;
+      const ax = a.rx * REGION + REGION / 2;
+      const ay = a.ry * REGION + REGION / 2;
+      const bx = b.rx * REGION + REGION / 2;
+      const by = b.ry * REGION + REGION / 2;
+      const alpha = 0.15 + (i / Math.max(1, trailWithCurrent.length - 1)) * 0.4;
+      this.playerHere.lineStyle(3, COLORS.selection, alpha);
+      this.playerHere.beginPath();
+      this.playerHere.moveTo(ax, ay);
+      this.playerHere.lineTo(bx, by);
+      this.playerHere.strokePath();
+    }
+    this.playerTrail.forEach((r, i) => {
+      const px = r.rx * REGION + REGION / 2;
+      const py = r.ry * REGION + REGION / 2;
+      const alpha = 0.18 + (i / this.playerTrailMax) * 0.4;
+      this.playerHere.fillStyle(COLORS.selection, alpha);
+      this.playerHere.fillCircle(px, py, 5);
+    });
+
+    // Forward indicator: thin line from the player to the destination
+    // region of the current walk so the user can see where they're going
+    // without needing to enter the biome view.
+    if (player.route && player.route.length > 0) {
+      const last = player.route[player.route.length - 1]!;
+      const dst = globalToLocal(last.gx, last.gy);
+      if (dst.rx !== rx || dst.ry !== ry) {
+        const dx = dst.rx * REGION + REGION / 2;
+        const dy = dst.ry * REGION + REGION / 2;
+        const t = this.time.now * 0.004;
+        const pulse = 0.5 + 0.5 * Math.sin(t);
+        this.playerHere.lineStyle(2, COLORS.selection, 0.3 + 0.25 * pulse);
+        this.playerHere.beginPath();
+        this.playerHere.moveTo(cx, cy);
+        this.playerHere.lineTo(dx, dy);
+        this.playerHere.strokePath();
+        this.playerHere.fillStyle(COLORS.selection, 0.4 + 0.3 * pulse);
+        this.playerHere.fillCircle(dx, dy, 5);
+      }
+    }
 
     // Pulsing accent halo so the player's region is unmissable on a
     // map of 200 NPCs. Two concentric rings, ~1.5s pulse cycle.
