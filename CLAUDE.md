@@ -236,15 +236,32 @@ Search `WorldScene.ts` for `npc.intent` and `view.intent`. The ghost square + do
 - **Strict TS.** Use proper types. `noUncheckedIndexedAccess` is on, so `arr[i]` is `T | undefined` — handle that explicitly.
 - **Path alias.** Use `@/...` from anywhere in the app to reference repo-root-relative paths (configured in `tsconfig.json`).
 
-## PR workflow
+## Workflow
 
-Per `CONTRIBUTING.md`:
+`main` is the only persistent branch. There is no `dev`. Every task happens in a short-lived branch checked out as a git **worktree** so multiple sessions can run in parallel without stepping on each other.
 
-- Branch off `dev`, PR into `dev`. Promote `dev → main` periodically.
-- Signed commits are required for human contributors. (Bot commits pushed via the GitHub MCP / Claude Code on the web are not GPG-signed; flag this for the user if it's a blocker.)
-- `npm run typecheck && npm run lint` must pass before requesting review.
-- Vercel publishes a preview URL on every push — open it on a phone before merging.
-- The session's working branch is set in the system prompt; create a new branch when starting a new task rather than reusing one whose PR is already merged.
+**For each task:**
+
+```bash
+# Create a worktree off the latest main, on a new branch.
+git fetch origin main
+git worktree add ../emergentrpg-<task-name> -b claude/<task-name> origin/main
+
+cd ../emergentrpg-<task-name>
+# ...edit, commit...
+git push -u origin claude/<task-name>
+```
+
+Then open a PR against `main` (use `mcp__github__create_pull_request` from the GitHub MCP). When the PR merges, GitHub deletes the branch automatically; remove the worktree with `git worktree remove ../emergentrpg-<task-name>`.
+
+**Rules:**
+
+- Branch names use the `claude/<short-task-name>` convention (the Claude Code harness already follows this).
+- `main` is protected; merges go through PRs with passing CI. Don't try to push to `main` directly.
+- `npm run typecheck && npm run lint && npm run build` must all pass before pushing.
+- Vercel publishes a preview URL on every push — open it on a phone before requesting merge.
+- Don't keep stale branches around. After a PR merges, the branch goes away. If you find a branch other than `main` left over from a previous session, it's probably safe to delete (confirm with the user first).
+- Signed commits aren't enforced. Bot commits pushed via the GitHub MCP / Claude Code on the web aren't GPG-signed by default — that's expected and fine.
 
 ## Vercel notes
 
