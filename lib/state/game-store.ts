@@ -17,6 +17,7 @@ import type { WorldEvent } from "@/lib/sim/events";
 import {
   globalToLocal,
   isLocalObstacle,
+  regionCenterGlobal,
   regionKey,
   resourceAtLocal,
   INTERIOR_W,
@@ -26,7 +27,7 @@ import { bfsPredicate } from "@/lib/sim/path";
 import type { PendingAction, Player } from "@/lib/sim/player";
 
 const AUTOSAVE_EVERY_TICKS = 60;
-const WALK_MAX_RADIUS = 40;
+export const WALK_MAX_RADIUS = 80;
 
 export type SelectedRegion = { rx: number; ry: number };
 export type View = "world" | "biome";
@@ -54,6 +55,7 @@ type GameStore = {
   claimHome: (rx: number, ry: number) => void;
   setView: (v: View) => void;
   walkPlayerTo: (gx: number, gy: number) => void;
+  travelToRegion: (rx: number, ry: number) => void;
   resetAfterDeath: () => void;
 };
 
@@ -204,6 +206,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
       : { ...startingPlayer, pendingAction: null };
 
     set({ world: { ...world, player } });
+  },
+
+  travelToRegion: (rx, ry) => {
+    const w = get().world;
+    if (!w?.player || w.gameOver) return;
+    set({
+      view: "biome",
+      selectedNpcId: null,
+      selectedRegion: null,
+    });
+    bus.emit("npc:deselected");
+    const center = regionCenterGlobal(rx, ry);
+    get().walkPlayerTo(center.gx, center.gy);
   },
 
   resetAfterDeath: () => {

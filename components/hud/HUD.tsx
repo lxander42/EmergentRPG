@@ -106,7 +106,7 @@ export default function HUD() {
       )}
 
       {gameOver && (
-        <div className="pointer-events-auto absolute inset-0 z-20 flex items-center justify-center bg-[rgba(44,40,32,0.55)] p-6">
+        <div className="pointer-events-auto absolute inset-0 z-30 flex items-center justify-center bg-[rgba(44,40,32,0.55)] p-6">
           <div className="max-w-sm rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-center shadow-[0_24px_64px_-24px_rgba(44,40,32,0.5)]">
             <p className="font-mono text-[11px] uppercase tracking-wider text-[var(--color-fg-muted)]">
               The end of one life

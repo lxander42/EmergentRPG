@@ -33,6 +33,7 @@ const COLORS = {
 
 export class WorldScene extends Phaser.Scene {
   private tileLayer!: Phaser.GameObjects.Graphics;
+  private telegraphLayer!: Phaser.GameObjects.Graphics;
   private selectionRing!: Phaser.GameObjects.Graphics;
   private homeMarker!: Phaser.GameObjects.Graphics;
   private playerHere!: Phaser.GameObjects.Graphics;
@@ -49,16 +50,20 @@ export class WorldScene extends Phaser.Scene {
 
   private accumulator = 0;
   private readonly tickStepMs = 250;
+  private lastDrawnTick = -1;
+  private dpr = 1;
 
   constructor() {
     super("World");
   }
 
   create() {
+    this.dpr = (this.game.registry.get("dpr") as number) ?? 1;
     this.cameras.main.setBackgroundColor(COLORS.bg);
     this.tileLayer = this.add.graphics();
     this.drawTiles();
 
+    this.telegraphLayer = this.add.graphics();
     this.npcLayer = this.add.graphics();
     this.homeMarker = this.add.graphics();
     this.homeMarker.setVisible(false);
@@ -70,7 +75,8 @@ export class WorldScene extends Phaser.Scene {
     const worldPx = MAP_W * REGION;
     this.cameras.main.setBounds(-200, -200, worldPx + 400, worldPx + 400);
     this.cameras.main.centerOn(worldPx / 2, worldPx / 2);
-    this.cameras.main.setZoom(0.45);
+    this.cameras.main.setZoom(0.45 * this.dpr);
+    this.lastDrawnTick = -1;
 
     this.input.addPointer(2);
     this.input.on("pointerdown", this.onPointerDown, this);
@@ -80,11 +86,13 @@ export class WorldScene extends Phaser.Scene {
 
     bus.on("npc:deselected", this.clearSelection);
     this.scale.on("resize", this.handleResize, this);
+    this.game.events.on("dprchange", this.onDprChange, this);
   }
 
   shutdown() {
     bus.off("npc:deselected", this.clearSelection);
     this.scale.off("resize", this.handleResize, this);
+    this.game.events.off("dprchange", this.onDprChange, this);
     for (const t of this.overflowText.values()) t.destroy();
     this.overflowText.clear();
     for (const r of this.npcHits.values()) r.destroy();
@@ -106,7 +114,16 @@ export class WorldScene extends Phaser.Scene {
       }
     }
 
-    this.renderNpcs();
+    const world = store.world;
+    if (!world) return;
+
+    // Heavy pieces only re-render on tick boundaries; the camera transform
+    // takes care of pan/zoom redraws automatically.
+    if (world.ticks !== this.lastDrawnTick) {
+      this.renderNpcs(world.npcs);
+      this.renderTelegraphs(world.npcs);
+      this.lastDrawnTick = world.ticks;
+    }
     this.renderHomeMarker();
     this.renderPlayerHere();
     this.renderSelection();
@@ -137,14 +154,53 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
+  private renderTelegraphs(npcs: Npc[]) {
+    this.telegraphLayer.clear();
+    for (const n of npcs) {
+      if (!n.intent) continue;
+      const fromX = n.rx * REGION + REGION / 2;
+      const fromY = n.ry * REGION + REGION / 2;
+      const toX = n.intent.rx * REGION + REGION / 2;
+      const toY = n.intent.ry * REGION + REGION / 2;
+      const shape = factionShape(n.factionId);
+      drawFactionShape(this.telegraphLayer, shape, n.factionColor, toX, toY, SOLO_SHAPE_SIZE - 4, {
+        alpha: 0.32,
+      });
+      this.telegraphLayer.lineStyle(2, n.factionColor, 0.45);
+      const dx = toX - fromX;
+      const dy = toY - fromY;
+      const len = Math.hypot(dx, dy) || 1;
+      const ux = dx / len;
+      const uy = dy / len;
+      const margin = SOLO_SHAPE_SIZE * 0.55;
+      const sx = fromX + ux * margin;
+      const sy = fromY + uy * margin;
+      const ex = toX - ux * margin;
+      const ey = toY - uy * margin;
+      const segLen = 6;
+      const gapLen = 5;
+      let cur = 0;
+      const total = Math.hypot(ex - sx, ey - sy);
+      while (cur < total) {
+        const a = Math.min(cur + segLen, total);
+        const x1 = sx + ux * cur;
+        const y1 = sy + uy * cur;
+        const x2 = sx + ux * a;
+        const y2 = sy + uy * a;
+        this.telegraphLayer.beginPath();
+        this.telegraphLayer.moveTo(x1, y1);
+        this.telegraphLayer.lineTo(x2, y2);
+        this.telegraphLayer.strokePath();
+        cur = a + gapLen;
+      }
+    }
+  }
+
   // Buckets NPCs by region tile then renders up to 4 nested faction shapes
   // per tile, with a "+N" overflow label when more occupy a single region.
-  private renderNpcs() {
-    const world = useGameStore.getState().world;
-    if (!world) return;
-
+  private renderNpcs(npcs: Npc[]) {
     const buckets = new Map<string, Npc[]>();
-    for (const npc of world.npcs) {
+    for (const npc of npcs) {
       const key = `${npc.rx},${npc.ry}`;
       const list = buckets.get(key);
       if (list) list.push(npc);
@@ -153,11 +209,13 @@ export class WorldScene extends Phaser.Scene {
 
     this.npcLayer.clear();
     const seenHits = new Set<string>();
+    const liveLabelKeys = new Set<string>();
 
     for (const [, list] of buckets) {
       const head = list[0]!;
       const cx = head.rx * REGION + REGION / 2;
       const cy = head.ry * REGION + REGION / 2;
+      liveLabelKeys.add(`${head.rx},${head.ry}`);
 
       if (list.length === 1) {
         this.npcLayer.fillStyle(COLORS.shadow, 0.18);
@@ -209,7 +267,10 @@ export class WorldScene extends Phaser.Scene {
           this.overflowText.set(labelKey, label);
         }
         label.setText(txt);
-        label.setPosition(head.rx * REGION + REGION - PADDING - 4, head.ry * REGION + REGION - PADDING - 4);
+        label.setPosition(
+          head.rx * REGION + REGION - PADDING - 4,
+          head.ry * REGION + REGION - PADDING - 4,
+        );
       } else {
         const label = this.overflowText.get(labelKey);
         if (label) {
@@ -219,12 +280,6 @@ export class WorldScene extends Phaser.Scene {
       }
     }
 
-    // Tear down rect overflow labels for tiles that no longer have NPCs.
-    const liveLabelKeys = new Set<string>();
-    for (const [, list] of buckets) {
-      const head = list[0]!;
-      liveLabelKeys.add(`${head.rx},${head.ry}`);
-    }
     for (const [key, label] of this.overflowText) {
       if (!liveLabelKeys.has(key)) {
         label.destroy();
@@ -232,7 +287,6 @@ export class WorldScene extends Phaser.Scene {
       }
     }
 
-    // Tear down any hits for NPCs that vanished.
     for (const [id, hit] of this.npcHits) {
       if (!seenHits.has(id)) {
         hit.destroy();
@@ -348,7 +402,12 @@ export class WorldScene extends Phaser.Scene {
     this.selectionRing.setVisible(false);
   };
 
+  private gameOver(): boolean {
+    return useGameStore.getState().world?.gameOver ?? false;
+  }
+
   private onPointerDown(pointer: Phaser.Input.Pointer) {
+    if (this.gameOver()) return;
     if (this.input.pointer1.isDown && this.input.pointer2.isDown) {
       const dist = Phaser.Math.Distance.Between(
         this.input.pointer1.x,
@@ -367,6 +426,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private onPointerMove(pointer: Phaser.Input.Pointer) {
+    if (this.gameOver()) return;
     if (this.input.pointer1.isDown && this.input.pointer2.isDown && this.pinchInitial) {
       const dist = Phaser.Math.Distance.Between(
         this.input.pointer1.x,
@@ -375,7 +435,7 @@ export class WorldScene extends Phaser.Scene {
         this.input.pointer2.y,
       );
       const factor = dist / this.pinchInitial.dist;
-      const zoom = Phaser.Math.Clamp(this.pinchInitial.zoom * factor, 0.25, 2.0);
+      const zoom = Phaser.Math.Clamp(this.pinchInitial.zoom * factor, 0.25 * this.dpr, 2.0 * this.dpr);
       this.cameras.main.setZoom(zoom);
       return;
     }
@@ -390,6 +450,13 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private onPointerUp(pointer: Phaser.Input.Pointer) {
+    if (this.gameOver()) {
+      this.dragStart = null;
+      this.dragMoved = false;
+      this.pinchInitial = null;
+      this.tappedNpcId = null;
+      return;
+    }
     const wasNpcTap = this.tappedNpcId !== null;
     this.tappedNpcId = null;
 
@@ -419,12 +486,19 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private onWheel(_p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) {
-    const zoom = Phaser.Math.Clamp(this.cameras.main.zoom - dy * 0.001, 0.25, 2.0);
+    const zoom = Phaser.Math.Clamp(this.cameras.main.zoom - dy * 0.001, 0.25 * this.dpr, 2.0 * this.dpr);
     this.cameras.main.setZoom(zoom);
   }
 
   private handleResize = (gameSize: Phaser.Structs.Size) => {
     this.cameras.main.setSize(gameSize.width, gameSize.height);
+  };
+
+  private onDprChange = (dpr: number) => {
+    const ratio = dpr / this.dpr;
+    if (!Number.isFinite(ratio) || ratio === 0) return;
+    this.dpr = dpr;
+    this.cameras.main.setZoom(this.cameras.main.zoom * ratio);
   };
 }
 

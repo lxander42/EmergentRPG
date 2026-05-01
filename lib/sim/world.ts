@@ -124,7 +124,12 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
     player = stepped.player;
     interiors = stepped.interiors;
     inventory = stepped.inventory;
-    if (stepped.death) gameOver = true;
+    if (stepped.death) {
+      gameOver = true;
+      // Strip any active walk so the renderer doesn't keep showing a
+      // stale dotted route after the game-over overlay opens.
+      player = { ...player, route: null, pendingAction: null, stepCooldown: 0 };
+    }
 
     const cur = globalToLocal(player.gx, player.gy);
     const key = regionKey(cur.rx, cur.ry);

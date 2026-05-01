@@ -10,7 +10,7 @@ import {
 } from "@/lib/sim/biome-interior";
 import { biomeAt, blendNoise, type Biome } from "@/lib/sim/biome";
 import { BIOMES } from "@/content/biomes";
-import { RESOURCES } from "@/content/resources";
+import { RESOURCES, type ResourceKind } from "@/content/resources";
 import { FACTIONS } from "@/content/factions";
 import { drawFactionShape } from "@/lib/render/shapes";
 import type { Npc } from "@/lib/sim/npc";
@@ -18,10 +18,12 @@ import type { Npc } from "@/lib/sim/npc";
 const CELL = 36;
 const PLAYER_SIZE = 22;
 const NPC_SIZE = 18;
-const RESOURCE_DOT_R = 5;
-const BLEND_RADIUS = 2;
-const VIEWPORT_PADDING_TILES = 4;
+const RESOURCE_SIZE = 10;
+const BLEND_RADIUS = 1;
+const VIEWPORT_PADDING_TILES = 3;
 const VISIT_BUCKET_TICKS = 24;
+const PAN_DECAY_PER_FRAME = 0.04;
+const PAN_RESET_THRESHOLD_PX = 0.5;
 
 const COLORS = {
   bg: 0xf6f1e8,
@@ -29,6 +31,14 @@ const COLORS = {
   selection: 0xd96846,
   routeDot: 0xd96846,
   shadow: 0x2c2820,
+  obstacleLight: 0xe6dcc8,
+  obstacleDark: 0x6f6555,
+  forestTree: 0x4f6a3e,
+  forestTrunk: 0x6e5238,
+  rock: 0x8a8378,
+  rockShade: 0x67625a,
+  bush: 0x86a06d,
+  cactus: 0x7e9b6a,
 };
 
 type VisitorView = {
@@ -64,14 +74,24 @@ export class BiomeScene extends Phaser.Scene {
   private dragMoved = false;
   private tappedVisitorId: string | null = null;
 
+  // Pan offset added to the camera-follow target so the user can drag the
+  // view away from the player. Decays back toward zero over time so the
+  // camera always returns to the player when you stop dragging.
+  private panOffsetX = 0;
+  private panOffsetY = 0;
+
   private accumulator = 0;
   private readonly tickStepMs = 250;
+  private dpr = 1;
+  private lastDrawnTick = -1;
+  private tileColorCache = new Map<string, number>();
 
   constructor() {
     super("Biome");
   }
 
   create() {
+    this.dpr = (this.game.registry.get("dpr") as number) ?? 1;
     this.cameras.main.setBackgroundColor(COLORS.bg);
     this.tileLayer = this.add.graphics();
     this.resourceLayer = this.add.graphics();
@@ -81,9 +101,13 @@ export class BiomeScene extends Phaser.Scene {
     this.playerShadow = this.add.graphics();
     this.playerLayer = this.add.graphics();
 
-    this.cameras.main.setZoom(1);
+    this.cameras.main.setZoom(this.dpr);
     this.accumulator = 0;
     this.playerTransitionStart = 0;
+    this.lastDrawnTick = -1;
+    this.tileColorCache.clear();
+    this.panOffsetX = 0;
+    this.panOffsetY = 0;
     this.visitorViews.clear();
 
     const player = useGameStore.getState().world?.player;
@@ -104,15 +128,18 @@ export class BiomeScene extends Phaser.Scene {
     this.input.on("pointerup", this.onPointerUp, this);
     this.input.on("wheel", this.onWheel, this);
     this.scale.on("resize", this.handleResize, this);
+    this.game.events.on("dprchange", this.onDprChange, this);
   }
 
   shutdown() {
     this.scale.off("resize", this.handleResize, this);
+    this.game.events.off("dprchange", this.onDprChange, this);
     for (const view of this.visitorViews.values()) {
       view.body.destroy();
       view.hit.destroy();
     }
     this.visitorViews.clear();
+    this.tileColorCache.clear();
   }
 
   update(_time: number, delta: number) {
@@ -157,10 +184,27 @@ export class BiomeScene extends Phaser.Scene {
     this.playerCy = fromCenter.y + (toCenter.y - fromCenter.y) * eased;
     if (t >= 1 && this.playerTransitionStart !== 0) this.playerTransitionStart = 0;
 
-    this.cameras.main.centerOn(this.playerCx, this.playerCy);
+    // Decay any user-drag pan offset back toward zero so the camera
+    // always glides back to centering on the player.
+    if (Math.abs(this.panOffsetX) > PAN_RESET_THRESHOLD_PX) {
+      this.panOffsetX *= 1 - PAN_DECAY_PER_FRAME;
+    } else if (this.panOffsetX !== 0) {
+      this.panOffsetX = 0;
+    }
+    if (Math.abs(this.panOffsetY) > PAN_RESET_THRESHOLD_PX) {
+      this.panOffsetY *= 1 - PAN_DECAY_PER_FRAME;
+    } else if (this.panOffsetY !== 0) {
+      this.panOffsetY = 0;
+    }
+    this.cameras.main.centerOn(this.playerCx + this.panOffsetX, this.playerCy + this.panOffsetY);
 
-    this.drawTiles(world);
-    this.drawResources(world);
+    // Tiles and resources only change when the world ticks (or on first
+    // mount). Camera transforms (pan, zoom) reuse the cached draw.
+    if (world.ticks !== this.lastDrawnTick) {
+      this.drawTiles(world);
+      this.drawResources(world);
+      this.lastDrawnTick = world.ticks;
+    }
     this.drawRoute(player);
     this.drawPlayer();
     this.drawVisitors(world.npcs, world);
@@ -189,19 +233,78 @@ export class BiomeScene extends Phaser.Scene {
         const { rx, ry, lx, ly } = globalToLocal(gx, gy);
         const interior = world.biomeInteriors[regionKey(rx, ry)];
         const biome = interior ? interior.biome : biomeAt(rx, ry);
-        const color = tileColor(gx, gy, biome);
+        const color = this.cachedTileColor(gx, gy, biome);
         const px = gx * CELL;
         const py = gy * CELL;
         this.tileLayer.fillStyle(color, 1);
         this.tileLayer.fillRect(px, py, CELL, CELL);
         if (interior && biome !== "water" && isLocalObstacle(interior, lx, ly)) {
-          const obstacleColor = mixToward(color, 0x000000, 0.32);
-          this.tileLayer.fillStyle(obstacleColor, 1);
-          this.tileLayer.fillRoundedRect(px + 4, py + 4, CELL - 8, CELL - 8, 4);
-          this.tileLayer.fillStyle(COLORS.shadow, 0.18);
-          this.tileLayer.fillRoundedRect(px + 7, py + 7, CELL - 14, CELL - 14, 3);
+          this.drawObstacle(biome, gx, gy);
         }
       }
+    }
+  }
+
+  private cachedTileColor(gx: number, gy: number, biome: Biome): number {
+    const key = `${gx},${gy}`;
+    const cached = this.tileColorCache.get(key);
+    if (cached !== undefined) return cached;
+    const color = computeTileColor(gx, gy, biome);
+    this.tileColorCache.set(key, color);
+    return color;
+  }
+
+  private drawObstacle(biome: Biome, gx: number, gy: number) {
+    const cx = gx * CELL + CELL / 2;
+    const cy = gy * CELL + CELL / 2;
+    switch (biome) {
+      case "forest":
+        // Tree: small brown trunk + green canopy triangle.
+        this.tileLayer.fillStyle(COLORS.forestTrunk, 1);
+        this.tileLayer.fillRect(cx - 2, cy + 4, 4, 8);
+        this.tileLayer.fillStyle(COLORS.forestTree, 1);
+        this.tileLayer.fillTriangle(cx, cy - 13, cx - 11, cy + 6, cx + 11, cy + 6);
+        this.tileLayer.fillStyle(COLORS.shadow, 0.18);
+        this.tileLayer.fillEllipse(cx, cy + 13, 18, 4);
+        break;
+      case "stone":
+        // Rock: irregular pentagon with a darker shade slice.
+        this.tileLayer.fillStyle(COLORS.rock, 1);
+        fillPolygon(this.tileLayer, [
+          [cx - 11, cy + 6],
+          [cx - 8, cy - 6],
+          [cx + 2, cy - 11],
+          [cx + 11, cy - 4],
+          [cx + 8, cy + 9],
+        ]);
+        this.tileLayer.fillStyle(COLORS.rockShade, 1);
+        fillPolygon(this.tileLayer, [
+          [cx - 11, cy + 6],
+          [cx - 8, cy - 6],
+          [cx, cy + 4],
+          [cx + 2, cy + 9],
+        ]);
+        break;
+      case "sand":
+        // Cactus: vertical bar with one offshoot.
+        this.tileLayer.fillStyle(COLORS.cactus, 1);
+        this.tileLayer.fillRoundedRect(cx - 3, cy - 12, 6, 24, 2);
+        this.tileLayer.fillRoundedRect(cx + 3, cy - 4, 7, 5, 2);
+        this.tileLayer.fillRoundedRect(cx + 8, cy - 10, 4, 7, 2);
+        this.tileLayer.fillStyle(COLORS.shadow, 0.18);
+        this.tileLayer.fillEllipse(cx + 1, cy + 13, 14, 4);
+        break;
+      case "grass":
+        // Bush: 3 overlapping circles.
+        this.tileLayer.fillStyle(COLORS.shadow, 0.18);
+        this.tileLayer.fillEllipse(cx, cy + 9, 16, 4);
+        this.tileLayer.fillStyle(COLORS.bush, 1);
+        this.tileLayer.fillCircle(cx - 5, cy + 1, 6);
+        this.tileLayer.fillCircle(cx + 5, cy + 1, 6);
+        this.tileLayer.fillCircle(cx, cy - 4, 7);
+        break;
+      case "water":
+        break;
     }
   }
 
@@ -217,18 +320,132 @@ export class BiomeScene extends Phaser.Scene {
         const interior = world.biomeInteriors[regionKey(rx, ry)];
         if (!interior) continue;
         for (const r of interior.resources) {
-          const meta = RESOURCES[r.kind];
           const cx = (rx * INTERIOR_W + r.lx) * CELL + CELL / 2;
           const cy = (ry * INTERIOR_H + r.ly) * CELL + CELL / 2;
-          const color = hexToInt(meta.swatch);
-          const alpha = meta.food ? 1 : 0.45;
-          this.resourceLayer.fillStyle(COLORS.shadow, alpha * 0.22);
-          this.resourceLayer.fillCircle(cx, cy + 1.5, RESOURCE_DOT_R);
-          this.resourceLayer.fillStyle(color, alpha);
-          this.resourceLayer.fillCircle(cx, cy, RESOURCE_DOT_R);
-          this.resourceLayer.lineStyle(1, 0xffffff, alpha * 0.7);
-          this.resourceLayer.strokeCircle(cx, cy, RESOURCE_DOT_R);
+          this.drawResourceIcon(r.kind, cx, cy);
         }
+      }
+    }
+  }
+
+  private drawResourceIcon(kind: ResourceKind, cx: number, cy: number) {
+    const meta = RESOURCES[kind];
+    const color = hexToInt(meta.swatch);
+    const r = RESOURCE_SIZE / 2;
+
+    this.resourceLayer.fillStyle(COLORS.shadow, 0.18);
+    this.resourceLayer.fillEllipse(cx, cy + r + 1, RESOURCE_SIZE + 2, 3);
+
+    switch (kind) {
+      case "berry": {
+        // Cluster of three small circles -- reads as berries.
+        this.resourceLayer.fillStyle(color, 1);
+        this.resourceLayer.fillCircle(cx - 3, cy + 1, 3);
+        this.resourceLayer.fillCircle(cx + 3, cy + 1, 3);
+        this.resourceLayer.fillCircle(cx, cy - 3, 3);
+        this.resourceLayer.fillStyle(0xffffff, 0.5);
+        this.resourceLayer.fillCircle(cx - 4, cy, 0.8);
+        this.resourceLayer.fillCircle(cx + 2, cy, 0.8);
+        break;
+      }
+      case "herb": {
+        // Pair of leaf shapes from a center stem.
+        this.resourceLayer.fillStyle(color, 1);
+        this.resourceLayer.fillTriangle(cx, cy + 4, cx - 6, cy - 1, cx - 1, cy - 5);
+        this.resourceLayer.fillTriangle(cx, cy + 4, cx + 6, cy - 1, cx + 1, cy - 5);
+        this.resourceLayer.lineStyle(1, COLORS.shadow, 0.4);
+        this.resourceLayer.beginPath();
+        this.resourceLayer.moveTo(cx, cy + 4);
+        this.resourceLayer.lineTo(cx, cy - 4);
+        this.resourceLayer.strokePath();
+        break;
+      }
+      case "grain": {
+        // Three short vertical stalks topped with a small head.
+        this.resourceLayer.lineStyle(1.4, COLORS.shadow, 0.55);
+        for (const ox of [-3, 0, 3]) {
+          this.resourceLayer.beginPath();
+          this.resourceLayer.moveTo(cx + ox, cy + 5);
+          this.resourceLayer.lineTo(cx + ox, cy - 4);
+          this.resourceLayer.strokePath();
+        }
+        this.resourceLayer.fillStyle(color, 1);
+        for (const ox of [-3, 0, 3]) {
+          this.resourceLayer.fillEllipse(cx + ox, cy - 5, 3, 5);
+        }
+        break;
+      }
+      case "shellfish": {
+        // Half-circle clam.
+        this.resourceLayer.fillStyle(color, 1);
+        this.resourceLayer.slice(cx, cy + 1, r + 1, Math.PI, 0, true);
+        this.resourceLayer.fillPath();
+        this.resourceLayer.lineStyle(1, COLORS.shadow, 0.45);
+        for (let i = 0; i < 4; i++) {
+          const a = Math.PI + (Math.PI / 4) * (i + 0.5);
+          this.resourceLayer.beginPath();
+          this.resourceLayer.moveTo(cx, cy + 1);
+          this.resourceLayer.lineTo(cx + Math.cos(a) * (r + 1), cy + 1 + Math.sin(a) * (r + 1));
+          this.resourceLayer.strokePath();
+        }
+        break;
+      }
+      case "tubers": {
+        // Two ovals stacked, root-like.
+        this.resourceLayer.fillStyle(color, 1);
+        this.resourceLayer.fillEllipse(cx - 2, cy + 1, 6, 8);
+        this.resourceLayer.fillEllipse(cx + 3, cy - 1, 5, 7);
+        this.resourceLayer.fillStyle(COLORS.shadow, 0.4);
+        this.resourceLayer.fillCircle(cx - 2, cy, 0.8);
+        this.resourceLayer.fillCircle(cx + 3, cy - 2, 0.8);
+        break;
+      }
+      case "wood": {
+        // Short log with two end-cap rings.
+        this.resourceLayer.fillStyle(color, 0.85);
+        this.resourceLayer.fillRoundedRect(cx - 6, cy - 3, 12, 6, 2);
+        this.resourceLayer.lineStyle(1, COLORS.shadow, 0.5);
+        this.resourceLayer.strokeCircle(cx - 6, cy, 3);
+        this.resourceLayer.strokeCircle(cx + 6, cy, 3);
+        break;
+      }
+      case "reed": {
+        // Three thin vertical strokes.
+        this.resourceLayer.lineStyle(1.6, color, 0.85);
+        for (const ox of [-3, 0, 3]) {
+          this.resourceLayer.beginPath();
+          this.resourceLayer.moveTo(cx + ox, cy + 5);
+          this.resourceLayer.lineTo(cx + ox, cy - 5);
+          this.resourceLayer.strokePath();
+        }
+        break;
+      }
+      case "stone": {
+        // Small irregular pebble.
+        this.resourceLayer.fillStyle(color, 0.85);
+        fillPolygon(this.resourceLayer, [
+          [cx - 5, cy + 2],
+          [cx - 3, cy - 4],
+          [cx + 3, cy - 4],
+          [cx + 5, cy + 1],
+          [cx + 1, cy + 4],
+        ]);
+        this.resourceLayer.fillStyle(COLORS.shadow, 0.18);
+        this.resourceLayer.fillEllipse(cx, cy + 4, 8, 2);
+        break;
+      }
+      case "ore": {
+        // Diamond-shaped chunk with a highlight.
+        this.resourceLayer.fillStyle(color, 0.85);
+        fillPolygon(this.resourceLayer, [
+          [cx, cy - 5],
+          [cx + 5, cy],
+          [cx, cy + 5],
+          [cx - 5, cy],
+        ]);
+        this.resourceLayer.fillStyle(0xffffff, 0.4);
+        this.resourceLayer.fillTriangle(cx - 1, cy - 4, cx - 4, cy - 1, cx - 1, cy - 1);
+        break;
       }
     }
   }
@@ -361,7 +578,12 @@ export class BiomeScene extends Phaser.Scene {
     this.selectionRing.setVisible(true);
   }
 
+  private gameOver(): boolean {
+    return useGameStore.getState().world?.gameOver ?? false;
+  }
+
   private onPointerDown(pointer: Phaser.Input.Pointer) {
+    if (this.gameOver()) return;
     if (this.input.pointer1.isDown && this.input.pointer2.isDown) {
       const dist = Phaser.Math.Distance.Between(
         this.input.pointer1.x,
@@ -380,6 +602,7 @@ export class BiomeScene extends Phaser.Scene {
   }
 
   private onPointerMove(pointer: Phaser.Input.Pointer) {
+    if (this.gameOver()) return;
     if (this.input.pointer1.isDown && this.input.pointer2.isDown && this.pinchInitial) {
       const dist = Phaser.Math.Distance.Between(
         this.input.pointer1.x,
@@ -388,7 +611,9 @@ export class BiomeScene extends Phaser.Scene {
         this.input.pointer2.y,
       );
       const factor = dist / this.pinchInitial.dist;
-      const zoom = Phaser.Math.Clamp(this.pinchInitial.zoom * factor, 0.6, 2.5);
+      const minZ = 0.6 * this.dpr;
+      const maxZ = 2.5 * this.dpr;
+      const zoom = Phaser.Math.Clamp(this.pinchInitial.zoom * factor, minZ, maxZ);
       this.cameras.main.setZoom(zoom);
       return;
     }
@@ -396,11 +621,20 @@ export class BiomeScene extends Phaser.Scene {
       const dx = pointer.x - this.dragStart.x;
       const dy = pointer.y - this.dragStart.y;
       if (Math.abs(dx) + Math.abs(dy) > 6) this.dragMoved = true;
+      this.panOffsetX -= dx / this.cameras.main.zoom;
+      this.panOffsetY -= dy / this.cameras.main.zoom;
       this.dragStart = { x: pointer.x, y: pointer.y };
     }
   }
 
   private onPointerUp(pointer: Phaser.Input.Pointer) {
+    if (this.gameOver()) {
+      this.dragStart = null;
+      this.dragMoved = false;
+      this.pinchInitial = null;
+      this.tappedVisitorId = null;
+      return;
+    }
     const wasVisitorTap = this.tappedVisitorId !== null;
     this.tappedVisitorId = null;
     const dt = this.time.now - this.pointerDownAt;
@@ -415,6 +649,10 @@ export class BiomeScene extends Phaser.Scene {
       const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
       const gx = Math.floor(world.x / CELL);
       const gy = Math.floor(world.y / CELL);
+      // Tapping snaps the camera back to the player by zeroing the pan
+      // offset over the next few frames.
+      this.panOffsetX *= 0.5;
+      this.panOffsetY *= 0.5;
       useGameStore.getState().walkPlayerTo(gx, gy);
     }
 
@@ -424,12 +662,22 @@ export class BiomeScene extends Phaser.Scene {
   }
 
   private onWheel(_p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) {
-    const zoom = Phaser.Math.Clamp(this.cameras.main.zoom - dy * 0.001, 0.6, 2.5);
+    if (this.gameOver()) return;
+    const minZ = 0.6 * this.dpr;
+    const maxZ = 2.5 * this.dpr;
+    const zoom = Phaser.Math.Clamp(this.cameras.main.zoom - dy * 0.001, minZ, maxZ);
     this.cameras.main.setZoom(zoom);
   }
 
   private handleResize = (gameSize: Phaser.Structs.Size) => {
     this.cameras.main.setSize(gameSize.width, gameSize.height);
+  };
+
+  private onDprChange = (dpr: number) => {
+    const ratio = dpr / this.dpr;
+    if (!Number.isFinite(ratio) || ratio === 0) return;
+    this.dpr = dpr;
+    this.cameras.main.setZoom(this.cameras.main.zoom * ratio);
   };
 }
 
@@ -437,7 +685,20 @@ function tileCenter(gx: number, gy: number): { x: number; y: number } {
   return { x: gx * CELL + CELL / 2, y: gy * CELL + CELL / 2 };
 }
 
-function tileColor(gx: number, gy: number, biome: Biome): number {
+function fillPolygon(g: Phaser.GameObjects.Graphics, pts: ReadonlyArray<readonly [number, number]>) {
+  if (pts.length === 0) return;
+  const first = pts[0]!;
+  g.beginPath();
+  g.moveTo(first[0], first[1]);
+  for (let i = 1; i < pts.length; i++) {
+    const p = pts[i]!;
+    g.lineTo(p[0], p[1]);
+  }
+  g.closePath();
+  g.fillPath();
+}
+
+function computeTileColor(gx: number, gy: number, biome: Biome): number {
   const baseHex = BIOMES[biome].swatch;
   const base = hexToInt(baseHex);
   let blendColor = base;
