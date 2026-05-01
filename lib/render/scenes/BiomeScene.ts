@@ -13,6 +13,7 @@ import { BIOMES } from "@/content/biomes";
 import { RESOURCES, type ResourceKind } from "@/content/resources";
 import { FACTIONS } from "@/content/factions";
 import { drawFactionShape } from "@/lib/render/shapes";
+import { bus } from "@/lib/render/bus";
 import type { Npc } from "@/lib/sim/npc";
 
 const CELL = 36;
@@ -22,8 +23,7 @@ const RESOURCE_SIZE = 10;
 const BLEND_RADIUS = 1;
 const VIEWPORT_PADDING_TILES = 3;
 const VISIT_BUCKET_TICKS = 24;
-const PAN_DECAY_PER_FRAME = 0.04;
-const PAN_RESET_THRESHOLD_PX = 0.5;
+const PAN_THRESHOLD_PX = 6;
 
 const COLORS = {
   bg: 0xf6f1e8,
@@ -31,8 +31,8 @@ const COLORS = {
   selection: 0xd96846,
   routeDot: 0xd96846,
   shadow: 0x2c2820,
-  obstacleLight: 0xe6dcc8,
-  obstacleDark: 0x6f6555,
+  // Near-black warm fg colour, matches --color-fg in globals.css.
+  outline: 0x2c2820,
   forestTree: 0x4f6a3e,
   forestTrunk: 0x6e5238,
   rock: 0x8a8378,
@@ -43,12 +43,13 @@ const COLORS = {
 
 type VisitorView = {
   body: Phaser.GameObjects.Graphics;
-  hit: Phaser.GameObjects.Rectangle;
   cx: number;
   cy: number;
   targetCx: number;
   targetCy: number;
 };
+
+type VisitorHit = { id: string; x: number; y: number; half: number };
 
 export class BiomeScene extends Phaser.Scene {
   private tileLayer!: Phaser.GameObjects.Graphics;
@@ -58,6 +59,7 @@ export class BiomeScene extends Phaser.Scene {
   private playerShadow!: Phaser.GameObjects.Graphics;
   private selectionRing!: Phaser.GameObjects.Graphics;
   private visitorViews = new Map<string, VisitorView>();
+  private visitorHits: VisitorHit[] = [];
 
   private playerGx = 0;
   private playerGy = 0;
@@ -72,18 +74,15 @@ export class BiomeScene extends Phaser.Scene {
   private pointerDownAt = 0;
   private pointerDownPos = { x: 0, y: 0 };
   private dragMoved = false;
-  private tappedVisitorId: string | null = null;
 
-  // Pan offset added to the camera-follow target so the user can drag the
-  // view away from the player. Decays back toward zero over time so the
-  // camera always returns to the player when you stop dragging.
-  private panOffsetX = 0;
-  private panOffsetY = 0;
+  // Google-Maps style pan: once the user drags, the camera holds its
+  // absolute scroll position and the player can walk out of view.
+  // A floating recenter button (rendered in React) snaps it back.
+  private cameraPanned = false;
 
   private accumulator = 0;
   private readonly tickStepMs = 250;
   private dpr = 1;
-  private lastDrawnTick = -1;
   private tileColorCache = new Map<string, number>();
 
   constructor() {
@@ -101,14 +100,16 @@ export class BiomeScene extends Phaser.Scene {
     this.playerShadow = this.add.graphics();
     this.playerLayer = this.add.graphics();
 
+    // setZoom must precede centerOn -- centerOn uses the current zoom to
+    // derive scrollX/Y, otherwise the camera lands somewhere far off.
     this.cameras.main.setZoom(this.dpr);
     this.accumulator = 0;
     this.playerTransitionStart = 0;
-    this.lastDrawnTick = -1;
     this.tileColorCache.clear();
-    this.panOffsetX = 0;
-    this.panOffsetY = 0;
+    this.cameraPanned = false;
     this.visitorViews.clear();
+    this.visitorHits = [];
+    bus.emit("biome:panned", { panned: false });
 
     const player = useGameStore.getState().world?.player;
     if (player) {
@@ -129,16 +130,17 @@ export class BiomeScene extends Phaser.Scene {
     this.input.on("wheel", this.onWheel, this);
     this.scale.on("resize", this.handleResize, this);
     this.game.events.on("dprchange", this.onDprChange, this);
+    bus.on("biome:recenter", this.onRecenterRequest);
   }
 
   shutdown() {
     this.scale.off("resize", this.handleResize, this);
     this.game.events.off("dprchange", this.onDprChange, this);
-    for (const view of this.visitorViews.values()) {
-      view.body.destroy();
-      view.hit.destroy();
-    }
+    bus.off("biome:recenter", this.onRecenterRequest);
+    bus.emit("biome:panned", { panned: false });
+    for (const view of this.visitorViews.values()) view.body.destroy();
     this.visitorViews.clear();
+    this.visitorHits = [];
     this.tileColorCache.clear();
   }
 
@@ -184,44 +186,33 @@ export class BiomeScene extends Phaser.Scene {
     this.playerCy = fromCenter.y + (toCenter.y - fromCenter.y) * eased;
     if (t >= 1 && this.playerTransitionStart !== 0) this.playerTransitionStart = 0;
 
-    // Decay any user-drag pan offset back toward zero so the camera
-    // always glides back to centering on the player.
-    if (Math.abs(this.panOffsetX) > PAN_RESET_THRESHOLD_PX) {
-      this.panOffsetX *= 1 - PAN_DECAY_PER_FRAME;
-    } else if (this.panOffsetX !== 0) {
-      this.panOffsetX = 0;
+    // Camera is pinned to the player by default; once the user drags it
+    // sticks where they put it until the recenter button is tapped.
+    if (!this.cameraPanned) {
+      this.cameras.main.centerOn(this.playerCx, this.playerCy);
     }
-    if (Math.abs(this.panOffsetY) > PAN_RESET_THRESHOLD_PX) {
-      this.panOffsetY *= 1 - PAN_DECAY_PER_FRAME;
-    } else if (this.panOffsetY !== 0) {
-      this.panOffsetY = 0;
-    }
-    this.cameras.main.centerOn(this.playerCx + this.panOffsetX, this.playerCy + this.panOffsetY);
 
-    // Tiles and resources only change when the world ticks (or on first
-    // mount). Camera transforms (pan, zoom) reuse the cached draw.
-    if (world.ticks !== this.lastDrawnTick) {
-      this.drawTiles(world);
-      this.drawResources(world);
-      this.lastDrawnTick = world.ticks;
-    }
+    this.drawTiles(world);
+    this.drawResources(world);
     this.drawRoute(player);
     this.drawPlayer();
     this.drawVisitors(world.npcs, world);
     this.drawSelection();
   }
 
+  // Viewport in tile coords -- always expressed relative to the camera so
+  // tiles draw whether the player is centred or the user has panned away.
   private viewport(): { gxMin: number; gyMin: number; gxMax: number; gyMax: number } {
     const cam = this.cameras.main;
+    const widthWorld = cam.width / cam.zoom;
+    const heightWorld = cam.height / cam.zoom;
     const tlx = cam.scrollX;
     const tly = cam.scrollY;
-    const brx = cam.scrollX + cam.width / cam.zoom;
-    const bry = cam.scrollY + cam.height / cam.zoom;
     return {
       gxMin: Math.floor(tlx / CELL) - VIEWPORT_PADDING_TILES,
       gyMin: Math.floor(tly / CELL) - VIEWPORT_PADDING_TILES,
-      gxMax: Math.ceil(brx / CELL) + VIEWPORT_PADDING_TILES,
-      gyMax: Math.ceil(bry / CELL) + VIEWPORT_PADDING_TILES,
+      gxMax: Math.ceil((tlx + widthWorld) / CELL) + VIEWPORT_PADDING_TILES,
+      gyMax: Math.ceil((tly + heightWorld) / CELL) + VIEWPORT_PADDING_TILES,
     };
   }
 
@@ -267,7 +258,7 @@ export class BiomeScene extends Phaser.Scene {
         this.tileLayer.fillStyle(COLORS.shadow, 0.18);
         this.tileLayer.fillEllipse(cx, cy + 13, 18, 4);
         break;
-      case "stone":
+      case "stone": {
         // Rock: irregular pentagon with a darker shade slice.
         this.tileLayer.fillStyle(COLORS.rock, 1);
         fillPolygon(this.tileLayer, [
@@ -285,6 +276,7 @@ export class BiomeScene extends Phaser.Scene {
           [cx + 2, cy + 9],
         ]);
         break;
+      }
       case "sand":
         // Cactus: vertical bar with one offshoot.
         this.tileLayer.fillStyle(COLORS.cactus, 1);
@@ -338,7 +330,6 @@ export class BiomeScene extends Phaser.Scene {
 
     switch (kind) {
       case "berry": {
-        // Cluster of three small circles -- reads as berries.
         this.resourceLayer.fillStyle(color, 1);
         this.resourceLayer.fillCircle(cx - 3, cy + 1, 3);
         this.resourceLayer.fillCircle(cx + 3, cy + 1, 3);
@@ -349,7 +340,6 @@ export class BiomeScene extends Phaser.Scene {
         break;
       }
       case "herb": {
-        // Pair of leaf shapes from a center stem.
         this.resourceLayer.fillStyle(color, 1);
         this.resourceLayer.fillTriangle(cx, cy + 4, cx - 6, cy - 1, cx - 1, cy - 5);
         this.resourceLayer.fillTriangle(cx, cy + 4, cx + 6, cy - 1, cx + 1, cy - 5);
@@ -361,7 +351,6 @@ export class BiomeScene extends Phaser.Scene {
         break;
       }
       case "grain": {
-        // Three short vertical stalks topped with a small head.
         this.resourceLayer.lineStyle(1.4, COLORS.shadow, 0.55);
         for (const ox of [-3, 0, 3]) {
           this.resourceLayer.beginPath();
@@ -376,7 +365,6 @@ export class BiomeScene extends Phaser.Scene {
         break;
       }
       case "shellfish": {
-        // Half-circle clam.
         this.resourceLayer.fillStyle(color, 1);
         this.resourceLayer.slice(cx, cy + 1, r + 1, Math.PI, 0, true);
         this.resourceLayer.fillPath();
@@ -391,7 +379,6 @@ export class BiomeScene extends Phaser.Scene {
         break;
       }
       case "tubers": {
-        // Two ovals stacked, root-like.
         this.resourceLayer.fillStyle(color, 1);
         this.resourceLayer.fillEllipse(cx - 2, cy + 1, 6, 8);
         this.resourceLayer.fillEllipse(cx + 3, cy - 1, 5, 7);
@@ -401,7 +388,6 @@ export class BiomeScene extends Phaser.Scene {
         break;
       }
       case "wood": {
-        // Short log with two end-cap rings.
         this.resourceLayer.fillStyle(color, 0.85);
         this.resourceLayer.fillRoundedRect(cx - 6, cy - 3, 12, 6, 2);
         this.resourceLayer.lineStyle(1, COLORS.shadow, 0.5);
@@ -410,7 +396,6 @@ export class BiomeScene extends Phaser.Scene {
         break;
       }
       case "reed": {
-        // Three thin vertical strokes.
         this.resourceLayer.lineStyle(1.6, color, 0.85);
         for (const ox of [-3, 0, 3]) {
           this.resourceLayer.beginPath();
@@ -421,7 +406,6 @@ export class BiomeScene extends Phaser.Scene {
         break;
       }
       case "stone": {
-        // Small irregular pebble.
         this.resourceLayer.fillStyle(color, 0.85);
         fillPolygon(this.resourceLayer, [
           [cx - 5, cy + 2],
@@ -435,7 +419,6 @@ export class BiomeScene extends Phaser.Scene {
         break;
       }
       case "ore": {
-        // Diamond-shaped chunk with a highlight.
         this.resourceLayer.fillStyle(color, 0.85);
         fillPolygon(this.resourceLayer, [
           [cx, cy - 5],
@@ -493,7 +476,7 @@ export class BiomeScene extends Phaser.Scene {
       this.playerCx,
       this.playerCy,
       PLAYER_SIZE,
-      { stroke: 2, strokeColor: 0xfbf6ed },
+      { stroke: 2, strokeColor: COLORS.outline },
     );
   }
 
@@ -503,6 +486,7 @@ export class BiomeScene extends Phaser.Scene {
     const here = globalToLocal(player.gx, player.gy);
     const visitors = npcs.filter((n) => n.rx === here.rx && n.ry === here.ry);
     const seen = new Set<string>();
+    const hits: VisitorHit[] = [];
     const bucket = Math.floor(world.ticks / VISIT_BUCKET_TICKS);
 
     for (const npc of visitors) {
@@ -513,24 +497,7 @@ export class BiomeScene extends Phaser.Scene {
       let view = this.visitorViews.get(npc.id);
       if (!view) {
         const body = this.add.graphics();
-        const hit = this.add.rectangle(
-          target.x,
-          target.y,
-          NPC_SIZE + 16,
-          NPC_SIZE + 16,
-          0xffffff,
-          0,
-        );
-        hit.setInteractive({ useHandCursor: true });
-        hit.on(
-          "pointerdown",
-          (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
-            e.stopPropagation();
-            this.tappedVisitorId = npc.id;
-            useGameStore.getState().selectNpc(npc.id);
-          },
-        );
-        view = { body, hit, cx: target.x, cy: target.y, targetCx: target.x, targetCy: target.y };
+        view = { body, cx: target.x, cy: target.y, targetCx: target.x, targetCy: target.y };
         this.visitorViews.set(npc.id, view);
       }
       view.targetCx = target.x;
@@ -545,19 +512,18 @@ export class BiomeScene extends Phaser.Scene {
       view.body.fillCircle(view.cx, view.cy + 2, NPC_SIZE / 2);
       drawFactionShape(view.body, shape, npc.factionColor, view.cx, view.cy, NPC_SIZE, {
         stroke: 1.5,
-        strokeColor: 0xfbf6ed,
+        strokeColor: COLORS.outline,
       });
-      view.hit.x = view.cx;
-      view.hit.y = view.cy;
+      hits.push({ id: npc.id, x: view.cx, y: view.cy, half: NPC_SIZE / 2 + 6 });
     }
 
     for (const [id, view] of this.visitorViews) {
       if (!seen.has(id)) {
         view.body.destroy();
-        view.hit.destroy();
         this.visitorViews.delete(id);
       }
     }
+    this.visitorHits = hits;
   }
 
   private drawSelection() {
@@ -580,6 +546,30 @@ export class BiomeScene extends Phaser.Scene {
 
   private gameOver(): boolean {
     return useGameStore.getState().world?.gameOver ?? false;
+  }
+
+  private setCameraPanned(panned: boolean) {
+    if (this.cameraPanned === panned) return;
+    this.cameraPanned = panned;
+    bus.emit("biome:panned", { panned });
+  }
+
+  private onRecenterRequest = () => {
+    this.setCameraPanned(false);
+    this.cameras.main.centerOn(this.playerCx, this.playerCy);
+  };
+
+  private hitVisitorAt(wx: number, wy: number): string | null {
+    let best: { id: string; d2: number } | null = null;
+    for (const h of this.visitorHits) {
+      const dx = wx - h.x;
+      const dy = wy - h.y;
+      const d2 = dx * dx + dy * dy;
+      const r2 = h.half * h.half;
+      if (d2 > r2) continue;
+      if (best === null || d2 < best.d2) best = { id: h.id, d2 };
+    }
+    return best ? best.id : null;
   }
 
   private onPointerDown(pointer: Phaser.Input.Pointer) {
@@ -620,9 +610,12 @@ export class BiomeScene extends Phaser.Scene {
     if (this.dragStart && pointer.isDown) {
       const dx = pointer.x - this.dragStart.x;
       const dy = pointer.y - this.dragStart.y;
-      if (Math.abs(dx) + Math.abs(dy) > 6) this.dragMoved = true;
-      this.panOffsetX -= dx / this.cameras.main.zoom;
-      this.panOffsetY -= dy / this.cameras.main.zoom;
+      if (Math.abs(dx) + Math.abs(dy) > PAN_THRESHOLD_PX) {
+        this.dragMoved = true;
+        this.setCameraPanned(true);
+      }
+      this.cameras.main.scrollX -= dx / this.cameras.main.zoom;
+      this.cameras.main.scrollY -= dy / this.cameras.main.zoom;
       this.dragStart = { x: pointer.x, y: pointer.y };
     }
   }
@@ -632,11 +625,9 @@ export class BiomeScene extends Phaser.Scene {
       this.dragStart = null;
       this.dragMoved = false;
       this.pinchInitial = null;
-      this.tappedVisitorId = null;
       return;
     }
-    const wasVisitorTap = this.tappedVisitorId !== null;
-    this.tappedVisitorId = null;
+
     const dt = this.time.now - this.pointerDownAt;
     const moved = Phaser.Math.Distance.Between(
       this.pointerDownPos.x,
@@ -645,15 +636,16 @@ export class BiomeScene extends Phaser.Scene {
       pointer.y,
     );
 
-    if (!wasVisitorTap && !this.dragMoved && dt < 350 && moved < 10) {
+    if (!this.dragMoved && dt < 350 && moved < 10) {
       const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-      const gx = Math.floor(world.x / CELL);
-      const gy = Math.floor(world.y / CELL);
-      // Tapping snaps the camera back to the player by zeroing the pan
-      // offset over the next few frames.
-      this.panOffsetX *= 0.5;
-      this.panOffsetY *= 0.5;
-      useGameStore.getState().walkPlayerTo(gx, gy);
+      const tappedVisitor = this.hitVisitorAt(world.x, world.y);
+      if (tappedVisitor) {
+        useGameStore.getState().selectNpc(tappedVisitor);
+      } else {
+        const gx = Math.floor(world.x / CELL);
+        const gy = Math.floor(world.y / CELL);
+        useGameStore.getState().walkPlayerTo(gx, gy);
+      }
     }
 
     this.dragStart = null;

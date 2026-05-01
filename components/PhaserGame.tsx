@@ -24,7 +24,12 @@ export default function PhaserGame() {
       const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 3));
 
       const game = new Phaser.Game({
-        type: Phaser.AUTO,
+        // Canvas renderer instead of WebGL: mobile Safari aggressively
+        // discards backgrounded WebGL contexts and doesn't always fire
+        // webglcontextrestored, leaving the canvas black on tab return.
+        // 2D canvas keeps state across visibility changes and is plenty
+        // fast for our Graphics-only rendering.
+        type: Phaser.CANVAS,
         parent: container,
         backgroundColor: "#f6f1e8",
         transparent: false,
@@ -67,41 +72,18 @@ export default function PhaserGame() {
       window.addEventListener("resize", onResize);
       window.addEventListener("orientationchange", onResize);
 
-      // Mobile browsers commonly drop the WebGL context when the tab is
-      // backgrounded. Without these the canvas stays black on return.
+      // Even with the Canvas renderer, the page can be evicted from memory
+      // on iOS, so resize on visibility return as a safety net.
       const onVisibility = () => {
         if (document.visibilityState !== "visible") return;
         sizeCanvas();
-        // Restart the active scene to force a clean redraw with current state.
-        const scenes = game.scene.getScenes(true);
-        for (const s of scenes) {
-          if (s.scene.key === "Boot") continue;
-          s.scene.restart();
-        }
       };
       document.addEventListener("visibilitychange", onVisibility);
 
-      const onContextLost = (e: Event) => {
-        e.preventDefault();
-      };
-      const onContextRestored = () => {
-        sizeCanvas();
-        const scenes = game.scene.getScenes(true);
-        for (const s of scenes) {
-          if (s.scene.key === "Boot") continue;
-          s.scene.restart();
-        }
-      };
-      game.canvas.addEventListener("webglcontextlost", onContextLost);
-      game.canvas.addEventListener("webglcontextrestored", onContextRestored);
-
-      // Stash teardown so cleanup below can call it.
       (gameRef as unknown as { teardown?: () => void }).teardown = () => {
         window.removeEventListener("resize", onResize);
         window.removeEventListener("orientationchange", onResize);
         document.removeEventListener("visibilitychange", onVisibility);
-        game.canvas.removeEventListener("webglcontextlost", onContextLost);
-        game.canvas.removeEventListener("webglcontextrestored", onContextRestored);
       };
     })();
 

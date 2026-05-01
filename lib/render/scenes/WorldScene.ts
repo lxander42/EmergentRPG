@@ -25,10 +25,22 @@ const COLORS = {
   water: 0xa8c8d8,
   sand: 0xe8d8b0,
   stone: 0xb8b0a0,
-  npcStroke: 0xfbf6ed,
+  // Near-black warm fg colour, matches --color-fg in globals.css.
+  outline: 0x2c2820,
   shadow: 0x2c2820,
   selection: 0xd96846,
   player: 0xd96846,
+};
+
+// Tracks where each NPC was last drawn so a single global pointerup
+// hit-test can resolve which NPC was tapped without spawning a Phaser
+// game object per NPC. With 200 NPCs the per-frame cost of 200 hit
+// rectangles dominated the world map's CPU budget.
+type NpcHitTarget = {
+  id: string;
+  x: number;
+  y: number;
+  half: number;
 };
 
 export class WorldScene extends Phaser.Scene {
@@ -39,14 +51,13 @@ export class WorldScene extends Phaser.Scene {
   private playerHere!: Phaser.GameObjects.Graphics;
   private npcLayer!: Phaser.GameObjects.Graphics;
   private overflowText = new Map<string, Phaser.GameObjects.Text>();
-  private npcHits = new Map<string, Phaser.GameObjects.Rectangle>();
+  private npcHits: NpcHitTarget[] = [];
 
   private dragStart: { x: number; y: number } | null = null;
   private pinchInitial: { dist: number; zoom: number } | null = null;
   private pointerDownAt = 0;
   private pointerDownPos = { x: 0, y: 0 };
   private dragMoved = false;
-  private tappedNpcId: string | null = null;
 
   private accumulator = 0;
   private readonly tickStepMs = 250;
@@ -74,8 +85,11 @@ export class WorldScene extends Phaser.Scene {
 
     const worldPx = MAP_W * REGION;
     this.cameras.main.setBounds(-200, -200, worldPx + 400, worldPx + 400);
-    this.cameras.main.centerOn(worldPx / 2, worldPx / 2);
+    // setZoom must happen BEFORE centerOn -- centerOn uses the current zoom
+    // to compute scrollX/Y, so doing it the other way puts the camera in
+    // the wrong place and the world map looks empty / offset on first paint.
     this.cameras.main.setZoom(0.45 * this.dpr);
+    this.cameras.main.centerOn(worldPx / 2, worldPx / 2);
     this.lastDrawnTick = -1;
 
     this.input.addPointer(2);
@@ -95,8 +109,7 @@ export class WorldScene extends Phaser.Scene {
     this.game.events.off("dprchange", this.onDprChange, this);
     for (const t of this.overflowText.values()) t.destroy();
     this.overflowText.clear();
-    for (const r of this.npcHits.values()) r.destroy();
-    this.npcHits.clear();
+    this.npcHits = [];
   }
 
   update(_time: number, delta: number) {
@@ -117,8 +130,6 @@ export class WorldScene extends Phaser.Scene {
     const world = store.world;
     if (!world) return;
 
-    // Heavy pieces only re-render on tick boundaries; the camera transform
-    // takes care of pan/zoom redraws automatically.
     if (world.ticks !== this.lastDrawnTick) {
       this.renderNpcs(world.npcs);
       this.renderTelegraphs(world.npcs);
@@ -198,6 +209,9 @@ export class WorldScene extends Phaser.Scene {
 
   // Buckets NPCs by region tile then renders up to 4 nested faction shapes
   // per tile, with a "+N" overflow label when more occupy a single region.
+  // Hit targets are stored as plain objects in npcHits[] -- no per-NPC
+  // game object, so 200 NPCs cost ~200 number triples instead of 200 Phaser
+  // Rectangles + transforms.
   private renderNpcs(npcs: Npc[]) {
     const buckets = new Map<string, Npc[]>();
     for (const npc of npcs) {
@@ -208,7 +222,7 @@ export class WorldScene extends Phaser.Scene {
     }
 
     this.npcLayer.clear();
-    const seenHits = new Set<string>();
+    const hits: NpcHitTarget[] = [];
     const liveLabelKeys = new Set<string>();
 
     for (const [, list] of buckets) {
@@ -223,10 +237,9 @@ export class WorldScene extends Phaser.Scene {
         const shape = factionShape(head.factionId);
         drawFactionShape(this.npcLayer, shape, head.factionColor, cx, cy, SOLO_SHAPE_SIZE, {
           stroke: 2,
-          strokeColor: COLORS.npcStroke,
+          strokeColor: COLORS.outline,
         });
-        seenHits.add(head.id);
-        this.upsertHit(head.id, cx, cy, SOLO_SHAPE_SIZE + 12);
+        hits.push({ id: head.id, x: cx, y: cy, half: SOLO_SHAPE_SIZE / 2 + 6 });
         continue;
       }
 
@@ -246,10 +259,9 @@ export class WorldScene extends Phaser.Scene {
         this.npcLayer.fillCircle(x, y + 1.5, STACK_SHAPE_SIZE / 2);
         drawFactionShape(this.npcLayer, shape, npc.factionColor, x, y, STACK_SHAPE_SIZE, {
           stroke: 1.2,
-          strokeColor: COLORS.npcStroke,
+          strokeColor: COLORS.outline,
         });
-        seenHits.add(npc.id);
-        this.upsertHit(npc.id, x, y, STACK_SHAPE_SIZE + 8);
+        hits.push({ id: npc.id, x, y, half: STACK_SHAPE_SIZE / 2 + 4 });
       });
 
       const overflow = list.length - visible.length;
@@ -287,34 +299,7 @@ export class WorldScene extends Phaser.Scene {
       }
     }
 
-    for (const [id, hit] of this.npcHits) {
-      if (!seenHits.has(id)) {
-        hit.destroy();
-        this.npcHits.delete(id);
-      }
-    }
-  }
-
-  private upsertHit(id: string, cx: number, cy: number, size: number) {
-    let hit = this.npcHits.get(id);
-    if (!hit) {
-      hit = this.add.rectangle(cx, cy, size, size, 0xffffff, 0);
-      hit.setInteractive({ useHandCursor: true });
-      hit.on(
-        "pointerdown",
-        (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
-          e.stopPropagation();
-          this.tappedNpcId = id;
-          useGameStore.getState().selectNpc(id);
-          bus.emit("npc:selected", { id });
-        },
-      );
-      this.npcHits.set(id, hit);
-    } else {
-      hit.x = cx;
-      hit.y = cy;
-      hit.setSize(size, size);
-    }
+    this.npcHits = hits;
   }
 
   private renderHomeMarker() {
@@ -360,7 +345,7 @@ export class WorldScene extends Phaser.Scene {
     const cy = ry * REGION + REGION / 2;
     drawFactionShape(this.playerHere, "square", COLORS.player, cx, cy, 18, {
       stroke: 2,
-      strokeColor: COLORS.npcStroke,
+      strokeColor: COLORS.outline,
     });
     this.playerHere.setVisible(true);
   }
@@ -370,17 +355,11 @@ export class WorldScene extends Phaser.Scene {
     this.selectionRing.clear();
 
     if (selectedNpcId) {
-      const hit = this.npcHits.get(selectedNpcId);
+      const hit = this.npcHits.find((h) => h.id === selectedNpcId);
       if (hit) {
-        const half = (hit.width as number) / 2 + 2;
+        const half = hit.half + 2;
         this.selectionRing.lineStyle(2.5, COLORS.selection, 1);
-        this.selectionRing.strokeRoundedRect(
-          (hit.x as number) - half,
-          (hit.y as number) - half,
-          half * 2,
-          half * 2,
-          6,
-        );
+        this.selectionRing.strokeRoundedRect(hit.x - half, hit.y - half, half * 2, half * 2, 6);
         this.selectionRing.setVisible(true);
         return;
       }
@@ -454,11 +433,8 @@ export class WorldScene extends Phaser.Scene {
       this.dragStart = null;
       this.dragMoved = false;
       this.pinchInitial = null;
-      this.tappedNpcId = null;
       return;
     }
-    const wasNpcTap = this.tappedNpcId !== null;
-    this.tappedNpcId = null;
 
     const dt = this.time.now - this.pointerDownAt;
     const moved = Phaser.Math.Distance.Between(
@@ -468,21 +444,40 @@ export class WorldScene extends Phaser.Scene {
       pointer.y,
     );
 
-    if (!wasNpcTap && !this.dragMoved && dt < 350 && moved < 10) {
+    if (!this.dragMoved && dt < 350 && moved < 10) {
       const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-      const rx = Math.floor(world.x / REGION);
-      const ry = Math.floor(world.y / REGION);
-      if (rx >= 0 && rx < MAP_W && ry >= 0 && ry < MAP_H) {
-        useGameStore.getState().selectRegion({ rx, ry });
+      const tappedNpc = this.hitNpcAt(world.x, world.y);
+      if (tappedNpc) {
+        useGameStore.getState().selectNpc(tappedNpc);
+        bus.emit("npc:selected", { id: tappedNpc });
       } else {
-        useGameStore.getState().selectNpc(null);
-        useGameStore.getState().selectRegion(null);
+        const rx = Math.floor(world.x / REGION);
+        const ry = Math.floor(world.y / REGION);
+        if (rx >= 0 && rx < MAP_W && ry >= 0 && ry < MAP_H) {
+          useGameStore.getState().selectRegion({ rx, ry });
+        } else {
+          useGameStore.getState().selectNpc(null);
+          useGameStore.getState().selectRegion(null);
+        }
       }
     }
 
     this.dragStart = null;
     this.dragMoved = false;
     this.pinchInitial = null;
+  }
+
+  private hitNpcAt(wx: number, wy: number): string | null {
+    let best: { id: string; d2: number } | null = null;
+    for (const h of this.npcHits) {
+      const dx = wx - h.x;
+      const dy = wy - h.y;
+      const d2 = dx * dx + dy * dy;
+      const r2 = h.half * h.half;
+      if (d2 > r2) continue;
+      if (best === null || d2 < best.d2) best = { id: h.id, d2 };
+    }
+    return best ? best.id : null;
   }
 
   private onWheel(_p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) {
