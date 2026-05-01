@@ -44,6 +44,7 @@ type NpcView = {
 export class WorldScene extends Phaser.Scene {
   private tileLayer!: Phaser.GameObjects.Graphics;
   private selectionRing!: Phaser.GameObjects.Graphics;
+  private homeMarker!: Phaser.GameObjects.Graphics;
   private npcLayer!: Phaser.GameObjects.Container;
   private npcViews = new Map<string, NpcView>();
 
@@ -69,6 +70,8 @@ export class WorldScene extends Phaser.Scene {
     this.drawTiles();
 
     this.npcLayer = this.add.container(0, 0);
+    this.homeMarker = this.add.graphics();
+    this.homeMarker.setVisible(false);
     this.selectionRing = this.add.graphics();
     this.selectionRing.setVisible(false);
 
@@ -96,6 +99,12 @@ export class WorldScene extends Phaser.Scene {
 
   update(_time: number, delta: number) {
     const store = useGameStore.getState();
+
+    if (store.view === "home") {
+      this.scene.start("Home");
+      return;
+    }
+
     if (!store.paused) {
       this.accumulator += delta * store.speed;
       while (this.accumulator >= this.tickStepMs) {
@@ -106,6 +115,7 @@ export class WorldScene extends Phaser.Scene {
     }
 
     this.renderNpcs();
+    this.renderHomeMarker();
   }
 
   private drawTiles() {
@@ -246,6 +256,26 @@ export class WorldScene extends Phaser.Scene {
     }
 
     this.renderSelection();
+  }
+
+  private renderHomeMarker() {
+    const home = useGameStore.getState().world?.home;
+    this.homeMarker.clear();
+    if (!home) {
+      this.homeMarker.setVisible(false);
+      return;
+    }
+    const px = home.rx * REGION + PADDING;
+    const py = home.ry * REGION + PADDING;
+    this.homeMarker.lineStyle(3, COLORS.selection, 0.85);
+    this.homeMarker.strokeRoundedRect(px, py, INNER, INNER, RADIUS);
+    const cx = home.rx * REGION + REGION / 2;
+    const cy = home.ry * REGION + REGION / 2;
+    const size = 18;
+    this.homeMarker.fillStyle(COLORS.selection, 0.9);
+    this.homeMarker.fillTriangle(cx, cy - size * 0.7, cx - size * 0.7, cy, cx + size * 0.7, cy);
+    this.homeMarker.fillRect(cx - size * 0.5, cy - size * 0.05, size, size * 0.55);
+    this.homeMarker.setVisible(true);
   }
 
   // Draws a single coral outline around either the selected NPC or the

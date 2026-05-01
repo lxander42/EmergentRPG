@@ -1,6 +1,6 @@
 "use client";
 
-import { X } from "@phosphor-icons/react/dist/ssr";
+import { House, X } from "@phosphor-icons/react/dist/ssr";
 import { useGameStore } from "@/lib/state/game-store";
 import { biomeAt } from "@/lib/sim/biome";
 import { BIOMES } from "@/content/biomes";
@@ -11,6 +11,8 @@ export default function RegionPanel() {
   const world = useGameStore((s) => s.world);
   const select = useGameStore((s) => s.selectRegion);
   const selectNpc = useGameStore((s) => s.selectNpc);
+  const homePending = useGameStore((s) => s.homePending);
+  const claimHome = useGameStore((s) => s.claimHome);
 
   if (!region || !world) return null;
 
@@ -20,6 +22,7 @@ export default function RegionPanel() {
   const incoming = world.npcs.filter(
     (n) => n.intent && n.intent.rx === region.rx && n.intent.ry === region.ry,
   );
+  const canClaim = homePending && meta.passable;
 
   return (
     <aside
@@ -56,6 +59,16 @@ export default function RegionPanel() {
         <p className="border-t border-[var(--color-border)] pt-4 text-sm leading-relaxed text-[var(--color-fg)] max-w-[60ch]">
           {meta.blurb}
         </p>
+
+        {canClaim && (
+          <button
+            onClick={() => claimHome(region.rx, region.ry)}
+            className="tactile mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[var(--color-accent)] px-4 py-3 text-sm font-medium text-[var(--color-bg)] shadow-[0_8px_24px_-12px_rgba(217,104,70,0.5)]"
+          >
+            <House size={16} weight="fill" />
+            Claim as home base
+          </button>
+        )}
 
         <dl className="mt-4 grid grid-cols-[auto_1fr] items-start gap-x-5 gap-y-3">
           <dt className="font-mono text-[11px] uppercase tracking-wider text-[var(--color-fg-muted)]">

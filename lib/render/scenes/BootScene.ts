@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { useGameStore } from "@/lib/state/game-store";
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -6,6 +7,7 @@ export class BootScene extends Phaser.Scene {
   }
 
   create() {
-    this.scene.start("World");
+    const view = useGameStore.getState().view;
+    this.scene.start(view === "home" ? "Home" : "World");
   }
 }
