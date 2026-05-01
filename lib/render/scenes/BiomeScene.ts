@@ -203,19 +203,25 @@ export class BiomeScene extends Phaser.Scene {
     this.drawSelection();
   }
 
-  // Viewport in tile coords -- always expressed relative to the camera so
-  // tiles draw whether the player is centred or the user has panned away.
+  // Viewport in tile coords. Anchored on the camera's midpoint
+  // (cam.scrollX + cam.width/2) rather than scroll directly because
+  // Phaser's centerOn sets scroll = target - cam.width/2 in CANVAS px,
+  // not in world units; the actual rendered worldView is centred on
+  // (scroll + cam.width/2). Computing extents from that midpoint gives
+  // a tile rect that's symmetric around the player at every zoom.
   private viewport(): { gxMin: number; gyMin: number; gxMax: number; gyMax: number } {
     const cam = this.cameras.main;
-    const widthWorld = cam.width / cam.zoom;
-    const heightWorld = cam.height / cam.zoom;
-    const tlx = cam.scrollX;
-    const tly = cam.scrollY;
+    const midX = cam.scrollX + cam.width * 0.5;
+    const midY = cam.scrollY + cam.height * 0.5;
+    const halfTilesW = Math.ceil(cam.width / cam.zoom / (2 * CELL)) + VIEWPORT_PADDING_TILES;
+    const halfTilesH = Math.ceil(cam.height / cam.zoom / (2 * CELL)) + VIEWPORT_PADDING_TILES;
+    const cgx = Math.round(midX / CELL);
+    const cgy = Math.round(midY / CELL);
     return {
-      gxMin: Math.floor(tlx / CELL) - VIEWPORT_PADDING_TILES,
-      gyMin: Math.floor(tly / CELL) - VIEWPORT_PADDING_TILES,
-      gxMax: Math.ceil((tlx + widthWorld) / CELL) + VIEWPORT_PADDING_TILES,
-      gyMax: Math.ceil((tly + heightWorld) / CELL) + VIEWPORT_PADDING_TILES,
+      gxMin: cgx - halfTilesW,
+      gyMin: cgy - halfTilesH,
+      gxMax: cgx + halfTilesW,
+      gyMax: cgy + halfTilesH,
     };
   }
 
