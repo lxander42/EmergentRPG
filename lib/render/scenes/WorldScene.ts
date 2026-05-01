@@ -51,6 +51,9 @@ export class WorldScene extends Phaser.Scene {
   private pinchInitial: { dist: number; zoom: number } | null = null;
   private pointerDownAt = 0;
   private pointerDownPos = { x: 0, y: 0 };
+  // Set when an NPC's pointerdown handler fires, so the scene-level
+  // pointerup logic doesn't double-up and treat it as a region tap.
+  private tappedNpcId: string | null = null;
 
   private accumulator = 0;
   private readonly tickStepMs = 250;
@@ -242,15 +245,42 @@ export class WorldScene extends Phaser.Scene {
       }
     }
 
-    // Selection ring follows the currently selected NPC's interpolated position.
-    const selectedId = useGameStore.getState().selectedNpcId;
-    if (selectedId) {
-      const v = this.npcViews.get(selectedId);
-      if (v) this.drawSelection(v.body.x, v.body.y);
-      else this.selectionRing.setVisible(false);
-    } else {
-      this.selectionRing.setVisible(false);
+    this.renderSelection();
+  }
+
+  // Draws a single coral outline around either the selected NPC or the
+  // selected region (they're mutually exclusive in the store).
+  private renderSelection() {
+    const { selectedNpcId, selectedRegion } = useGameStore.getState();
+    this.selectionRing.clear();
+
+    if (selectedNpcId) {
+      const v = this.npcViews.get(selectedNpcId);
+      if (v) {
+        const half = NPC_SIZE / 2 + 5;
+        this.selectionRing.lineStyle(2.5, COLORS.selection, 1);
+        this.selectionRing.strokeRoundedRect(
+          v.body.x - half,
+          v.body.y - half,
+          half * 2,
+          half * 2,
+          NPC_RADIUS + 2,
+        );
+        this.selectionRing.setVisible(true);
+        return;
+      }
     }
+
+    if (selectedRegion) {
+      const px = selectedRegion.rx * REGION + PADDING;
+      const py = selectedRegion.ry * REGION + PADDING;
+      this.selectionRing.lineStyle(3, COLORS.selection, 1);
+      this.selectionRing.strokeRoundedRect(px, py, INNER, INNER, RADIUS);
+      this.selectionRing.setVisible(true);
+      return;
+    }
+
+    this.selectionRing.setVisible(false);
   }
 
   private createNpcView(id: string, color: number, rx: number, ry: number): NpcView {
@@ -283,6 +313,7 @@ export class WorldScene extends Phaser.Scene {
       "pointerdown",
       (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
         e.stopPropagation();
+        this.tappedNpcId = id;
         useGameStore.getState().selectNpc(id);
         bus.emit("npc:selected", { id });
       },
@@ -302,14 +333,6 @@ export class WorldScene extends Phaser.Scene {
       ry,
       transitionStart: 0,
     };
-  }
-
-  private drawSelection(x: number, y: number) {
-    const half = NPC_SIZE / 2 + 5;
-    this.selectionRing.clear();
-    this.selectionRing.lineStyle(2.5, COLORS.selection, 1);
-    this.selectionRing.strokeRoundedRect(x - half, y - half, half * 2, half * 2, NPC_RADIUS + 2);
-    this.selectionRing.setVisible(true);
   }
 
   private clearSelection = () => {
@@ -356,6 +379,9 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private onPointerUp(pointer: Phaser.Input.Pointer) {
+    const wasNpcTap = this.tappedNpcId !== null;
+    this.tappedNpcId = null;
+
     const dt = this.time.now - this.pointerDownAt;
     const moved = Phaser.Math.Distance.Between(
       this.pointerDownPos.x,
@@ -363,10 +389,21 @@ export class WorldScene extends Phaser.Scene {
       pointer.x,
       pointer.y,
     );
-    // A tap on empty map (no NPC stopped propagation) deselects.
-    if (dt < 250 && moved < 8 && useGameStore.getState().selectedNpcId) {
-      useGameStore.getState().selectNpc(null);
+
+    if (!wasNpcTap && dt < 250 && moved < 8) {
+      // Convert screen coords to a region cell and select it.
+      const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+      const rx = Math.floor(world.x / REGION);
+      const ry = Math.floor(world.y / REGION);
+      if (rx >= 0 && rx < MAP_W && ry >= 0 && ry < MAP_H) {
+        useGameStore.getState().selectRegion({ rx, ry });
+      } else {
+        // Tap outside the map area -- treat as a "clear selection".
+        useGameStore.getState().selectNpc(null);
+        useGameStore.getState().selectRegion(null);
+      }
     }
+
     this.dragStart = null;
     this.pinchInitial = null;
   }

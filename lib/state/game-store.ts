@@ -8,11 +8,14 @@ import type { WorldEvent } from "@/lib/sim/events";
 
 const AUTOSAVE_EVERY_TICKS = 60;
 
+export type SelectedRegion = { rx: number; ry: number };
+
 type GameStore = {
   world: World | null;
   paused: boolean;
   speed: number;
   selectedNpcId: string | null;
+  selectedRegion: SelectedRegion | null;
   lastEvent: WorldEvent | null;
 
   startNew: () => void;
@@ -23,6 +26,7 @@ type GameStore = {
   togglePause: () => void;
   setSpeed: (s: number) => void;
   selectNpc: (id: string | null) => void;
+  selectRegion: (region: SelectedRegion | null) => void;
 };
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -30,10 +34,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
   paused: false,
   speed: 1,
   selectedNpcId: null,
+  selectedRegion: null,
   lastEvent: null,
 
   startNew: () => {
-    set({ world: createWorld(), selectedNpcId: null, lastEvent: null, paused: false });
+    set({
+      world: createWorld(),
+      selectedNpcId: null,
+      selectedRegion: null,
+      lastEvent: null,
+      paused: false,
+    });
   },
 
   loadFromDisk: async (slot) => {
@@ -63,8 +74,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   togglePause: () => set({ paused: !get().paused }),
   setSpeed: (s) => set({ speed: s }),
+
+  // Selection is mutually exclusive: only one slide-up panel at a time.
   selectNpc: (id) => {
-    set({ selectedNpcId: id });
+    set({ selectedNpcId: id, selectedRegion: id ? null : get().selectedRegion });
     if (!id) bus.emit("npc:deselected");
+  },
+  selectRegion: (region) => {
+    set({ selectedRegion: region, selectedNpcId: region ? null : get().selectedNpcId });
+    if (region) bus.emit("npc:deselected");
   },
 }));
