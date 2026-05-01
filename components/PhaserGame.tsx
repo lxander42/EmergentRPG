@@ -14,6 +14,7 @@ export default function PhaserGame() {
       const Phaser = (await import("phaser")).default;
       const { BootScene } = await import("@/lib/render/scenes/BootScene");
       const { WorldScene } = await import("@/lib/render/scenes/WorldScene");
+      const { HomeScene } = await import("@/lib/render/scenes/HomeScene");
 
       if (cancelled || !containerRef.current) return;
 
@@ -28,7 +29,7 @@ export default function PhaserGame() {
           width: containerRef.current.clientWidth,
           height: containerRef.current.clientHeight,
         },
-        scene: [BootScene, WorldScene],
+        scene: [BootScene, WorldScene, HomeScene],
         input: {
           activePointers: 3,
         },
