@@ -16,6 +16,9 @@ const INNER = REGION - PADDING * 2;
 const STACK_SHAPE_SIZE = 14;
 const SOLO_SHAPE_SIZE = 22;
 const HOME_GLYPH_SIZE = 18;
+// Match BiomeScene -- camera renders below the HUD so the visible map
+// area is centred in what the user can actually see.
+const HUD_LOGICAL_PX = 90;
 
 const COLORS = {
   bg: 0xf6f1e8,
@@ -103,6 +106,7 @@ export class WorldScene extends Phaser.Scene {
     // to compute scrollX/Y, so doing it the other way puts the camera in
     // the wrong place and the world map looks empty / offset on first paint.
     this.cameras.main.setZoom(0.45 * this.dpr);
+    this.applyViewport();
     this.cameras.main.centerOn(worldPx / 2, worldPx / 2);
     this.lastDrawnTick = -1;
     this.playerTrail = [];
@@ -493,6 +497,7 @@ export class WorldScene extends Phaser.Scene {
 
   private onPointerDown(pointer: Phaser.Input.Pointer) {
     if (this.gameOver()) return;
+    if (this.isInHud(pointer.y)) return;
     if (this.input.pointer1.isDown && this.input.pointer2.isDown) {
       const dist = Phaser.Math.Distance.Between(
         this.input.pointer1.x,
@@ -535,7 +540,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private onPointerUp(pointer: Phaser.Input.Pointer) {
-    if (this.gameOver()) {
+    if (this.gameOver() || this.isInHud(pointer.y)) {
       this.dragStart = null;
       this.dragMoved = false;
       this.pinchInitial = null;
@@ -592,8 +597,19 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private handleResize = (gameSize: Phaser.Structs.Size) => {
-    this.cameras.main.setSize(gameSize.width, gameSize.height);
+    this.applyViewport(gameSize);
   };
+
+  private applyViewport(gameSize?: Phaser.Structs.Size) {
+    const w = gameSize ? gameSize.width : this.scale.width;
+    const h = gameSize ? gameSize.height : this.scale.height;
+    const hudPx = HUD_LOGICAL_PX * this.dpr;
+    this.cameras.main.setViewport(0, hudPx, w, Math.max(1, h - hudPx));
+  }
+
+  private isInHud(canvasY: number): boolean {
+    return canvasY < HUD_LOGICAL_PX * this.dpr;
+  }
 
   private onDprChange = (dpr: number) => {
     const ratio = dpr / this.dpr;

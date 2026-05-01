@@ -27,6 +27,11 @@ const BLEND_RADIUS = 1;
 const VIEWPORT_PADDING_TILES = 10;
 const VISIT_BUCKET_TICKS = 24;
 const PAN_THRESHOLD_PX = 6;
+// HUD bar + health/energy/inventory strips cover the top ~90 logical px
+// of the page. Carving the camera viewport down so it renders ONLY in
+// the visible area below the HUD is cleaner than fudging centerOn:
+// centerOn(player) naturally lands at the centre of what the user sees.
+const HUD_LOGICAL_PX = 90;
 
 const COLORS = {
   bg: 0xf6f1e8,
@@ -106,6 +111,7 @@ export class BiomeScene extends Phaser.Scene {
     // setZoom must precede centerOn -- centerOn uses the current zoom to
     // derive scrollX/Y, otherwise the camera lands somewhere far off.
     this.cameras.main.setZoom(this.dpr);
+    this.applyViewport();
     this.accumulator = 0;
     this.playerTransitionStart = 0;
     this.tileColorCache.clear();
@@ -577,6 +583,7 @@ export class BiomeScene extends Phaser.Scene {
 
   private onPointerDown(pointer: Phaser.Input.Pointer) {
     if (this.gameOver()) return;
+    if (this.isInHud(pointer.y)) return;
     if (this.input.pointer1.isDown && this.input.pointer2.isDown) {
       const dist = Phaser.Math.Distance.Between(
         this.input.pointer1.x,
@@ -624,7 +631,7 @@ export class BiomeScene extends Phaser.Scene {
   }
 
   private onPointerUp(pointer: Phaser.Input.Pointer) {
-    if (this.gameOver()) {
+    if (this.gameOver() || this.isInHud(pointer.y)) {
       this.dragStart = null;
       this.dragMoved = false;
       this.pinchInitial = null;
@@ -665,8 +672,19 @@ export class BiomeScene extends Phaser.Scene {
   }
 
   private handleResize = (gameSize: Phaser.Structs.Size) => {
-    this.cameras.main.setSize(gameSize.width, gameSize.height);
+    this.applyViewport(gameSize);
   };
+
+  private applyViewport(gameSize?: Phaser.Structs.Size) {
+    const w = gameSize ? gameSize.width : this.scale.width;
+    const h = gameSize ? gameSize.height : this.scale.height;
+    const hudPx = HUD_LOGICAL_PX * this.dpr;
+    this.cameras.main.setViewport(0, hudPx, w, Math.max(1, h - hudPx));
+  }
+
+  private isInHud(canvasY: number): boolean {
+    return canvasY < HUD_LOGICAL_PX * this.dpr;
+  }
 
   private onDprChange = (dpr: number) => {
     const ratio = dpr / this.dpr;
