@@ -1,16 +1,26 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg: #0b0d10;
-  --color-bg-elevated: #14171c;
-  --color-fg: #e7e9ee;
-  --color-fg-muted: #8a8f99;
-  --color-accent: #b9956a;
-  --color-accent-hot: #d4a574;
-  --color-border: #1f242b;
-  --font-sans:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --font-mono: ui-monospace, "JetBrains Mono", "Fira Code", Menlo, Monaco, Consolas, monospace;
+  /* Mini Motorways inspired palette: warm cream base, soft pastels,
+     a single muted-coral accent. No pure black. */
+  --color-bg: #f6f1e8;
+  --color-surface: #ffffff;
+  --color-surface-warm: #fbf6ed;
+  --color-border: #e6dcc8;
+  --color-border-strong: #cfc3a8;
+  --color-fg: #2c2820;
+  --color-fg-muted: #7a7368;
+  --color-accent: #d96846;
+  --color-accent-soft: #f1bca7;
+  --color-grid: #c4baa6;
+
+  /* Phaser map shares the palette so the bridge from DOM to canvas is seamless. */
+  --color-tile-grass: #cfd9aa;
+  --color-tile-grass-alt: #d8e2b3;
+  --color-tile-forest: #8fa873;
+  --color-tile-water: #a8c8d8;
+  --color-tile-sand: #e8d8b0;
+  --color-tile-stone: #b8b0a0;
 }
 
 html,
@@ -18,7 +28,10 @@ body {
   height: 100%;
   background: var(--color-bg);
   color: var(--color-fg);
-  font-family: var(--font-sans);
+  font-family: var(--font-outfit), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
   overscroll-behavior: none;
 }
 
@@ -28,8 +41,23 @@ body {
   -webkit-touch-callout: none;
 }
 
-/* Disable browser pull-to-refresh / rubber-band over the game canvas. */
 .no-touch-scroll {
   touch-action: none;
   user-select: none;
+}
+
+/* Tactile press feedback the design skill mandates: soft -1px lift on hover,
+   a real downward press on :active. transform-only for hardware acceleration. */
+.tactile {
+  transition:
+    transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 180ms ease;
+  will-change: transform;
+}
+.tactile:hover {
+  transform: translateY(-1px);
+}
+.tactile:active {
+  transform: translateY(1px) scale(0.99);
 }

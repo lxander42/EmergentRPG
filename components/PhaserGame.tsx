@@ -20,7 +20,7 @@ export default function PhaserGame() {
       const game = new Phaser.Game({
         type: Phaser.AUTO,
         parent: containerRef.current,
-        backgroundColor: "#0b0d10",
+        backgroundColor: "#f6f1e8",
         transparent: false,
         scale: {
           mode: Phaser.Scale.RESIZE,
