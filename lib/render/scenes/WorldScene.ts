@@ -45,6 +45,7 @@ type NpcHitTarget = {
 
 export class WorldScene extends Phaser.Scene {
   private tileLayer!: Phaser.GameObjects.Graphics;
+  private factionRingLayer!: Phaser.GameObjects.Graphics;
   private telegraphLayer!: Phaser.GameObjects.Graphics;
   private selectionRing!: Phaser.GameObjects.Graphics;
   private homeMarker!: Phaser.GameObjects.Graphics;
@@ -81,6 +82,7 @@ export class WorldScene extends Phaser.Scene {
     this.tileLayer = this.add.graphics();
     this.drawTiles();
 
+    this.factionRingLayer = this.add.graphics();
     this.telegraphLayer = this.add.graphics();
     this.npcLayer = this.add.graphics();
     this.homeMarker = this.add.graphics();
@@ -152,6 +154,7 @@ export class WorldScene extends Phaser.Scene {
     if (world.ticks !== this.lastDrawnTick) {
       this.renderNpcs(world.npcs);
       this.renderTelegraphs(world.npcs);
+      this.renderFactionRings(world.regionControl, world.home);
       this.lastDrawnTick = world.ticks;
     }
     this.renderHomeMarker();
@@ -181,6 +184,27 @@ export class WorldScene extends Phaser.Scene {
         this.tileLayer.fillStyle(color, 1);
         this.tileLayer.fillRoundedRect(px, py, INNER, INNER, RADIUS);
       }
+    }
+  }
+
+  private renderFactionRings(
+    regionControl: Record<string, string>,
+    home: { rx: number; ry: number } | null,
+  ) {
+    this.factionRingLayer.clear();
+    for (const key of Object.keys(regionControl)) {
+      const factionId = regionControl[key]!;
+      const [sx, sy] = key.split(",");
+      const rx = Number(sx);
+      const ry = Number(sy);
+      if (!Number.isFinite(rx) || !Number.isFinite(ry)) continue;
+      if (home && home.rx === rx && home.ry === ry) continue;
+      const faction = FACTIONS.find((f) => f.id === factionId);
+      if (!faction) continue;
+      const px = rx * REGION + PADDING;
+      const py = ry * REGION + PADDING;
+      this.factionRingLayer.lineStyle(2, faction.color, 0.55);
+      this.factionRingLayer.strokeRoundedRect(px, py, INNER, INNER, RADIUS);
     }
   }
 

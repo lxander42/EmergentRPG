@@ -1,7 +1,11 @@
 import { createRng } from "@/lib/sim/rng";
-import { initialFactions, type FactionState } from "@/lib/sim/faction";
+import { initialFactions, findFaction, type FactionState } from "@/lib/sim/faction";
 import { spawnNpc, tickNpc, type Npc } from "@/lib/sim/npc";
-import { maybeEmitEvent, type WorldEvent } from "@/lib/sim/events";
+import {
+  buildEncounterEvent,
+  maybeEmitEvent,
+  type WorldEvent,
+} from "@/lib/sim/events";
 import {
   generateInterior,
   globalToLocal,
@@ -18,10 +22,11 @@ import { biomeAt, isPassable, type Biome } from "@/lib/sim/biome";
 
 export { biomeAt, isPassable, type Biome } from "@/lib/sim/biome";
 
-export const WORLD_VERSION = 5;
+export const WORLD_VERSION = 6;
 export const MAP_W = 32;
 export const MAP_H = 32;
 export const NPC_COUNT = 200;
+const CONTROL_REBUILD_EVERY = 4;
 
 export type World = {
   version: number;
@@ -35,6 +40,10 @@ export type World = {
   home: { rx: number; ry: number } | null;
   biomeInteriors: Record<string, BiomeInterior>;
   inventory: Inventory;
+  // regionKey -> factionId -> presence count (sparse)
+  regionPresence: Record<string, Partial<Record<string, number>>>;
+  // regionKey -> factionId of the faction currently controlling this region
+  regionControl: Record<string, string>;
   // Set as the player visits regions. Phase 4 reads this for fog-of-war
   // on the world map; for Phase 1 it's just bookkeeping.
   discoveredRegions: Record<string, true>;
@@ -57,6 +66,8 @@ export function createWorld(seed = Date.now() & 0xffffffff): World {
     home: null,
     biomeInteriors: {},
     inventory: {},
+    regionPresence: {},
+    regionControl: {},
     discoveredRegions: {},
     gameOver: false,
   };
@@ -94,7 +105,6 @@ export function claimHome(world: World, rx: number, ry: number): World | null {
   const interior = seeded.biomeInteriors[regionKey(rx, ry)];
   if (!interior) return null;
 
-  // Player spawn might land on an obstacle; nudge to the nearest open tile.
   const spawn = nudgeToOpen(seeded, center.gx, center.gy);
   const player = createPlayer(spawn);
   const discoveredRegions = { ...seeded.discoveredRegions, [regionKey(rx, ry)]: true as const };
@@ -110,7 +120,14 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
   if (world.gameOver) return { world, event: null };
 
   const rng = createRng(world.rngState);
-  const npcs = world.npcs.map((n) => tickNpc(n, rng, MAP_W, MAP_H));
+  const tickCtx = {
+    rng,
+    mapW: MAP_W,
+    mapH: MAP_H,
+    regionControl: world.regionControl,
+    npcs: world.npcs,
+  };
+  const npcs = world.npcs.map((n) => tickNpc(n, tickCtx));
   const ticks = world.ticks + 1;
 
   let player = world.player;
@@ -126,8 +143,6 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
     inventory = stepped.inventory;
     if (stepped.death) {
       gameOver = true;
-      // Strip any active walk so the renderer doesn't keep showing a
-      // stale dotted route after the game-over overlay opens.
       player = { ...player, route: null, pendingAction: null, stepCooldown: 0 };
     }
 
@@ -136,8 +151,15 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
     if (!discoveredRegions[key]) {
       discoveredRegions = { ...discoveredRegions, [key]: true as const };
     }
-    // Make sure the camera always has generated land around the player.
     interiors = ensureNeighbors(interiors, world.seed, cur.rx, cur.ry);
+  }
+
+  let regionPresence = world.regionPresence;
+  let regionControl = world.regionControl;
+  if (ticks % CONTROL_REBUILD_EVERY === 0) {
+    const built = buildPresence(npcs);
+    regionPresence = built.presence;
+    regionControl = built.control;
   }
 
   const next: World = {
@@ -148,15 +170,82 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
     player,
     biomeInteriors: interiors,
     inventory,
+    regionPresence,
+    regionControl,
     discoveredRegions,
     gameOver,
   };
-  const event = maybeEmitEvent(next, rng);
-  if (event) {
-    next.recentEvents = [event, ...next.recentEvents].slice(0, 8);
-    next.rngState = rng.state();
+
+  let encounter: WorldEvent | null = null;
+  if (player) {
+    const playerRegion = globalToLocal(player.gx, player.gy);
+    encounter = detectEncounter(world.npcs, npcs, next, playerRegion, rng);
+    if (encounter) {
+      next.recentEvents = [encounter, ...next.recentEvents].slice(0, 8);
+      next.rngState = rng.state();
+    }
+  }
+
+  let event: WorldEvent | null = encounter;
+  if (!event) {
+    event = maybeEmitEvent(next, rng);
+    if (event) {
+      next.recentEvents = [event, ...next.recentEvents].slice(0, 8);
+      next.rngState = rng.state();
+    }
   }
   return { world: next, event };
+}
+
+function buildPresence(npcs: Npc[]): {
+  presence: Record<string, Partial<Record<string, number>>>;
+  control: Record<string, string>;
+} {
+  const presence: Record<string, Partial<Record<string, number>>> = {};
+  for (const n of npcs) {
+    const key = regionKey(n.rx, n.ry);
+    const cell = presence[key] ?? (presence[key] = {});
+    cell[n.factionId] = (cell[n.factionId] ?? 0) + 1;
+  }
+  const control: Record<string, string> = {};
+  for (const key of Object.keys(presence)) {
+    const cell = presence[key]!;
+    let bestId: string | null = null;
+    let bestCount = 0;
+    let tied = false;
+    for (const [factionId, count] of Object.entries(cell)) {
+      const c = count ?? 0;
+      if (c > bestCount) {
+        bestCount = c;
+        bestId = factionId;
+        tied = false;
+      } else if (c === bestCount && c > 0) {
+        tied = true;
+      }
+    }
+    if (bestId && !tied) control[key] = bestId;
+  }
+  return { presence, control };
+}
+
+function detectEncounter(
+  prevNpcs: Npc[],
+  nextNpcs: Npc[],
+  world: World,
+  playerRegion: { rx: number; ry: number; lx: number; ly: number },
+  rng: import("@/lib/sim/rng").Rng,
+): WorldEvent | null {
+  for (let i = 0; i < nextNpcs.length; i++) {
+    const next = nextNpcs[i]!;
+    const prev = prevNpcs[i];
+    if (!prev) continue;
+    if (prev.rx === next.rx && prev.ry === next.ry) continue;
+    if (next.rx !== playerRegion.rx || next.ry !== playerRegion.ry) continue;
+    const faction = findFaction(world.factions, next.factionId);
+    if (!faction) continue;
+    return buildEncounterEvent(world, next, faction, rng);
+  }
+  return null;
 }
 
 function ensureNeighbors(

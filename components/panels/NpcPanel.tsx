@@ -4,18 +4,21 @@ import { X } from "@phosphor-icons/react/dist/ssr";
 import { useGameStore } from "@/lib/state/game-store";
 import { findNpc } from "@/lib/sim/world";
 import type { Npc } from "@/lib/sim/npc";
-import { FACTIONS, type FactionShape } from "@/content/factions";
+import type { Goal } from "@/lib/sim/goal";
+import { FACTIONS } from "@/content/factions";
+import { RESOURCES } from "@/content/resources";
+import ShapeBadge from "@/components/panels/ShapeBadge";
 
 export default function NpcPanel() {
   const selectedId = useGameStore((s) => s.selectedNpcId);
   const world = useGameStore((s) => s.world);
   const npc = world && selectedId ? findNpc(world, selectedId) : undefined;
 
-  if (!npc) return null;
-  return <NpcPanelInner npc={npc} />;
+  if (!npc || !world) return null;
+  return <NpcPanelInner npc={npc} npcs={world.npcs} />;
 }
 
-function NpcPanelInner({ npc }: { npc: Npc }) {
+function NpcPanelInner({ npc, npcs }: { npc: Npc; npcs: Npc[] }) {
   const select = useGameStore((s) => s.selectNpc);
   const factionColorHex = "#" + npc.factionColor.toString(16).padStart(6, "0");
   const shape = FACTIONS.find((f) => f.id === npc.factionId)?.shape ?? "diamond";
@@ -52,7 +55,7 @@ function NpcPanelInner({ npc }: { npc: Npc }) {
           <dt className="font-mono text-[11px] uppercase tracking-wider text-[var(--color-fg-muted)]">
             Goal
           </dt>
-          <dd className="text-sm text-[var(--color-fg)]">{npc.goal}</dd>
+          <dd className="text-sm text-[var(--color-fg)]">{formatGoal(npc.goal, npcs)}</dd>
 
           <dt className="font-mono text-[11px] uppercase tracking-wider text-[var(--color-fg-muted)]">
             Traits
@@ -84,35 +87,27 @@ function NpcPanelInner({ npc }: { npc: Npc }) {
   );
 }
 
-function ShapeBadge({ shape, color }: { shape: FactionShape; color: string }) {
-  return (
-    <span
-      aria-hidden
-      className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-warm)]"
-    >
-      <svg width="22" height="22" viewBox="-12 -12 24 24" aria-hidden>
-        <ShapePath shape={shape} color={color} />
-      </svg>
-    </span>
-  );
-}
-
-function ShapePath({ shape, color }: { shape: FactionShape; color: string }) {
-  const stroke = "rgba(44,40,32,0.4)";
-  switch (shape) {
-    case "square":
-      return <rect x="-9" y="-9" width="18" height="18" rx="3" fill={color} stroke={stroke} strokeWidth="1" />;
-    case "triangle":
-      return <polygon points="0,-9 9,7 -9,7" fill={color} stroke={stroke} strokeWidth="1" />;
-    case "diamond":
-      return <polygon points="0,-10 10,0 0,10 -10,0" fill={color} stroke={stroke} strokeWidth="1" />;
-    case "hex": {
-      const pts: string[] = [];
-      for (let i = 0; i < 6; i++) {
-        const a = (Math.PI / 3) * i + Math.PI / 6;
-        pts.push(`${(10 * Math.cos(a)).toFixed(2)},${(10 * Math.sin(a)).toFixed(2)}`);
+function formatGoal(goal: Goal, npcs: Npc[]): string {
+  switch (goal.kind) {
+    case "wander":
+      return "Wandering";
+    case "gather": {
+      const label = RESOURCES[goal.resourceKind].label.toLowerCase();
+      if (goal.phase === "outbound") {
+        return `Gathering ${label} at (${goal.targetRegion.rx}, ${goal.targetRegion.ry})`;
       }
-      return <polygon points={pts.join(" ")} fill={color} stroke={stroke} strokeWidth="1" />;
+      return `Returning home with ${label}`;
+    }
+    case "patrol":
+      return `Patrolling ${goal.regions.length} regions`;
+    case "raid": {
+      const target = FACTIONS.find((f) => f.id === goal.targetFactionId);
+      const name = target?.name ?? goal.targetFactionId;
+      return `Raiding ${name} at (${goal.targetRegion.rx}, ${goal.targetRegion.ry})`;
+    }
+    case "trade": {
+      const peer = npcs.find((n) => n.id === goal.peerNpcId);
+      return peer ? `Trading with ${peer.name}` : "Seeking a trade partner";
     }
   }
 }

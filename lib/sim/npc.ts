@@ -2,6 +2,14 @@ import type { Rng } from "@/lib/sim/rng";
 import { isPassable } from "@/lib/sim/biome";
 import { FACTIONS } from "@/content/factions";
 import { NAMES, TRAITS } from "@/content/traits";
+import {
+  advanceGoalState,
+  goalTarget,
+  isGoalDone,
+  pickGoal,
+  GOAL_TTL_TICKS,
+  type Goal,
+} from "@/lib/sim/goal";
 
 export type Intent = { rx: number; ry: number };
 
@@ -14,31 +22,20 @@ export type Npc = {
   values: string[];
   rx: number;
   ry: number;
-  // When set, the NPC has committed to moving to this region. While
-  // intent is non-null, moveCooldown counts down a short telegraph
-  // window before the move executes -- giving the player a chance to
-  // see where they're headed.
+  homeRegion: { rx: number; ry: number };
   intent: Intent | null;
-  // Ticks remaining in the current cycle. While intent is null, this is
-  // an idle window between movement decisions. While intent is set,
-  // it's the telegraph window.
   moveCooldown: number;
-  goal: string;
+  goal: Goal;
+  goalTtl: number;
+  stuckCounter: number;
+  lastDistance: number;
 };
 
-const GOALS = [
-  "seeking work",
-  "looking for a friend",
-  "scouting the woods",
-  "trading goods",
-  "spreading rumor",
-  "praying",
-];
-
-const IDLE_MIN = 12; // 250ms ticks * 12 = 3s minimum idle between cycles
-const IDLE_MAX = 30; // up to 7.5s
-const TELEGRAPH_TICKS = 8; // ~2s of "I'm about to go there" before the move fires
-const MOVE_CHANCE = 0.5; // chance to actually pick a target when idle expires
+const IDLE_MIN = 12;
+const IDLE_MAX = 30;
+const TELEGRAPH_TICKS = 8;
+const MOVE_CHANCE = 0.5;
+const STUCK_THRESHOLD = 4;
 
 export function spawnNpc(rng: Rng, id: number, mapW: number, mapH: number): Npc {
   const faction = rng.pick(FACTIONS);
@@ -49,7 +46,6 @@ export function spawnNpc(rng: Rng, id: number, mapW: number, mapH: number): Npc 
     if (!traits.includes(t)) traits.push(t);
   }
 
-  // Place on a passable (non-water) region. Bounded retries; fall back to centre.
   let rx = Math.floor(mapW / 2);
   let ry = Math.floor(mapH / 2);
   for (let attempt = 0; attempt < 32; attempt++) {
@@ -71,55 +67,159 @@ export function spawnNpc(rng: Rng, id: number, mapW: number, mapH: number): Npc 
     values: [...faction.values],
     rx,
     ry,
+    homeRegion: { rx, ry },
     intent: null,
     moveCooldown: rng.int(IDLE_MIN, IDLE_MAX),
-    goal: rng.pick(GOALS),
+    goal: { kind: "wander" },
+    // Stagger initial goal re-picks across NPCs so the population doesn't
+    // synchronize a 200-call pickGoal on tick 1. pickGoal needs the live
+    // world state (regionControl, npcs) which spawnNpc doesn't have.
+    goalTtl: rng.int(0, GOAL_TTL_TICKS),
+    stuckCounter: 0,
+    lastDistance: -1,
   };
 }
 
-export function tickNpc(npc: Npc, rng: Rng, mapW: number, mapH: number): Npc {
-  const cooldown = npc.moveCooldown ?? 0;
+export type TickNpcCtx = {
+  rng: Rng;
+  mapW: number;
+  mapH: number;
+  regionControl: Record<string, string>;
+  npcs: Npc[];
+};
 
-  if (cooldown > 0) {
-    return { ...npc, moveCooldown: cooldown - 1 };
+export function tickNpc(npc: Npc, ctx: TickNpcCtx): Npc {
+  const { rng, mapW, mapH } = ctx;
+
+  let goal = npc.goal;
+  let goalTtl = npc.goalTtl;
+  let homeRegion = npc.homeRegion;
+  let stuckCounter = npc.stuckCounter;
+  let lastDistance = npc.lastDistance;
+
+  if (goalTtl <= 0 || isGoalDone(npc, goal, ctx.npcs)) {
+    goal = pickGoal({ npc, rng, regionControl: ctx.regionControl, npcs: ctx.npcs, mapW, mapH });
+    goalTtl = GOAL_TTL_TICKS;
+    stuckCounter = 0;
+    lastDistance = -1;
+    if (goal.kind === "gather") {
+      homeRegion = npc.homeRegion;
+    }
   }
 
-  // Cooldown is up. Either execute the telegraphed move, or roll a new cycle.
+  const cooldown = npc.moveCooldown ?? 0;
+  if (cooldown > 0) {
+    return { ...npc, goal, goalTtl, homeRegion, stuckCounter, lastDistance, moveCooldown: cooldown - 1 };
+  }
+
   if (npc.intent) {
-    return {
+    const moved: Npc = {
       ...npc,
+      goal,
+      goalTtl: goalTtl - 1,
+      homeRegion,
+      stuckCounter,
+      lastDistance,
       rx: npc.intent.rx,
       ry: npc.intent.ry,
       intent: null,
       moveCooldown: rng.int(IDLE_MIN, IDLE_MAX),
     };
+    return { ...moved, goal: advanceGoalState(moved, moved.goal) };
   }
 
-  if (!rng.chance(MOVE_CHANCE)) {
-    return { ...npc, moveCooldown: rng.int(IDLE_MIN, IDLE_MAX) };
+  const target = goalTarget(goal, npc, ctx.npcs);
+  const candidates = passableNeighbors(npc.rx, npc.ry, mapW, mapH);
+
+  if (candidates.length === 0) {
+    return {
+      ...npc,
+      goal,
+      goalTtl: goalTtl - 1,
+      homeRegion,
+      stuckCounter,
+      lastDistance,
+      moveCooldown: rng.int(IDLE_MIN, IDLE_MAX),
+    };
   }
 
-  const candidates: Array<[number, number]> = [];
+  if (!target || stuckCounter >= STUCK_THRESHOLD) {
+    if (!rng.chance(MOVE_CHANCE)) {
+      return {
+        ...npc,
+        goal,
+        goalTtl: goalTtl - 1,
+        homeRegion,
+        stuckCounter: 0,
+        lastDistance: -1,
+        moveCooldown: rng.int(IDLE_MIN, IDLE_MAX),
+      };
+    }
+    const random = candidates[rng.int(0, candidates.length)]!;
+    return {
+      ...npc,
+      goal,
+      goalTtl: goalTtl - 1,
+      homeRegion,
+      stuckCounter: 0,
+      lastDistance: -1,
+      intent: { rx: random[0], ry: random[1] },
+      moveCooldown: TELEGRAPH_TICKS,
+    };
+  }
+
+  const currentDistance = manhattan(npc.rx, npc.ry, target.rx, target.ry);
+  const scored = candidates
+    .map(([nx, ny]) => ({ nx, ny, d: manhattan(nx, ny, target.rx, target.ry) }))
+    .sort((a, b) => a.d - b.d);
+  const best = scored[0]!;
+  const tied = scored.filter((s) => s.d === best.d);
+  const choice = tied[rng.int(0, tied.length)]!;
+
+  let nextStuck = stuckCounter;
+  if (lastDistance >= 0 && best.d >= lastDistance) {
+    nextStuck = stuckCounter + 1;
+  } else {
+    nextStuck = 0;
+  }
+
+  if (best.d >= currentDistance) {
+    nextStuck = stuckCounter + 1;
+  }
+
+  return {
+    ...npc,
+    goal,
+    goalTtl: goalTtl - 1,
+    homeRegion,
+    stuckCounter: nextStuck,
+    lastDistance: best.d,
+    intent: { rx: choice.nx, ry: choice.ny },
+    moveCooldown: TELEGRAPH_TICKS,
+  };
+}
+
+function passableNeighbors(
+  rx: number,
+  ry: number,
+  mapW: number,
+  mapH: number,
+): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
   for (const [dx, dy] of [
     [1, 0],
     [-1, 0],
     [0, 1],
     [0, -1],
   ] as const) {
-    const nx = npc.rx + dx;
-    const ny = npc.ry + dy;
+    const nx = rx + dx;
+    const ny = ry + dy;
     if (!isPassable(nx, ny, mapW, mapH)) continue;
-    candidates.push([nx, ny]);
+    out.push([nx, ny]);
   }
+  return out;
+}
 
-  if (candidates.length === 0) {
-    return { ...npc, moveCooldown: rng.int(IDLE_MIN, IDLE_MAX) };
-  }
-
-  const [nx, ny] = rng.pick(candidates);
-  return {
-    ...npc,
-    intent: { rx: nx, ry: ny },
-    moveCooldown: TELEGRAPH_TICKS,
-  };
+function manhattan(ax: number, ay: number, bx: number, by: number): number {
+  return Math.abs(ax - bx) + Math.abs(ay - by);
 }
