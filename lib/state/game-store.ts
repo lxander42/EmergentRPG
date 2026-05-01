@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import { createWorld, tickWorld, type World } from "@/lib/sim/world";
+import { createWorld, tickWorld, WORLD_VERSION, type World } from "@/lib/sim/world";
 import { loadWorld, saveWorld } from "@/lib/save/db";
 import { bus } from "@/lib/render/bus";
 import type { WorldEvent } from "@/lib/sim/events";
@@ -38,8 +38,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   loadFromDisk: async (slot) => {
     const loaded = await loadWorld(slot);
-    if (loaded) set({ world: loaded });
-    else set({ world: createWorld() });
+    if (loaded && loaded.version === WORLD_VERSION) {
+      set({ world: loaded });
+    } else {
+      // Save predates the current world schema -- start fresh.
+      set({ world: createWorld() });
+    }
   },
 
   saveToDisk: async (slot) => {

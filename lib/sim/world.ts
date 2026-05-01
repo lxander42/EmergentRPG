@@ -1,13 +1,17 @@
-import { createRng, type Rng } from "@/lib/sim/rng";
+import { createRng } from "@/lib/sim/rng";
 import { initialFactions, type FactionState } from "@/lib/sim/faction";
 import { spawnNpc, tickNpc, type Npc } from "@/lib/sim/npc";
 import { maybeEmitEvent, type WorldEvent } from "@/lib/sim/events";
 
-export const MAP_W = 48;
-export const MAP_H = 48;
-export const NPC_COUNT = 18;
+export { biomeAt, isPassable, type Biome } from "@/lib/sim/biome";
+
+export const WORLD_VERSION = 2;
+export const MAP_W = 12;
+export const MAP_H = 12;
+export const NPC_COUNT = 14;
 
 export type World = {
+  version: number;
   seed: number;
   rngState: number;
   ticks: number;
@@ -21,6 +25,7 @@ export function createWorld(seed = Date.now() & 0xffffffff): World {
   const npcs: Npc[] = [];
   for (let i = 0; i < NPC_COUNT; i++) npcs.push(spawnNpc(rng, i, MAP_W, MAP_H));
   return {
+    version: WORLD_VERSION,
     seed,
     rngState: rng.state(),
     ticks: 0,
@@ -57,8 +62,4 @@ export function summarizeWorld(world: World): string {
 
 export function findNpc(world: World, id: string): Npc | undefined {
   return world.npcs.find((n) => n.id === id);
-}
-
-export function _internalRng(): Rng {
-  return createRng(0);
 }
