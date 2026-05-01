@@ -21,10 +21,17 @@ Open <http://localhost:3000>.
 
 The intended development flow is from a phone, using [Claude Code](https://claude.ai/code) and Vercel preview deploys:
 
-1. Create a feature branch off `dev`.
+1. Create a worktree off the latest `main` on a new short-lived branch:
+
+   ```bash
+   git fetch origin main
+   git worktree add ../emergentrpg-<task> -b claude/<task> origin/main
+   cd ../emergentrpg-<task>
+   ```
+
 2. Push commits — Vercel builds a preview URL for every push.
 3. Open the preview URL on your phone, **Add to Home Screen** to install the PWA, and test on real hardware.
-4. Open a PR into `dev`.
+4. Open a PR into `main`. Once merged, GitHub deletes the branch and you `git worktree remove ../emergentrpg-<task>`.
 
 The `.claude/hooks/session-start.sh` hook installs npm deps automatically on fresh Claude Code on the web sessions, so a brand-new remote session is ready to run `npm run dev`, `npm run typecheck`, or `npm run lint` without any manual setup.
 
@@ -59,31 +66,16 @@ See `README.md` → "Repository Structure" for the canonical layout. Quick map:
 
 ## Branching Model
 
-- **main** — protected, must always remain stable.
-- **dev** — active development. Create feature branches off `dev`. Periodically merged into `main` when stable.
+`main` is the only persistent branch. It's protected; merges go through PRs with passing CI.
 
-## Signed Commits (Required)
-
-All commits **must be signed**. Signed commits help maintain authorship clarity and accountability as the project grows.
-
-```bash
-git commit -S -m "Your commit message"
-```
-
-Or configure once:
-
-```bash
-git config --global commit.gpgsign true
-```
-
-PRs containing unsigned commits may be rejected or asked to be amended.
+Each task lives in a short-lived `claude/<task-name>` branch checked out as a git worktree off `main`. After the PR merges, the branch is deleted (GitHub handles this automatically) and the worktree is removed locally. There is no `dev` branch.
 
 ## Pull Requests
 
-- Open PRs against `dev`.
+- Open PRs against `main`.
 - Clearly describe what you changed and why.
 - Reference related issues or design docs when applicable.
-- Run `npm run lint` and `npm run typecheck` locally before requesting review.
+- Run `npm run lint`, `npm run typecheck`, and `npm run build` locally before requesting review.
 - Vercel will post a preview URL on the PR — try it on a phone before merging.
 
 ## Questions & Discussion
