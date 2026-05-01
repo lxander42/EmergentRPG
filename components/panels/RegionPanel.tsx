@@ -5,6 +5,7 @@ import { useGameStore } from "@/lib/state/game-store";
 import { biomeAt } from "@/lib/sim/biome";
 import { BIOMES } from "@/content/biomes";
 import { FACTIONS } from "@/content/factions";
+import { BIOME_RESOURCES, RESOURCES } from "@/content/resources";
 
 export default function RegionPanel() {
   const region = useGameStore((s) => s.selectedRegion);
@@ -23,6 +24,7 @@ export default function RegionPanel() {
     (n) => n.intent && n.intent.rx === region.rx && n.intent.ry === region.ry,
   );
   const canClaim = homePending && meta.passable;
+  const foods = BIOME_RESOURCES[biome].food;
 
   return (
     <aside
@@ -59,6 +61,22 @@ export default function RegionPanel() {
         <p className="border-t border-[var(--color-border)] pt-4 text-sm leading-relaxed text-[var(--color-fg)] max-w-[60ch]">
           {meta.blurb}
         </p>
+
+        {foods.length > 0 && (
+          <p className="mt-3 flex flex-wrap items-center gap-2 font-mono text-[11px] uppercase tracking-wider text-[var(--color-fg-muted)]">
+            Foods
+            {foods.map((kind) => (
+              <span key={kind} className="inline-flex items-center gap-1.5 normal-case">
+                <span
+                  aria-hidden
+                  className="h-2.5 w-2.5 rounded-full border border-[var(--color-border-strong)]"
+                  style={{ background: RESOURCES[kind].swatch }}
+                />
+                <span className="text-[var(--color-fg)]">{RESOURCES[kind].label}</span>
+              </span>
+            ))}
+          </p>
+        )}
 
         {canClaim && (
           <button

@@ -1,34 +1,46 @@
 export type PlayerStats = {
-  // Ticks the walker waits between adjacent steps. Lower = faster.
   speed: number;
+  perception: number;
 };
 
 export type PendingAction = { kind: "collect"; resourceId: string };
 
 export type Player = {
-  px: number;
-  py: number;
+  gx: number;
+  gy: number;
   energy: number;
   energyMax: number;
-  energyRegenAccum: number;
+  energyAccumDrain: number;
+  health: number;
+  healthMax: number;
+  starveAccum: number;
   stats: PlayerStats;
-  route: Array<{ px: number; py: number }> | null;
+  route: Array<{ gx: number; gy: number }> | null;
   stepCooldown: number;
   pendingAction: PendingAction | null;
 };
 
+export const ENERGY_MAX = 10;
+export const HEALTH_MAX = 10;
 export const BASE_SPEED_TICKS_PER_TILE = 2;
-export const ENERGY_MAX = 8;
-export const ENERGY_REGEN_TICKS = 20;
+export const BASE_PERCEPTION = 6;
 
-export function createPlayer(spawn: { px: number; py: number }): Player {
+export const WALK_ENERGY_PER_STEP = 0.4;
+export const STARVE_TICKS_PER_DAMAGE = 80;
+export const EAT_ENERGY_PER_FOOD = 3;
+export const EAT_HEALTH_PER_FOOD = 1;
+
+export function createPlayer(spawn: { gx: number; gy: number }): Player {
   return {
-    px: spawn.px,
-    py: spawn.py,
+    gx: spawn.gx,
+    gy: spawn.gy,
     energy: ENERGY_MAX,
     energyMax: ENERGY_MAX,
-    energyRegenAccum: 0,
-    stats: { speed: BASE_SPEED_TICKS_PER_TILE },
+    energyAccumDrain: 0,
+    health: HEALTH_MAX,
+    healthMax: HEALTH_MAX,
+    starveAccum: 0,
+    stats: { speed: BASE_SPEED_TICKS_PER_TILE, perception: BASE_PERCEPTION },
     route: null,
     stepCooldown: 0,
     pendingAction: null,
