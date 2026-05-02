@@ -203,7 +203,11 @@ export class WorldScene extends Phaser.Scene {
       if (!faction) continue;
       const px = rx * REGION + PADDING;
       const py = ry * REGION + PADDING;
-      this.factionRingLayer.lineStyle(2, faction.color, 0.55);
+      // Soft tinted fill so zones read as territory, not as a thin border
+      // that competes with tile edges and the selection ring.
+      this.factionRingLayer.fillStyle(faction.color, 0.28);
+      this.factionRingLayer.fillRoundedRect(px, py, INNER, INNER, RADIUS);
+      this.factionRingLayer.lineStyle(2.5, faction.color, 0.85);
       this.factionRingLayer.strokeRoundedRect(px, py, INNER, INNER, RADIUS);
     }
   }
