@@ -7,6 +7,8 @@ import HUD from "@/components/hud/HUD";
 import NpcPanel from "@/components/panels/NpcPanel";
 import RegionPanel from "@/components/panels/RegionPanel";
 import RecenterButton from "@/components/RecenterButton";
+import EncounterToast from "@/components/EncounterToast";
+import FactionLegend from "@/components/FactionLegend";
 import { useGameStore } from "@/lib/state/game-store";
 
 const PhaserGame = dynamic(() => import("@/components/PhaserGame"), {
@@ -42,8 +44,10 @@ function PlayInner() {
       </div>
       <HUD />
       <RecenterButton />
+      <FactionLegend />
       <NpcPanel />
       <RegionPanel />
+      <EncounterToast />
     </main>
   );
 }

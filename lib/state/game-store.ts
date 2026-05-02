@@ -14,6 +14,7 @@ import {
 import { loadWorld, saveWorld } from "@/lib/save/db";
 import { bus } from "@/lib/render/bus";
 import type { WorldEvent } from "@/lib/sim/events";
+import { gainRep } from "@/lib/sim/faction";
 import {
   globalToLocal,
   isLocalObstacle,
@@ -57,6 +58,9 @@ type GameStore = {
   walkPlayerTo: (gx: number, gy: number) => void;
   travelToRegion: (rx: number, ry: number) => void;
   resetAfterDeath: () => void;
+
+  acceptEncounter: () => void;
+  dismissEncounter: () => void;
 };
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -232,4 +236,27 @@ export const useGameStore = create<GameStore>((set, get) => ({
       homePending: true,
     });
   },
+
+  acceptEncounter: () => {
+    const current = get().world;
+    const event = get().lastEvent;
+    if (!current || !event?.encounter) {
+      set({ lastEvent: null });
+      return;
+    }
+    const enc = event.encounter;
+    if (enc.sentiment !== "friendly") {
+      set({ lastEvent: null });
+      return;
+    }
+    let inventory = current.inventory;
+    if (enc.offer) {
+      const prev = inventory[enc.offer.kind] ?? 0;
+      inventory = { ...inventory, [enc.offer.kind]: prev + enc.offer.amount };
+    }
+    const factions = gainRep(current.factions, enc.factionId, 2);
+    set({ world: { ...current, inventory, factions }, lastEvent: null });
+  },
+
+  dismissEncounter: () => set({ lastEvent: null }),
 }));

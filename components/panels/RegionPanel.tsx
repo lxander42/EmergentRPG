@@ -27,6 +27,8 @@ export default function RegionPanel() {
   );
   const canClaim = homePending && meta.passable;
   const foods = BIOME_RESOURCES[biome].food;
+  const controllerId = world.regionControl[`${region.rx},${region.ry}`];
+  const controller = controllerId ? FACTIONS.find((f) => f.id === controllerId) : undefined;
 
   const player = world.player;
   const playerRegion = player ? globalToLocal(player.gx, player.gy) : null;
@@ -72,6 +74,20 @@ export default function RegionPanel() {
         <p className="border-t border-[var(--color-border)] pt-4 text-sm leading-relaxed text-[var(--color-fg)] max-w-[60ch]">
           {meta.blurb}
         </p>
+
+        {controller && (
+          <p className="mt-3 inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-wider text-[var(--color-fg-muted)]">
+            Held by
+            <span className="inline-flex items-center gap-1.5 normal-case">
+              <span
+                aria-hidden
+                className="h-2.5 w-2.5 rounded-sm border border-[var(--color-border-strong)]"
+                style={{ background: factionHex(controller.color) }}
+              />
+              <span className="text-[var(--color-fg)]">{controller.name}</span>
+            </span>
+          </p>
+        )}
 
         {foods.length > 0 && (
           <p className="mt-3 flex flex-wrap items-center gap-2 font-mono text-[11px] uppercase tracking-wider text-[var(--color-fg-muted)]">
