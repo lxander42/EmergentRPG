@@ -50,6 +50,7 @@ type VisitorView = {
   cy: number;
   targetCx: number;
   targetCy: number;
+  flashUntil: number;
 };
 
 type VisitorHit = { id: string; x: number; y: number; half: number };
@@ -63,6 +64,8 @@ export class BiomeScene extends Phaser.Scene {
   private selectionRing!: Phaser.GameObjects.Graphics;
   private visitorViews = new Map<string, VisitorView>();
   private visitorHits: VisitorHit[] = [];
+  private prevNpcHealth = new Map<string, number>();
+  private prevPlayerHealth = -1;
 
   private playerGx = 0;
   private playerGy = 0;
@@ -197,10 +200,80 @@ export class BiomeScene extends Phaser.Scene {
 
     this.drawTiles(world);
     this.drawResources(world);
+    this.drawLoot(world);
     this.drawRoute(player);
     this.drawPlayer();
     this.drawVisitors(world.npcs, world);
+    this.detectHits(world.npcs, world.player.health);
     this.drawSelection();
+  }
+
+  private drawLoot(world: { biomeInteriors: Record<string, BiomeInterior> }) {
+    const v = this.viewport();
+    const rxMin = Math.floor(v.gxMin / INTERIOR_W);
+    const rxMax = Math.floor(v.gxMax / INTERIOR_W);
+    const ryMin = Math.floor(v.gyMin / INTERIOR_H);
+    const ryMax = Math.floor(v.gyMax / INTERIOR_H);
+    for (let ry = ryMin; ry <= ryMax; ry++) {
+      for (let rx = rxMin; rx <= rxMax; rx++) {
+        const interior = world.biomeInteriors[regionKey(rx, ry)];
+        if (!interior) continue;
+        for (const pile of interior.loot) {
+          const cx = (rx * INTERIOR_W + pile.lx) * CELL + CELL / 2;
+          const cy = (ry * INTERIOR_H + pile.ly) * CELL + CELL / 2;
+          this.resourceLayer.fillStyle(COLORS.shadow, 0.18);
+          this.resourceLayer.fillEllipse(cx, cy + 6, 12, 3);
+          this.resourceLayer.fillStyle(0xc0a878, 0.95);
+          this.resourceLayer.fillRoundedRect(cx - 6, cy - 4, 12, 8, 2);
+          this.resourceLayer.lineStyle(1, COLORS.shadow, 0.5);
+          this.resourceLayer.strokeRoundedRect(cx - 6, cy - 4, 12, 8, 2);
+        }
+      }
+    }
+  }
+
+  private detectHits(npcs: Npc[], playerHealth: number) {
+    if (this.prevPlayerHealth >= 0 && playerHealth < this.prevPlayerHealth) {
+      const damage = this.prevPlayerHealth - playerHealth;
+      this.spawnDamageText(this.playerCx, this.playerCy - 10, damage);
+    }
+    this.prevPlayerHealth = playerHealth;
+
+    const seenIds = new Set<string>();
+    for (const npc of npcs) {
+      seenIds.add(npc.id);
+      const prev = this.prevNpcHealth.get(npc.id);
+      if (prev !== undefined && npc.combatHealth < prev) {
+        const damage = prev - npc.combatHealth;
+        const view = this.visitorViews.get(npc.id);
+        if (view) {
+          this.spawnDamageText(view.cx, view.cy - 10, damage);
+          view.flashUntil = this.time.now + 180;
+        }
+      }
+      this.prevNpcHealth.set(npc.id, npc.combatHealth);
+    }
+    for (const id of this.prevNpcHealth.keys()) {
+      if (!seenIds.has(id)) this.prevNpcHealth.delete(id);
+    }
+  }
+
+  private spawnDamageText(x: number, y: number, damage: number) {
+    const text = this.add.text(x, y, `-${damage}`, {
+      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+      fontSize: "12px",
+      color: "#d96846",
+    });
+    text.setOrigin(0.5, 1);
+    text.setDepth(10);
+    this.tweens.add({
+      targets: text,
+      y: y - 18,
+      alpha: { from: 1, to: 0 },
+      duration: 600,
+      ease: "Cubic.easeOut",
+      onComplete: () => text.destroy(),
+    });
   }
 
   // Viewport in tile coords. Anchored on the camera's midpoint
@@ -500,26 +573,42 @@ export class BiomeScene extends Phaser.Scene {
 
     for (const npc of visitors) {
       seen.add(npc.id);
-      const slot = visitorSlot(npc.id, bucket, here.rx, here.ry, player.gx, player.gy);
-      const target = tileCenter(slot.gx, slot.gy);
+      let target: { x: number; y: number };
+      if (npc.interior) {
+        const gx = here.rx * INTERIOR_W + npc.interior.lx;
+        const gy = here.ry * INTERIOR_H + npc.interior.ly;
+        target = tileCenter(gx, gy);
+      } else {
+        const slot = visitorSlot(npc.id, bucket, here.rx, here.ry, player.gx, player.gy);
+        target = tileCenter(slot.gx, slot.gy);
+      }
 
       let view = this.visitorViews.get(npc.id);
       if (!view) {
         const body = this.add.graphics();
-        view = { body, cx: target.x, cy: target.y, targetCx: target.x, targetCy: target.y };
+        view = {
+          body,
+          cx: target.x,
+          cy: target.y,
+          targetCx: target.x,
+          targetCy: target.y,
+          flashUntil: 0,
+        };
         this.visitorViews.set(npc.id, view);
       }
       view.targetCx = target.x;
       view.targetCy = target.y;
-      view.cx += (view.targetCx - view.cx) * 0.08;
-      view.cy += (view.targetCy - view.cy) * 0.08;
+      view.cx += (view.targetCx - view.cx) * 0.18;
+      view.cy += (view.targetCy - view.cy) * 0.18;
 
       const faction = FACTIONS.find((f) => f.id === npc.factionId);
       const shape = faction?.shape ?? "diamond";
       view.body.clear();
       view.body.fillStyle(COLORS.shadow, 0.18);
       view.body.fillCircle(view.cx, view.cy + 2, NPC_SIZE / 2);
-      drawFactionShape(view.body, shape, npc.factionColor, view.cx, view.cy, NPC_SIZE, {
+      const flashing = this.time.now < view.flashUntil;
+      const fillColor = flashing ? 0xffffff : npc.factionColor;
+      drawFactionShape(view.body, shape, fillColor, view.cx, view.cy, NPC_SIZE, {
         stroke: 1.5,
         strokeColor: COLORS.outline,
       });

@@ -12,6 +12,9 @@ import {
 } from "@phosphor-icons/react/dist/ssr";
 import { useGameStore } from "@/lib/state/game-store";
 import { RESOURCES, type ResourceKind } from "@/content/resources";
+import { globalToLocal } from "@/lib/sim/biome-interior";
+import type { GameOverReason } from "@/lib/sim/world";
+import { findFaction } from "@/lib/sim/faction";
 
 const SPEEDS = [1, 2, 4] as const;
 
@@ -28,6 +31,22 @@ export default function HUD() {
   const player = useGameStore((s) => s.world?.player ?? null);
   const inventory = useGameStore((s) => s.world?.inventory ?? {});
   const gameOver = useGameStore((s) => s.world?.gameOver ?? false);
+  const gameOverReason = useGameStore((s) => s.world?.gameOverReason ?? null);
+  const inCombat = useGameStore((s) => {
+    const w = s.world;
+    if (!w?.player) return false;
+    const here = globalToLocal(w.player.gx, w.player.gy);
+    for (const n of w.npcs) {
+      if (n.rx !== here.rx || n.ry !== here.ry) continue;
+      if ((w.playerReputation[n.factionId] ?? 0) < 0) return true;
+    }
+    return false;
+  });
+  const killerFactionName = useGameStore((s) => {
+    const w = s.world;
+    if (!w || !w.gameOverReason || w.gameOverReason === "starved") return null;
+    return findFaction(w.factions, w.gameOverReason.factionId)?.name ?? null;
+  });
   const resetAfterDeath = useGameStore((s) => s.resetAfterDeath);
 
   return (
@@ -99,7 +118,7 @@ export default function HUD() {
 
       {player && (
         <div className="pointer-events-none absolute inset-x-2 top-16 z-10 flex flex-wrap items-center justify-end gap-2">
-          <HealthStrip health={player.health} max={player.healthMax} />
+          <HealthStrip health={player.health} max={player.healthMax} inCombat={inCombat} />
           <EnergyStrip energy={player.energy} max={player.energyMax} />
           {view === "biome" && <InventoryStrip inventory={inventory} />}
         </div>
@@ -112,10 +131,10 @@ export default function HUD() {
               The end of one life
             </p>
             <h2 className="mt-2 text-[1.75rem] font-medium tracking-tight leading-[1.05] text-[var(--color-fg)]">
-              You died.
+              {gameOverHeadline(gameOverReason)}
             </h2>
             <p className="mt-3 text-sm leading-relaxed text-[var(--color-fg-muted)] max-w-[34ch] mx-auto">
-              The world remembers. Begin a new life and the land itself will be different.
+              {gameOverBody(gameOverReason, killerFactionName)}
             </p>
             <button
               onClick={resetAfterDeath}
@@ -130,10 +149,42 @@ export default function HUD() {
   );
 }
 
-function HealthStrip({ health, max }: { health: number; max: number }) {
+function gameOverHeadline(reason: GameOverReason | null): string {
+  if (!reason || reason === "starved") return "You starved.";
+  return `Killed by ${reason.killerName}.`;
+}
+
+function gameOverBody(
+  reason: GameOverReason | null,
+  factionName: string | null,
+): string {
+  if (!reason || reason === "starved") {
+    return "Hunger took the rest. The land remembers; begin a new life.";
+  }
+  if (factionName) {
+    return `A blade of the ${factionName} ended this run. The world remembers; begin a new life.`;
+  }
+  return "The world remembers; begin a new life.";
+}
+
+function HealthStrip({
+  health,
+  max,
+  inCombat,
+}: {
+  health: number;
+  max: number;
+  inCombat: boolean;
+}) {
   const low = health > 0 && health <= Math.ceil(max / 2);
   return (
     <div className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]">
+      {inCombat && (
+        <span
+          aria-hidden
+          className="h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] animate-pulse"
+        />
+      )}
       <Heart
         size={14}
         weight="fill"

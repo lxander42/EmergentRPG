@@ -19,10 +19,11 @@ import { createPlayer } from "@/lib/sim/player";
 import { tickPlayer } from "@/lib/sim/player-tick";
 import type { Inventory } from "@/lib/sim/inventory";
 import { biomeAt, isPassable, type Biome } from "@/lib/sim/biome";
+import { tickCombat } from "@/lib/sim/combat";
 
 export { biomeAt, isPassable, type Biome } from "@/lib/sim/biome";
 
-export const WORLD_VERSION = 6;
+export const WORLD_VERSION = 7;
 export const MAP_W = 32;
 export const MAP_H = 32;
 export const NPC_COUNT = 200;
@@ -34,6 +35,10 @@ const CONTROL_DECAY_EVERY = 16;
 const CONTROL_DECAY_FACTOR = 0.85;
 const CONTROL_THRESHOLD = 5;
 const CONTROL_DROP_BELOW = 0.5;
+
+export type GameOverReason =
+  | "starved"
+  | { kind: "killed"; killerNpcId: string; killerName: string; factionId: string };
 
 export type World = {
   version: number;
@@ -54,7 +59,12 @@ export type World = {
   // Set as the player visits regions. Phase 4 reads this for fog-of-war
   // on the world map; for Phase 1 it's just bookkeeping.
   discoveredRegions: Record<string, true>;
+  // factionId -> per-player reputation. Drives hostile/friendly encounters.
+  playerReputation: Record<string, number>;
+  // pairKey(a,b) -> faction-vs-faction relation. Negative = hostile.
+  factionRelations: Record<string, number>;
   gameOver: boolean;
+  gameOverReason: GameOverReason | null;
 };
 
 export function createWorld(seed = Date.now() & 0xffffffff): World {
@@ -76,7 +86,10 @@ export function createWorld(seed = Date.now() & 0xffffffff): World {
     regionPresence: {},
     regionControl: {},
     discoveredRegions: {},
+    playerReputation: {},
+    factionRelations: {},
     gameOver: false,
+    gameOverReason: null,
   };
 }
 
@@ -127,29 +140,45 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
   if (world.gameOver) return { world, event: null };
 
   const rng = createRng(world.rngState);
+  const playerRegion = world.player ? globalToLocal(world.player.gx, world.player.gy) : null;
   const tickCtx = {
     rng,
     mapW: MAP_W,
     mapH: MAP_H,
     regionControl: world.regionControl,
     npcs: world.npcs,
+    playerRegion: playerRegion ? { rx: playerRegion.rx, ry: playerRegion.ry } : null,
   };
-  const npcs = world.npcs.map((n) => tickNpc(n, tickCtx));
+  let npcs = world.npcs.map((n) => tickNpc(n, tickCtx));
   const ticks = world.ticks + 1;
 
   let player = world.player;
   let interiors = world.biomeInteriors;
   let inventory = world.inventory;
+  let factions = world.factions;
+  let factionRelations = world.factionRelations;
+  let playerReputation = world.playerReputation;
   let gameOver: boolean = world.gameOver;
+  let gameOverReason: GameOverReason | null = world.gameOverReason;
   let discoveredRegions = world.discoveredRegions;
 
   if (player) {
-    const stepped = tickPlayer({ player, interiors, inventory });
+    const stepped = tickPlayer({
+      player,
+      interiors,
+      inventory,
+      npcs,
+      playerReputation,
+      rng,
+    });
     player = stepped.player;
     interiors = stepped.interiors;
     inventory = stepped.inventory;
+    npcs = stepped.npcs;
+    playerReputation = stepped.playerReputation;
     if (stepped.death) {
       gameOver = true;
+      gameOverReason = "starved";
       player = { ...player, route: null, pendingAction: null, stepCooldown: 0 };
     }
 
@@ -159,6 +188,40 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
       discoveredRegions = { ...discoveredRegions, [key]: true as const };
     }
     interiors = ensureNeighbors(interiors, world.seed, cur.rx, cur.ry);
+  }
+
+  if (!gameOver) {
+    const combat = tickCombat(
+      {
+        npcs,
+        player,
+        interiors,
+        factions,
+        factionRelations,
+        playerReputation,
+        mapW: MAP_W,
+        mapH: MAP_H,
+      },
+      rng,
+    );
+    npcs = combat.npcs;
+    player = combat.player;
+    interiors = combat.interiors;
+    factions = combat.factions;
+    factionRelations = combat.factionRelations;
+    playerReputation = combat.playerReputation;
+    if (combat.playerKilledBy && player && player.health <= 0) {
+      gameOver = true;
+      gameOverReason = {
+        kind: "killed",
+        killerNpcId: combat.playerKilledBy.npcId,
+        killerName: combat.playerKilledBy.name,
+        factionId: combat.playerKilledBy.factionId,
+      };
+      player = { ...player, route: null, pendingAction: null, stepCooldown: 0 };
+    }
+    // Remove dead NPCs from the canonical list.
+    npcs = npcs.filter((n) => n.combatHealth > 0);
   }
 
   const built = updatePresence(
@@ -180,13 +243,17 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
     regionPresence,
     regionControl,
     discoveredRegions,
+    factions,
+    factionRelations,
+    playerReputation,
     gameOver,
+    gameOverReason,
   };
 
   let encounter: WorldEvent | null = null;
   if (player) {
-    const playerRegion = globalToLocal(player.gx, player.gy);
-    encounter = detectEncounter(world.npcs, npcs, next, playerRegion, rng);
+    const region = globalToLocal(player.gx, player.gy);
+    encounter = detectEncounter(world.npcs, npcs, next, region, rng);
     if (encounter) {
       next.recentEvents = [encounter, ...next.recentEvents].slice(0, 8);
       next.rngState = rng.state();
@@ -263,9 +330,10 @@ function detectEncounter(
   playerRegion: { rx: number; ry: number; lx: number; ly: number },
   rng: import("@/lib/sim/rng").Rng,
 ): WorldEvent | null {
-  for (let i = 0; i < nextNpcs.length; i++) {
-    const next = nextNpcs[i]!;
-    const prev = prevNpcs[i];
+  const prevById = new Map<string, Npc>();
+  for (const p of prevNpcs) prevById.set(p.id, p);
+  for (const next of nextNpcs) {
+    const prev = prevById.get(next.id);
     if (!prev) continue;
     if (prev.rx === next.rx && prev.ry === next.ry) continue;
     if (next.rx !== playerRegion.rx || next.ry !== playerRegion.ry) continue;

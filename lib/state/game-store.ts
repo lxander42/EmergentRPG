@@ -14,7 +14,7 @@ import {
 import { loadWorld, saveWorld } from "@/lib/save/db";
 import { bus } from "@/lib/render/bus";
 import type { WorldEvent } from "@/lib/sim/events";
-import { gainRep } from "@/lib/sim/faction";
+import { gainPlayerRep } from "@/lib/sim/faction";
 import {
   globalToLocal,
   isLocalObstacle,
@@ -26,6 +26,13 @@ import {
 } from "@/lib/sim/biome-interior";
 import { bfsPredicate } from "@/lib/sim/path";
 import type { PendingAction, Player } from "@/lib/sim/player";
+import { setPendingAttack } from "@/lib/sim/player-tick";
+import {
+  affordable,
+  makeWeapon,
+  spendRecipe,
+} from "@/lib/sim/weapons";
+import type { WeaponKind } from "@/content/weapons";
 
 const AUTOSAVE_EVERY_TICKS = 60;
 export const WALK_MAX_RADIUS = 80;
@@ -61,6 +68,9 @@ type GameStore = {
 
   acceptEncounter: () => void;
   dismissEncounter: () => void;
+
+  craft: (kind: WeaponKind) => boolean;
+  attackNpc: (id: string) => void;
 };
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -254,9 +264,31 @@ export const useGameStore = create<GameStore>((set, get) => ({
       const prev = inventory[enc.offer.kind] ?? 0;
       inventory = { ...inventory, [enc.offer.kind]: prev + enc.offer.amount };
     }
-    const factions = gainRep(current.factions, enc.factionId, 2);
-    set({ world: { ...current, inventory, factions }, lastEvent: null });
+    const playerReputation = gainPlayerRep(current.playerReputation, enc.factionId, 2);
+    set({ world: { ...current, inventory, playerReputation }, lastEvent: null });
   },
 
   dismissEncounter: () => set({ lastEvent: null }),
+
+  craft: (kind) => {
+    const current = get().world;
+    if (!current?.player) return false;
+    if (!affordable(current.inventory, kind)) return false;
+    const nextInventory = spendRecipe(current.inventory, kind);
+    if (!nextInventory) return false;
+    const weapon = makeWeapon(kind);
+    const player: Player = {
+      ...current.player,
+      weapons: [...current.player.weapons, weapon],
+    };
+    set({ world: { ...current, inventory: nextInventory, player } });
+    return true;
+  },
+
+  attackNpc: (id) => {
+    const current = get().world;
+    if (!current?.player || current.gameOver) return;
+    const player = setPendingAttack(current.player, id);
+    set({ world: { ...current, player } });
+  },
 }));

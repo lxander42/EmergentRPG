@@ -1,27 +1,56 @@
 "use client";
 
-import { X } from "@phosphor-icons/react/dist/ssr";
+import { Sword, X } from "@phosphor-icons/react/dist/ssr";
 import { useGameStore } from "@/lib/state/game-store";
 import { findNpc } from "@/lib/sim/world";
 import type { Npc } from "@/lib/sim/npc";
 import type { Goal } from "@/lib/sim/goal";
+import type { Player } from "@/lib/sim/player";
 import { FACTIONS } from "@/content/factions";
 import { RESOURCES } from "@/content/resources";
 import ShapeBadge from "@/components/panels/ShapeBadge";
+import { globalToLocal } from "@/lib/sim/biome-interior";
+import { pickWeaponForRange, weaponAttackBonus, weaponReach } from "@/lib/sim/weapons";
+import { WEAPONS } from "@/content/weapons";
 
 export default function NpcPanel() {
   const selectedId = useGameStore((s) => s.selectedNpcId);
   const world = useGameStore((s) => s.world);
+  const attackNpc = useGameStore((s) => s.attackNpc);
   const npc = world && selectedId ? findNpc(world, selectedId) : undefined;
 
   if (!npc || !world) return null;
-  return <NpcPanelInner npc={npc} npcs={world.npcs} />;
+  return (
+    <NpcPanelInner
+      npc={npc}
+      npcs={world.npcs}
+      player={world.player}
+      playerRep={world.playerReputation[npc.factionId] ?? 0}
+      onAttack={() => attackNpc(npc.id)}
+    />
+  );
 }
 
-function NpcPanelInner({ npc, npcs }: { npc: Npc; npcs: Npc[] }) {
+function NpcPanelInner({
+  npc,
+  npcs,
+  player,
+  playerRep,
+  onAttack,
+}: {
+  npc: Npc;
+  npcs: Npc[];
+  player: Player | null;
+  playerRep: number;
+  onAttack: () => void;
+}) {
   const select = useGameStore((s) => s.selectNpc);
   const factionColorHex = "#" + npc.factionColor.toString(16).padStart(6, "0");
   const shape = FACTIONS.find((f) => f.id === npc.factionId)?.shape ?? "diamond";
+
+  const sentiment: "hostile" | "wary" | "friendly" =
+    playerRep < 0 ? "hostile" : playerRep > 0 ? "friendly" : "wary";
+  const matchup = computeMatchup(player, npc);
 
   return (
     <aside
@@ -81,10 +110,64 @@ function NpcPanelInner({ npc, npcs }: { npc: Npc; npcs: Npc[] }) {
               </span>
             ))}
           </dd>
+
+          <dt className="font-mono text-[11px] uppercase tracking-wider text-[var(--color-fg-muted)]">
+            Stance
+          </dt>
+          <dd className="text-sm text-[var(--color-fg)] capitalize">{sentiment}</dd>
+
+          <dt className="font-mono text-[11px] uppercase tracking-wider text-[var(--color-fg-muted)]">
+            Combat
+          </dt>
+          <dd className="text-sm text-[var(--color-fg)]">
+            <span className="font-mono tabular-nums">
+              atk {npc.combatAttack} · def {npc.combatDefense} · hp {npc.combatHealth}/{npc.combatHealthMax}
+            </span>
+          </dd>
+
+          {matchup && (
+            <>
+              <dt className="font-mono text-[11px] uppercase tracking-wider text-[var(--color-fg-muted)]">
+                Your hit
+              </dt>
+              <dd className="text-sm text-[var(--color-fg)]">{matchup}</dd>
+            </>
+          )}
         </dl>
+
+        {sentiment === "hostile" && player && (
+          <button
+            onClick={onAttack}
+            className="tactile mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[var(--color-accent)] px-4 py-3 text-sm font-medium text-[var(--color-bg)] shadow-[0_8px_24px_-12px_rgba(217,104,70,0.5)]"
+          >
+            <Sword size={16} weight="fill" />
+            Attack
+          </button>
+        )}
       </div>
     </aside>
   );
+}
+
+function computeMatchup(player: Player | null, npc: Npc): string | null {
+  if (!player) return null;
+  if (!npc.interior) return "Out of reach";
+  const here = globalToLocal(player.gx, player.gy);
+  const dist = Math.max(
+    Math.abs(here.lx - npc.interior.lx),
+    Math.abs(here.ly - npc.interior.ly),
+  );
+  const weapon = pickWeaponForRange(player.weapons, dist);
+  const reach = weapon ? weaponReach(weapon) : player.stats.reach;
+  const damage = Math.max(
+    1,
+    player.stats.attack + weaponAttackBonus(weapon) - npc.combatDefense,
+  );
+  if (dist > reach) {
+    return `${dist} tiles away (need reach ${dist}+)`;
+  }
+  const weaponName = weapon ? WEAPONS[weapon.kind].label : "bare hands";
+  return `~${damage} dmg with ${weaponName}`;
 }
 
 function formatGoal(goal: Goal, npcs: Npc[]): string {

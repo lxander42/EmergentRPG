@@ -1,12 +1,18 @@
 "use client";
 
-import { Footprints, House, X } from "@phosphor-icons/react/dist/ssr";
+import { Footprints, Hammer, House, X } from "@phosphor-icons/react/dist/ssr";
 import { useGameStore, WALK_MAX_RADIUS } from "@/lib/state/game-store";
 import { biomeAt } from "@/lib/sim/biome";
 import { BIOMES } from "@/content/biomes";
 import { FACTIONS } from "@/content/factions";
-import { BIOME_RESOURCES, RESOURCES } from "@/content/resources";
+import {
+  BIOME_RESOURCES,
+  RESOURCES,
+  type ResourceKind,
+} from "@/content/resources";
 import { globalToLocal, regionCenterGlobal } from "@/lib/sim/biome-interior";
+import { WEAPONS, WEAPON_KINDS, type WeaponKind } from "@/content/weapons";
+import { affordable } from "@/lib/sim/weapons";
 
 export default function RegionPanel() {
   const region = useGameStore((s) => s.selectedRegion);
@@ -16,6 +22,7 @@ export default function RegionPanel() {
   const homePending = useGameStore((s) => s.homePending);
   const claimHome = useGameStore((s) => s.claimHome);
   const travelToRegion = useGameStore((s) => s.travelToRegion);
+  const craft = useGameStore((s) => s.craft);
 
   if (!region || !world) return null;
 
@@ -38,6 +45,9 @@ export default function RegionPanel() {
   const distance = player ? Math.abs(center.gx - player.gx) + Math.abs(center.gy - player.gy) : 0;
   const reachable = player && meta.passable && distance <= WALK_MAX_RADIUS && !isCurrentRegion;
   const showTravel = Boolean(player) && meta.passable && !isCurrentRegion && !world.gameOver;
+  const isHomeRegion =
+    Boolean(world.home) && world.home!.rx === region.rx && world.home!.ry === region.ry;
+  const showCrafting = isHomeRegion && isCurrentRegion && Boolean(player) && !world.gameOver;
 
   return (
     <aside
@@ -126,6 +136,66 @@ export default function RegionPanel() {
           </button>
         )}
 
+        {showCrafting && (
+          <section className="mt-4 border-t border-[var(--color-border)] pt-4">
+            <h3 className="font-mono text-[11px] uppercase tracking-wider text-[var(--color-fg-muted)]">
+              Crafting
+            </h3>
+            <ul className="mt-3 flex flex-col gap-2">
+              {WEAPON_KINDS.map((kind) => {
+                const meta = WEAPONS[kind];
+                const can = affordable(world.inventory, kind);
+                const owned =
+                  player?.weapons.filter((w) => w.kind === kind).length ?? 0;
+                return (
+                  <li key={kind}>
+                    <button
+                      onClick={() => craft(kind)}
+                      disabled={!can}
+                      className="tactile flex w-full items-center gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-warm)] px-3 py-2 text-left disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <Hammer
+                        size={16}
+                        weight={can ? "fill" : "regular"}
+                        className="shrink-0 text-[var(--color-accent)]"
+                      />
+                      <span className="flex-1">
+                        <span className="block text-sm font-medium text-[var(--color-fg)]">
+                          {meta.label}
+                          {owned > 0 && (
+                            <span className="ml-2 font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
+                              {owned} held
+                            </span>
+                          )}
+                        </span>
+                        <span className="mt-0.5 flex items-center gap-2 font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
+                          <span>+{meta.attack} atk</span>
+                          <span>reach {meta.reach}</span>
+                          {meta.ranged && <span>ranged</span>}
+                          <span>· uses {meta.durability}</span>
+                        </span>
+                        <span className="mt-1 flex flex-wrap gap-1.5">
+                          {(Object.entries(meta.recipe) as Array<[
+                            ResourceKind,
+                            number,
+                          ]>).map(([k, n]) => (
+                            <RecipePip
+                              key={k}
+                              kind={k}
+                              need={n}
+                              have={world.inventory[k] ?? 0}
+                            />
+                          ))}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
+
         <dl className="mt-4 grid grid-cols-[auto_1fr] items-start gap-x-5 gap-y-3">
           <dt className="font-mono text-[11px] uppercase tracking-wider text-[var(--color-fg-muted)]">
             Here now
@@ -191,4 +261,29 @@ function factionHex(color: number): string {
 
 function factionLabel(id: string): string {
   return FACTIONS.find((f) => f.id === id)?.name ?? id;
+}
+
+function RecipePip({
+  kind,
+  need,
+  have,
+}: {
+  kind: ResourceKind;
+  need: number;
+  have: number;
+}) {
+  const ok = have >= need;
+  return (
+    <span
+      className="inline-flex items-center gap-1 font-mono text-[10px] tabular-nums"
+      style={{ color: ok ? "var(--color-fg)" : "var(--color-fg-muted)" }}
+    >
+      <span
+        aria-hidden
+        className="h-2 w-2 rounded-full border border-[var(--color-border-strong)]"
+        style={{ background: RESOURCES[kind].swatch }}
+      />
+      {have}/{need}
+    </span>
+  );
 }

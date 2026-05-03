@@ -9,29 +9,44 @@ import {
 import {
   globalToLocal,
   isLocalObstacle,
+  lootAtLocal,
+  removeLoot,
   regionKey,
   removeResource,
   resourceAtLocal,
   type BiomeInterior,
 } from "@/lib/sim/biome-interior";
 import type { Inventory } from "@/lib/sim/inventory";
-import { RESOURCES } from "@/content/resources";
+import { RESOURCES, type ResourceKind } from "@/content/resources";
+import type { Npc } from "@/lib/sim/npc";
+import { applyRepPenalty, resolvePlayerAttack } from "@/lib/sim/combat";
+import type { Rng } from "@/lib/sim/rng";
 
 export type PlayerTickInput = {
   player: Player;
   interiors: Record<string, BiomeInterior>;
   inventory: Inventory;
+  npcs: Npc[];
+  playerReputation: Record<string, number>;
+  rng: Rng;
 };
 
 export type PlayerTickOutput = {
   player: Player;
   interiors: Record<string, BiomeInterior>;
   inventory: Inventory;
+  npcs: Npc[];
+  playerReputation: Record<string, number>;
   death: boolean;
 };
 
 export function tickPlayer(input: PlayerTickInput): PlayerTickOutput {
-  let { player, interiors, inventory } = input;
+  let { player, interiors, inventory, npcs, playerReputation } = input;
+  const rng = input.rng;
+
+  if (player.combatCooldown > 0) {
+    player = { ...player, combatCooldown: player.combatCooldown - 1 };
+  }
 
   // Walk one step when the cooldown is up.
   if (player.route && player.route.length > 0) {
@@ -62,6 +77,10 @@ export function tickPlayer(input: PlayerTickInput): PlayerTickOutput {
             energy,
             energyAccumDrain: nextAccum,
           };
+          // Auto-pickup loot at the new tile.
+          const picked = pickupLoot(player, interiors, inventory);
+          interiors = picked.interiors;
+          inventory = picked.inventory;
         }
       }
     }
@@ -76,6 +95,42 @@ export function tickPlayer(input: PlayerTickInput): PlayerTickOutput {
       player = result.player;
       interiors = result.interiors;
       inventory = result.inventory;
+    } else if (action.kind === "attack") {
+      const targetIdx = npcs.findIndex((n) => n.id === action.npcId);
+      if (targetIdx >= 0) {
+        const target = npcs[targetIdx]!;
+        const out = resolvePlayerAttack(player, target, rng);
+        if (out.attacked) {
+          player = out.player;
+          if (out.repPenaltyAmount > 0) {
+            playerReputation = applyRepPenalty(
+              playerReputation,
+              out.repPenaltyFactionId,
+              out.repPenaltyAmount,
+            );
+          }
+          if (out.npc.combatHealth <= 0) {
+            // Dead NPC: drop loot in interior; remove from list.
+            if (out.loot) {
+              const k = regionKey(out.npc.rx, out.npc.ry);
+              const interior = interiors[k];
+              if (interior) {
+                interiors = {
+                  ...interiors,
+                  [k]: { ...interior, loot: [...interior.loot, out.loot] },
+                };
+              }
+            }
+            const nextNpcs = npcs.slice();
+            nextNpcs.splice(targetIdx, 1);
+            npcs = nextNpcs;
+          } else {
+            const nextNpcs = npcs.slice();
+            nextNpcs[targetIdx] = out.npc;
+            npcs = nextNpcs;
+          }
+        }
+      }
     }
   }
 
@@ -96,6 +151,8 @@ export function tickPlayer(input: PlayerTickInput): PlayerTickOutput {
     player,
     interiors,
     inventory,
+    npcs,
+    playerReputation,
     death: player.health <= 0,
   };
 }
@@ -103,6 +160,11 @@ export function tickPlayer(input: PlayerTickInput): PlayerTickOutput {
 export function setPendingCollect(player: Player, resourceId: string): Player {
   const action: PendingAction = { kind: "collect", resourceId };
   return { ...player, pendingAction: action };
+}
+
+export function setPendingAttack(player: Player, npcId: string): Player {
+  const action: PendingAction = { kind: "attack", npcId };
+  return { ...player, pendingAction: action, route: null, stepCooldown: 0 };
 }
 
 function tryCollect(
@@ -135,6 +197,29 @@ function tryCollect(
   }
 
   return { player: nextPlayer, interiors: updatedInteriors, inventory: updatedInventory };
+}
+
+function pickupLoot(
+  player: Player,
+  interiors: Record<string, BiomeInterior>,
+  inventory: Inventory,
+): { interiors: Record<string, BiomeInterior>; inventory: Inventory } {
+  const { rx, ry, lx, ly } = globalToLocal(player.gx, player.gy);
+  const k = regionKey(rx, ry);
+  const interior = interiors[k];
+  if (!interior) return { interiors, inventory };
+  const pile = lootAtLocal(interior, lx, ly);
+  if (!pile) return { interiors, inventory };
+  let nextInventory: Inventory = { ...inventory };
+  for (const key of Object.keys(pile.items) as ResourceKind[]) {
+    const amt = pile.items[key] ?? 0;
+    if (amt <= 0) continue;
+    nextInventory[key] = (nextInventory[key] ?? 0) + amt;
+  }
+  return {
+    interiors: { ...interiors, [k]: removeLoot(interior, pile.id) },
+    inventory: nextInventory,
+  };
 }
 
 function isStepBlocked(

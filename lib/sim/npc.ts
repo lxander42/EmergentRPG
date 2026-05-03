@@ -10,8 +10,19 @@ import {
   GOAL_TTL_TICKS,
   type Goal,
 } from "@/lib/sim/goal";
+import type { WeaponInstance } from "@/lib/sim/weapons";
 
 export type Intent = { rx: number; ry: number };
+
+export type NpcInterior = {
+  lx: number;
+  ly: number;
+  tileIntent: { lx: number; ly: number } | null;
+  stepCooldown: number;
+  lastHitTick: number;
+};
+
+export type CombatIntent = "approach" | "attack" | "flee" | null;
 
 export type Npc = {
   id: string;
@@ -29,6 +40,15 @@ export type Npc = {
   goalTtl: number;
   stuckCounter: number;
   lastDistance: number;
+  combatHealth: number;
+  combatHealthMax: number;
+  combatAttack: number;
+  combatDefense: number;
+  combatReach: number;
+  combatCooldown: number;
+  combatIntent: CombatIntent;
+  weapon: WeaponInstance | null;
+  interior: NpcInterior | null;
 };
 
 const IDLE_MIN = 12;
@@ -58,27 +78,47 @@ export function spawnNpc(rng: Rng, id: number, mapW: number, mapH: number): Npc 
     }
   }
 
+  const values = [...faction.values];
+  let combatAttack = 1;
+  if (values.includes("violence")) combatAttack += 1;
+  if (traits.includes("brutish")) combatAttack += 1;
+  let combatDefense = 0;
+  if (traits.includes("cowardly")) combatDefense += 1;
+  if (traits.includes("patient")) combatDefense += 1;
+  const combatHealthMax = clampInt(4 + Math.round(50 / 25) + (traits.includes("brave") ? 1 : 0), 4, 8);
+
   return {
     id: `npc-${id}`,
     name: rng.pick(NAMES),
     factionId: faction.id,
     factionColor: faction.color,
     traits,
-    values: [...faction.values],
+    values,
     rx,
     ry,
     homeRegion: { rx, ry },
     intent: null,
     moveCooldown: rng.int(IDLE_MIN, IDLE_MAX),
     goal: { kind: "wander" },
-    // Stagger initial goal re-picks across the first ~15s so the population
-    // gets varied goals quickly without synchronising 200 pickGoal calls
-    // on tick 1. pickGoal needs live world state (regionControl, npcs)
-    // which spawnNpc doesn't have.
     goalTtl: rng.int(1, 60),
     stuckCounter: 0,
     lastDistance: -1,
+    combatHealth: combatHealthMax,
+    combatHealthMax,
+    combatAttack,
+    combatDefense,
+    combatReach: 1,
+    combatCooldown: 0,
+    combatIntent: null,
+    weapon: null,
+    interior: null,
   };
+}
+
+function clampInt(v: number, lo: number, hi: number): number {
+  if (v < lo) return lo;
+  if (v > hi) return hi;
+  return v;
 }
 
 export type TickNpcCtx = {
@@ -87,10 +127,22 @@ export type TickNpcCtx = {
   mapH: number;
   regionControl: Record<string, string>;
   npcs: Npc[];
+  playerRegion: { rx: number; ry: number } | null;
 };
 
 export function tickNpc(npc: Npc, ctx: TickNpcCtx): Npc {
   const { rng, mapW, mapH } = ctx;
+
+  // Combat tick owns movement for NPCs in the player's region.
+  if (
+    ctx.playerRegion &&
+    npc.rx === ctx.playerRegion.rx &&
+    npc.ry === ctx.playerRegion.ry
+  ) {
+    const cooldown = Math.max(0, (npc.moveCooldown ?? 0) - 1);
+    const combatCooldown = Math.max(0, (npc.combatCooldown ?? 0) - 1);
+    return { ...npc, moveCooldown: cooldown, combatCooldown };
+  }
 
   let goal = npc.goal;
   // Decrement once at the top so the TTL counts wall-clock ticks rather
