@@ -40,6 +40,13 @@ export type GameOverReason =
   | "starved"
   | { kind: "killed"; killerNpcId: string; killerName: string; factionId: string };
 
+export type PickupNotice = {
+  id: string;
+  tick: number;
+  kind: import("@/content/resources").ResourceKind;
+  amount: number;
+};
+
 export type World = {
   version: number;
   seed: number;
@@ -63,6 +70,10 @@ export type World = {
   playerReputation: Record<string, number>;
   // pairKey(a,b) -> faction-vs-faction relation. Negative = hostile.
   factionRelations: Record<string, number>;
+  // Ring buffer of recent player pickups (resources + loot). Ephemeral —
+  // BiomeScene drains them to spawn floating text and they fall off after
+  // a short window.
+  recentPickups: PickupNotice[];
   gameOver: boolean;
   gameOverReason: GameOverReason | null;
 };
@@ -88,6 +99,7 @@ export function createWorld(seed = Date.now() & 0xffffffff): World {
     discoveredRegions: {},
     playerReputation: {},
     factionRelations: {},
+    recentPickups: [],
     gameOver: false,
     gameOverReason: null,
   };
@@ -158,6 +170,7 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
   let factions = world.factions;
   let factionRelations = world.factionRelations;
   let playerReputation = world.playerReputation;
+  let recentPickups = prunePickups(world.recentPickups, ticks);
   let gameOver: boolean = world.gameOver;
   let gameOverReason: GameOverReason | null = world.gameOverReason;
   let discoveredRegions = world.discoveredRegions;
@@ -170,12 +183,28 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
       npcs,
       playerReputation,
       rng,
+      ticks,
     });
     player = stepped.player;
     interiors = stepped.interiors;
     inventory = stepped.inventory;
     npcs = stepped.npcs;
     playerReputation = stepped.playerReputation;
+    if (stepped.pickups.length > 0) {
+      let next = recentPickups;
+      for (const p of stepped.pickups) {
+        next = [
+          ...next,
+          {
+            id: `pkp-${ticks}-${next.length}`,
+            tick: ticks,
+            kind: p.kind,
+            amount: p.amount,
+          },
+        ];
+      }
+      recentPickups = next.slice(-12);
+    }
     if (stepped.death) {
       gameOver = true;
       gameOverReason = "starved";
@@ -246,6 +275,7 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
     factions,
     factionRelations,
     playerReputation,
+    recentPickups,
     gameOver,
     gameOverReason,
   };
@@ -342,6 +372,16 @@ function detectEncounter(
     return buildEncounterEvent(world, next, faction, rng);
   }
   return null;
+}
+
+// Pickups are short-lived (UI hints). After ~10 ticks (~2.5s at 1x), drop.
+const PICKUP_TTL_TICKS = 10;
+function prunePickups(prev: PickupNotice[], ticks: number): PickupNotice[] {
+  const out: PickupNotice[] = [];
+  for (const p of prev) {
+    if (ticks - p.tick <= PICKUP_TTL_TICKS) out.push(p);
+  }
+  return out;
 }
 
 function ensureNeighbors(

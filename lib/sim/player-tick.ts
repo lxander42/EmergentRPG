@@ -22,6 +22,11 @@ import type { Npc } from "@/lib/sim/npc";
 import { applyRepPenalty, resolvePlayerAttack } from "@/lib/sim/combat";
 import type { Rng } from "@/lib/sim/rng";
 
+export type PickupNotice = {
+  kind: ResourceKind;
+  amount: number;
+};
+
 export type PlayerTickInput = {
   player: Player;
   interiors: Record<string, BiomeInterior>;
@@ -29,6 +34,7 @@ export type PlayerTickInput = {
   npcs: Npc[];
   playerReputation: Record<string, number>;
   rng: Rng;
+  ticks: number;
 };
 
 export type PlayerTickOutput = {
@@ -37,12 +43,14 @@ export type PlayerTickOutput = {
   inventory: Inventory;
   npcs: Npc[];
   playerReputation: Record<string, number>;
+  pickups: PickupNotice[];
   death: boolean;
 };
 
 export function tickPlayer(input: PlayerTickInput): PlayerTickOutput {
   let { player, interiors, inventory, npcs, playerReputation } = input;
   const rng = input.rng;
+  const pickups: PickupNotice[] = [];
 
   if (player.combatCooldown > 0) {
     player = { ...player, combatCooldown: player.combatCooldown - 1 };
@@ -81,6 +89,7 @@ export function tickPlayer(input: PlayerTickInput): PlayerTickOutput {
           const picked = pickupLoot(player, interiors, inventory);
           interiors = picked.interiors;
           inventory = picked.inventory;
+          for (const p of picked.pickups) pickups.push(p);
         }
       }
     }
@@ -95,6 +104,7 @@ export function tickPlayer(input: PlayerTickInput): PlayerTickOutput {
       player = result.player;
       interiors = result.interiors;
       inventory = result.inventory;
+      if (result.pickup) pickups.push(result.pickup);
     } else if (action.kind === "attack") {
       const targetIdx = npcs.findIndex((n) => n.id === action.npcId);
       if (targetIdx >= 0) {
@@ -153,6 +163,7 @@ export function tickPlayer(input: PlayerTickInput): PlayerTickOutput {
     inventory,
     npcs,
     playerReputation,
+    pickups,
     death: player.health <= 0,
   };
 }
@@ -172,12 +183,19 @@ function tryCollect(
   interiors: Record<string, BiomeInterior>,
   inventory: Inventory,
   resourceId: string,
-): { player: Player; interiors: Record<string, BiomeInterior>; inventory: Inventory } {
+): {
+  player: Player;
+  interiors: Record<string, BiomeInterior>;
+  inventory: Inventory;
+  pickup: PickupNotice | null;
+} {
   const { rx, ry, lx, ly } = globalToLocal(player.gx, player.gy);
   const interior = interiors[regionKey(rx, ry)];
-  if (!interior) return { player, interiors, inventory };
+  if (!interior) return { player, interiors, inventory, pickup: null };
   const resource = resourceAtLocal(interior, lx, ly);
-  if (!resource || resource.id !== resourceId) return { player, interiors, inventory };
+  if (!resource || resource.id !== resourceId) {
+    return { player, interiors, inventory, pickup: null };
+  }
 
   const meta = RESOURCES[resource.kind];
   const updatedInterior = removeResource(interior, resource.id);
@@ -196,29 +214,41 @@ function tryCollect(
     };
   }
 
-  return { player: nextPlayer, interiors: updatedInteriors, inventory: updatedInventory };
+  return {
+    player: nextPlayer,
+    interiors: updatedInteriors,
+    inventory: updatedInventory,
+    pickup: { kind: resource.kind, amount: 1 },
+  };
 }
 
 function pickupLoot(
   player: Player,
   interiors: Record<string, BiomeInterior>,
   inventory: Inventory,
-): { interiors: Record<string, BiomeInterior>; inventory: Inventory } {
+): {
+  interiors: Record<string, BiomeInterior>;
+  inventory: Inventory;
+  pickups: PickupNotice[];
+} {
   const { rx, ry, lx, ly } = globalToLocal(player.gx, player.gy);
   const k = regionKey(rx, ry);
   const interior = interiors[k];
-  if (!interior) return { interiors, inventory };
+  if (!interior) return { interiors, inventory, pickups: [] };
   const pile = lootAtLocal(interior, lx, ly);
-  if (!pile) return { interiors, inventory };
-  let nextInventory: Inventory = { ...inventory };
+  if (!pile) return { interiors, inventory, pickups: [] };
+  const nextInventory: Inventory = { ...inventory };
+  const pickups: PickupNotice[] = [];
   for (const key of Object.keys(pile.items) as ResourceKind[]) {
     const amt = pile.items[key] ?? 0;
     if (amt <= 0) continue;
     nextInventory[key] = (nextInventory[key] ?? 0) + amt;
+    pickups.push({ kind: key, amount: amt });
   }
   return {
     interiors: { ...interiors, [k]: removeLoot(interior, pile.id) },
     inventory: nextInventory,
+    pickups,
   };
 }
 

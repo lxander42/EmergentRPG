@@ -243,7 +243,7 @@ function runInteriorCombat(
           ...n.interior,
           lx: stepped.next.lx,
           ly: stepped.next.ly,
-          tileIntent: null,
+          tileIntent: stepped.tileIntent,
           stepCooldown: rng.int(TILE_STEP_COOLDOWN_MIN, TILE_STEP_COOLDOWN_MAX + 1),
         },
       };
@@ -252,6 +252,7 @@ function runInteriorCombat(
         ...n,
         interior: {
           ...n.interior,
+          tileIntent: stepped.tileIntent,
           stepCooldown: rng.int(TILE_STEP_COOLDOWN_MIN, TILE_STEP_COOLDOWN_MAX + 1),
         },
       };
@@ -263,6 +264,7 @@ function runInteriorCombat(
 
 type StepResult = {
   next: { lx: number; ly: number } | null;
+  tileIntent: { lx: number; ly: number } | null;
   transitioned: { rx: number; ry: number } | null;
 };
 
@@ -279,21 +281,9 @@ function stepTowardTarget(
   rng: Rng,
 ): StepResult {
   const interiorPos = npc.interior!;
-  // Pick the tile-level target based on goal + hostility.
-  let target = pickTileTarget(npc, npcs, inHere, selfIdx, here, mapW, mapH, res);
-  if (!target) {
-    // Random wander to avoid frozen NPCs.
-    target = randomNearby(interiorPos.lx, interiorPos.ly, rng);
-  }
 
-  // If we're already at the target tile and the goal wants this region, idle.
-  if (target.lx === interiorPos.lx && target.ly === interiorPos.ly) {
-    return { next: null, transitioned: null };
-  }
-
-  // BFS over interior obstacles, treating other NPCs as blocked.
+  // Build occupancy grid for BFS + random-walk obstacle checks.
   const occupied: boolean[] = interior.obstacles.slice();
-  // Mark player tile as blocked so NPCs don't try to occupy it.
   occupied[here.ly * INTERIOR_W + here.lx] = true;
   for (const j of inHere) {
     if (j === selfIdx) continue;
@@ -302,37 +292,55 @@ function stepTowardTarget(
     occupied[m.interior.ly * INTERIOR_W + m.interior.lx] = true;
   }
 
-  // Edge transition: if target is at an interior edge and the NPC stands on
-  // the same edge tile, advance to the neighbouring region.
+  const dynamicTarget = pickDynamicTileTarget(npc, npcs, inHere, selfIdx, here, res);
+
+  // Decide effective target: dynamic (player/enemy/edge) overrides any cached
+  // wander; otherwise reuse cached tileIntent until we arrive, then reroll.
+  let target: { lx: number; ly: number } | null = dynamicTarget;
+  if (!target) {
+    const cached = interiorPos.tileIntent;
+    if (
+      cached &&
+      !(cached.lx === interiorPos.lx && cached.ly === interiorPos.ly) &&
+      !occupied[cached.ly * INTERIOR_W + cached.lx]
+    ) {
+      target = cached;
+    } else {
+      target = pickWanderTarget(interiorPos.lx, interiorPos.ly, occupied, rng);
+    }
+  }
+
+  if (!target) {
+    return { next: null, tileIntent: null, transitioned: null };
+  }
+
+  // Edge-tile arrival: transition out of the region.
   if (
     target.lx === interiorPos.lx &&
     target.ly === interiorPos.ly &&
-    isEdgeTile(target.lx, target.ly)
+    isEdgeTile(target.lx, target.ly) &&
+    wantsToLeaveRegion(npc, here)
   ) {
     const transit = neighborRegionForEdge(here.rx, here.ry, target.lx, target.ly, mapW, mapH);
-    if (transit) return { next: null, transitioned: transit };
+    if (transit) return { next: null, tileIntent: null, transitioned: transit };
+  }
+
+  if (target.lx === interiorPos.lx && target.ly === interiorPos.ly) {
+    // Already there but didn't transition — clear cache so next tick rerolls.
+    return { next: null, tileIntent: null, transitioned: null };
   }
 
   const path = bfs(occupied, INTERIOR_W, INTERIOR_H, interiorPos.lx, interiorPos.ly, target.lx, target.ly);
   if (!path || path.length === 0) {
-    // Try a random nearby walk if direct path is blocked.
-    const wander = randomNearby(interiorPos.lx, interiorPos.ly, rng);
-    if (wander.lx === interiorPos.lx && wander.ly === interiorPos.ly) {
-      return { next: null, transitioned: null };
-    }
-    if (
-      wander.lx >= 0 &&
-      wander.lx < INTERIOR_W &&
-      wander.ly >= 0 &&
-      wander.ly < INTERIOR_H &&
-      !occupied[wander.ly * INTERIOR_W + wander.lx]
-    ) {
-      return { next: { lx: wander.lx, ly: wander.ly }, transitioned: null };
-    }
-    return { next: null, transitioned: null };
+    // Direct path blocked: take any free neighbour to keep moving and drop
+    // the cached intent so next tick rerolls.
+    const free = freeNeighbor(interiorPos.lx, interiorPos.ly, occupied, rng);
+    if (free) return { next: free, tileIntent: null, transitioned: null };
+    return { next: null, tileIntent: null, transitioned: null };
   }
   const step = path[0]!;
-  // If we arrived at an edge tile and the goal wants to leave, transition.
+  // If the chosen step is the goal tile and it's an edge tile we wanted to
+  // leave through, transit immediately.
   if (
     step.px === target.lx &&
     step.py === target.ly &&
@@ -340,19 +348,67 @@ function stepTowardTarget(
     wantsToLeaveRegion(npc, here)
   ) {
     const transit = neighborRegionForEdge(here.rx, here.ry, step.px, step.py, mapW, mapH);
-    if (transit) return { next: null, transitioned: transit };
+    if (transit) return { next: null, tileIntent: null, transitioned: transit };
   }
-  return { next: { lx: step.px, ly: step.py }, transitioned: null };
+  return {
+    next: { lx: step.px, ly: step.py },
+    tileIntent: { lx: target.lx, ly: target.ly },
+    transitioned: null,
+  };
 }
 
-function pickTileTarget(
+function freeNeighbor(
+  lx: number,
+  ly: number,
+  occupied: boolean[],
+  rng: Rng,
+): { lx: number; ly: number } | null {
+  const choices: Array<[number, number]> = [];
+  for (const [dx, dy] of [
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1],
+  ] as const) {
+    const nx = lx + dx;
+    const ny = ly + dy;
+    if (nx < 0 || ny < 0 || nx >= INTERIOR_W || ny >= INTERIOR_H) continue;
+    if (occupied[ny * INTERIOR_W + nx]) continue;
+    choices.push([nx, ny]);
+  }
+  if (choices.length === 0) return null;
+  const pick = choices[rng.int(0, choices.length)]!;
+  return { lx: pick[0], ly: pick[1] };
+}
+
+function pickWanderTarget(
+  lx: number,
+  ly: number,
+  occupied: boolean[],
+  rng: Rng,
+): { lx: number; ly: number } | null {
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const dx = rng.int(-6, 7);
+    const dy = rng.int(-6, 7);
+    const nx = lx + dx;
+    const ny = ly + dy;
+    if (nx < 0 || ny < 0 || nx >= INTERIOR_W || ny >= INTERIOR_H) continue;
+    if (occupied[ny * INTERIOR_W + nx]) continue;
+    if (nx === lx && ny === ly) continue;
+    return { lx: nx, ly: ny };
+  }
+  return freeNeighbor(lx, ly, occupied, rng);
+}
+
+// Returns a target the NPC *must* reach this tick (player tile when hostile,
+// nearest enemy NPC tile, region-edge when leaving). Otherwise returns null
+// and we fall through to a cached wander tile.
+function pickDynamicTileTarget(
   npc: Npc,
   npcs: Npc[],
   inHere: number[],
   selfIdx: number,
   here: { rx: number; ry: number; lx: number; ly: number },
-  mapW: number,
-  mapH: number,
   res: CombatResult,
 ): { lx: number; ly: number } | null {
   const playerHostile = (res.playerReputation[npc.factionId] ?? 0) < 0;
@@ -360,7 +416,6 @@ function pickTileTarget(
     return { lx: here.lx, ly: here.ly };
   }
 
-  // Hostile NPC of another faction in this interior?
   for (const j of inHere) {
     if (j === selfIdx) continue;
     const m = npcs[j]!;
@@ -378,8 +433,6 @@ function pickTileTarget(
     }
   }
 
-  // Goal-directed: if region-level goal points elsewhere, head to the matching
-  // edge tile so the NPC can transition out next tick.
   const regionTarget = goalTarget(npc.goal, npc, npcs);
   if (regionTarget && (regionTarget.rx !== here.rx || regionTarget.ry !== here.ry)) {
     const dx = regionTarget.rx - here.rx;
@@ -391,12 +444,7 @@ function pickTileTarget(
       return { lx: clamp(npc.interior!.lx, 0, INTERIOR_W - 1), ly: dy > 0 ? INTERIOR_H - 1 : 0 };
     }
   }
-
-  // Default wander: pick the interior centre as a soft anchor to avoid
-  // clustering at the spawn edge.
-  const cx = Math.floor(INTERIOR_W / 2);
-  const cy = Math.floor(INTERIOR_H / 2);
-  return { lx: cx, ly: cy };
+  return null;
 }
 
 function wantsToLeaveRegion(
@@ -429,17 +477,6 @@ function neighborRegionForEdge(
   else return null;
   if (!isPassable(nrx, nry, mapW, mapH)) return null;
   return { rx: nrx, ry: nry };
-}
-
-function randomNearby(lx: number, ly: number, rng: Rng): { lx: number; ly: number } {
-  const choices: Array<[number, number]> = [
-    [lx + 1, ly],
-    [lx - 1, ly],
-    [lx, ly + 1],
-    [lx, ly - 1],
-  ];
-  const pick = choices[rng.int(0, choices.length)]!;
-  return { lx: pick[0], ly: pick[1] };
 }
 
 function clamp(v: number, lo: number, hi: number): number {

@@ -49,6 +49,9 @@ type GameStore = {
   lastEvent: WorldEvent | null;
   view: View;
   homePending: boolean;
+  inventoryOpen: boolean;
+  tutorialOpen: boolean;
+  debugMode: boolean;
 
   startNew: () => void;
   loadFromDisk: (slot: string) => Promise<void>;
@@ -71,6 +74,14 @@ type GameStore = {
 
   craft: (kind: WeaponKind) => boolean;
   attackNpc: (id: string) => void;
+
+  openInventory: () => void;
+  closeInventory: () => void;
+  openTutorial: () => void;
+  closeTutorial: () => void;
+  toggleDebug: () => void;
+  teleportToRegion: (rx: number, ry: number) => void;
+  inspectBiome: (rx: number, ry: number) => void;
 };
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -82,6 +93,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
   lastEvent: null,
   view: "world",
   homePending: false,
+  inventoryOpen: false,
+  tutorialOpen: false,
+  debugMode: false,
 
   startNew: () => {
     set({
@@ -92,6 +106,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       paused: false,
       view: "world",
       homePending: true,
+      inventoryOpen: false,
+      tutorialOpen: true,
     });
   },
 
@@ -244,6 +260,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       paused: false,
       view: "world",
       homePending: true,
+      inventoryOpen: false,
+      tutorialOpen: false,
     });
   },
 
@@ -291,4 +309,67 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const player = setPendingAttack(current.player, id);
     set({ world: { ...current, player } });
   },
+
+  openInventory: () =>
+    set({
+      inventoryOpen: true,
+      selectedNpcId: null,
+      selectedRegion: null,
+    }),
+  closeInventory: () => set({ inventoryOpen: false }),
+  openTutorial: () => set({ tutorialOpen: true }),
+  closeTutorial: () => set({ tutorialOpen: false }),
+  toggleDebug: () => set({ debugMode: !get().debugMode }),
+
+  teleportToRegion: (rx, ry) => {
+    const current = get().world;
+    if (!current?.player || current.gameOver) return;
+    const center = regionCenterGlobal(rx, ry);
+    const seeded = ensureInteriorsForRegion(current, rx, ry);
+    const interior = seeded.biomeInteriors[regionKey(rx, ry)];
+    if (!interior) return;
+    const target = nearestPassable(interior, center.gx, center.gy, rx, ry);
+    const player: Player = {
+      ...seeded.player!,
+      gx: target.gx,
+      gy: target.gy,
+      route: null,
+      stepCooldown: 0,
+      pendingAction: null,
+    };
+    set({
+      world: { ...seeded, player },
+      view: "biome",
+      selectedNpcId: null,
+      selectedRegion: null,
+    });
+    bus.emit("npc:deselected");
+  },
+
+  inspectBiome: (rx, ry) => {
+    get().teleportToRegion(rx, ry);
+  },
 }));
+
+function nearestPassable(
+  interior: import("@/lib/sim/biome-interior").BiomeInterior,
+  gx: number,
+  gy: number,
+  rx: number,
+  ry: number,
+): { gx: number; gy: number } {
+  for (let r = 0; r <= 8; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+        const tgx = gx + dx;
+        const tgy = gy + dy;
+        const lx = tgx - rx * INTERIOR_W;
+        const ly = tgy - ry * INTERIOR_H;
+        if (lx < 0 || ly < 0 || lx >= INTERIOR_W || ly >= INTERIOR_H) continue;
+        if (!isLocalObstacle(interior, lx, ly)) return { gx: tgx, gy: tgy };
+      }
+    }
+  }
+  return { gx, gy };
+}

@@ -135,7 +135,7 @@ function NpcPanelInner({
           )}
         </dl>
 
-        {sentiment === "hostile" && player && (
+        {sentiment !== "friendly" && player && (
           <button
             onClick={onAttack}
             className="tactile mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[var(--color-accent)] px-4 py-3 text-sm font-medium text-[var(--color-bg)] shadow-[0_8px_24px_-12px_rgba(217,104,70,0.5)]"

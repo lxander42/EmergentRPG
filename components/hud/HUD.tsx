@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import {
+  Bug,
   House,
   Pause,
   Play,
@@ -48,6 +49,9 @@ export default function HUD() {
     return findFaction(w.factions, w.gameOverReason.factionId)?.name ?? null;
   });
   const resetAfterDeath = useGameStore((s) => s.resetAfterDeath);
+  const openInventory = useGameStore((s) => s.openInventory);
+  const debugMode = useGameStore((s) => s.debugMode);
+  const toggleDebug = useGameStore((s) => s.toggleDebug);
 
   return (
     <>
@@ -105,8 +109,22 @@ export default function HUD() {
               </button>
             </>
           )}
+
+          <span className="mx-1 h-4 w-px bg-[var(--color-border)]" aria-hidden />
+          <button
+            aria-label={debugMode ? "Hide debug overlay" : "Show debug overlay"}
+            aria-pressed={debugMode}
+            onClick={toggleDebug}
+            className={`tactile inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-[var(--color-surface-warm)] ${
+              debugMode ? "text-[var(--color-accent)]" : "text-[var(--color-fg-muted)]"
+            }`}
+          >
+            <Bug size={16} weight={debugMode ? "fill" : "regular"} />
+          </button>
         </div>
       </header>
+
+      {debugMode && <DebugStrip />}
 
       {homePending && view === "world" && (
         <div className="pointer-events-none absolute inset-x-0 top-16 z-10 flex justify-center px-3">
@@ -120,7 +138,7 @@ export default function HUD() {
         <div className="pointer-events-none absolute inset-x-2 top-16 z-10 flex flex-wrap items-center justify-end gap-2">
           <HealthStrip health={player.health} max={player.healthMax} inCombat={inCombat} />
           <EnergyStrip energy={player.energy} max={player.energyMax} />
-          {view === "biome" && <InventoryStrip inventory={inventory} />}
+          <InventoryStrip inventory={inventory} onOpen={openInventory} />
         </div>
       )}
 
@@ -165,6 +183,56 @@ function gameOverBody(
     return `A blade of the ${factionName} ended this run. The world remembers; begin a new life.`;
   }
   return "The world remembers; begin a new life.";
+}
+
+function DebugStrip() {
+  const world = useGameStore((s) => s.world);
+  if (!world) return null;
+  const player = world.player;
+  const here = player ? globalToLocal(player.gx, player.gy) : null;
+  const inRegion = here
+    ? world.npcs.filter((n) => n.rx === here.rx && n.ry === here.ry).length
+    : 0;
+  const factionLines = world.factions.map((f) => ({
+    id: f.id,
+    pwr: f.power,
+    rep: world.playerReputation[f.id] ?? 0,
+  }));
+  return (
+    <aside
+      role="status"
+      aria-label="Debug stats"
+      className="pointer-events-none absolute left-2 top-16 z-10 max-w-[60vw] rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 font-mono text-[10px] leading-tight text-[var(--color-fg)] shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
+    >
+      <div className="text-[var(--color-fg-muted)] uppercase tracking-wider">Debug</div>
+      <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
+        <span className="text-[var(--color-fg-muted)]">npcs</span>
+        <span className="tabular-nums">{world.npcs.length}</span>
+        <span className="text-[var(--color-fg-muted)]">tick</span>
+        <span className="tabular-nums">{world.ticks}</span>
+        {player && here && (
+          <>
+            <span className="text-[var(--color-fg-muted)]">player</span>
+            <span className="tabular-nums">
+              g({player.gx},{player.gy}) r({here.rx},{here.ry})
+            </span>
+            <span className="text-[var(--color-fg-muted)]">in-region</span>
+            <span className="tabular-nums">{inRegion}</span>
+          </>
+        )}
+      </div>
+      <div className="mt-1 border-t border-[var(--color-border)] pt-1">
+        {factionLines.map((f) => (
+          <div key={f.id} className="flex justify-between gap-4">
+            <span className="text-[var(--color-fg-muted)]">{f.id}</span>
+            <span className="tabular-nums">
+              pwr {f.pwr} · rep {f.rep}
+            </span>
+          </div>
+        ))}
+      </div>
+    </aside>
+  );
 }
 
 function HealthStrip({
@@ -240,25 +308,40 @@ function EnergyStrip({ energy, max }: { energy: number; max: number }) {
   );
 }
 
-function InventoryStrip({ inventory }: { inventory: Partial<Record<ResourceKind, number>> }) {
+function InventoryStrip({
+  inventory,
+  onOpen,
+}: {
+  inventory: Partial<Record<ResourceKind, number>>;
+  onOpen: () => void;
+}) {
   const entries = (Object.entries(inventory) as Array<[ResourceKind, number]>).filter(
     ([, n]) => n > 0,
   );
-  if (entries.length === 0) return null;
   return (
-    <div className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]">
-      {entries.map(([kind, count]) => (
-        <span key={kind} className="inline-flex items-center gap-1">
-          <span
-            aria-hidden
-            className="h-2.5 w-2.5 rounded-full border border-[var(--color-border-strong)]"
-            style={{ background: RESOURCES[kind].swatch }}
-          />
-          <span className="font-mono text-[10px] tabular-nums text-[var(--color-fg)]">
-            {count}
-          </span>
+    <button
+      onClick={onOpen}
+      aria-label="Open inventory"
+      className="tactile pointer-events-auto inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
+    >
+      {entries.length === 0 ? (
+        <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
+          Inventory
         </span>
-      ))}
-    </div>
+      ) : (
+        entries.map(([kind, count]) => (
+          <span key={kind} className="inline-flex items-center gap-1">
+            <span
+              aria-hidden
+              className="h-2.5 w-2.5 rounded-full border border-[var(--color-border-strong)]"
+              style={{ background: RESOURCES[kind].swatch }}
+            />
+            <span className="font-mono text-[10px] tabular-nums text-[var(--color-fg)]">
+              {count}
+            </span>
+          </span>
+        ))
+      )}
+    </button>
   );
 }

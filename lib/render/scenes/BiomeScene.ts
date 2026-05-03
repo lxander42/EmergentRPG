@@ -66,6 +66,7 @@ export class BiomeScene extends Phaser.Scene {
   private visitorHits: VisitorHit[] = [];
   private prevNpcHealth = new Map<string, number>();
   private prevPlayerHealth = -1;
+  private seenPickupIds = new Set<string>();
 
   private playerGx = 0;
   private playerGy = 0;
@@ -205,7 +206,41 @@ export class BiomeScene extends Phaser.Scene {
     this.drawPlayer();
     this.drawVisitors(world.npcs, world);
     this.detectHits(world.npcs, world.player.health);
+    this.spawnPickupTexts(world.recentPickups);
     this.drawSelection();
+  }
+
+  private spawnPickupTexts(pickups: { id: string; kind: ResourceKind; amount: number }[]) {
+    for (const p of pickups) {
+      if (this.seenPickupIds.has(p.id)) continue;
+      this.seenPickupIds.add(p.id);
+      const meta = RESOURCES[p.kind];
+      const text = this.add.text(
+        this.playerCx,
+        this.playerCy - 14,
+        `+${p.amount} ${meta.label}`,
+        {
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+          fontSize: "12px",
+          color: meta.swatch,
+        },
+      );
+      text.setOrigin(0.5, 1);
+      text.setDepth(11);
+      this.tweens.add({
+        targets: text,
+        y: this.playerCy - 32,
+        alpha: { from: 1, to: 0 },
+        duration: 900,
+        ease: "Cubic.easeOut",
+        onComplete: () => text.destroy(),
+      });
+    }
+    // Garbage-collect ids that are no longer in the ring buffer.
+    if (this.seenPickupIds.size > 64) {
+      const live = new Set(pickups.map((p) => p.id));
+      for (const id of this.seenPickupIds) if (!live.has(id)) this.seenPickupIds.delete(id);
+    }
   }
 
   private drawLoot(world: { biomeInteriors: Record<string, BiomeInterior> }) {
