@@ -68,6 +68,7 @@ export class BiomeScene extends Phaser.Scene {
   private prevNpcHealth = new Map<string, number>();
   private prevPlayerHealth = -1;
   private seenPickupIds = new Set<string>();
+  private projectileLayer!: Phaser.GameObjects.Graphics;
 
   private playerGx = 0;
   private playerGy = 0;
@@ -107,6 +108,7 @@ export class BiomeScene extends Phaser.Scene {
     this.selectionRing.setVisible(false);
     this.playerShadow = this.add.graphics();
     this.playerLayer = this.add.graphics();
+    this.projectileLayer = this.add.graphics();
 
     // setZoom must precede centerOn -- centerOn uses the current zoom to
     // derive scrollX/Y, otherwise the camera lands somewhere far off.
@@ -208,7 +210,45 @@ export class BiomeScene extends Phaser.Scene {
     this.drawVisitors(world.npcs, world);
     this.detectHits(world.npcs, world.player.health);
     this.spawnPickupTexts(world.recentPickups);
+    this.drawProjectiles(world.recentProjectiles, world.ticks);
     this.drawSelection();
+  }
+
+  private drawProjectiles(
+    projectiles: { id: string; tick: number; fromGx: number; fromGy: number; toGx: number; toGy: number; color: number }[],
+    nowTick: number,
+  ) {
+    this.projectileLayer.clear();
+    for (const p of projectiles) {
+      const age = nowTick - p.tick;
+      if (age < 0 || age > 4) continue;
+      const alpha = Math.max(0.1, 1 - age / 4);
+      const fromCenter = tileCenter(p.fromGx, p.fromGy);
+      const toCenter = tileCenter(p.toGx, p.toGy);
+      const dx = toCenter.x - fromCenter.x;
+      const dy = toCenter.y - fromCenter.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const ux = dx / len;
+      const uy = dy / len;
+      const margin = PLAYER_SIZE * 0.55;
+      const sx = fromCenter.x + ux * margin;
+      const sy = fromCenter.y + uy * margin;
+      const ex = toCenter.x - ux * margin;
+      const ey = toCenter.y - uy * margin;
+      const total = Math.hypot(ex - sx, ey - sy);
+      this.projectileLayer.lineStyle(2, p.color, alpha);
+      const segLen = 5;
+      const gapLen = 4;
+      let cur = 0;
+      while (cur < total) {
+        const a = Math.min(cur + segLen, total);
+        this.projectileLayer.beginPath();
+        this.projectileLayer.moveTo(sx + ux * cur, sy + uy * cur);
+        this.projectileLayer.lineTo(sx + ux * a, sy + uy * a);
+        this.projectileLayer.strokePath();
+        cur = a + gapLen;
+      }
+    }
   }
 
   private spawnPickupTexts(pickups: { id: string; kind: ResourceKind; amount: number }[]) {

@@ -40,6 +40,13 @@ export type PlayerTickInput = {
   ticks: number;
 };
 
+export type ProjectileNotice = {
+  fromGx: number;
+  fromGy: number;
+  toGx: number;
+  toGy: number;
+};
+
 export type PlayerTickOutput = {
   player: Player;
   interiors: Record<string, BiomeInterior>;
@@ -47,6 +54,7 @@ export type PlayerTickOutput = {
   npcs: Npc[];
   playerReputation: Record<string, number>;
   pickups: PickupNotice[];
+  projectiles: ProjectileNotice[];
   death: boolean;
 };
 
@@ -55,6 +63,7 @@ export function tickPlayer(input: PlayerTickInput): PlayerTickOutput {
   const rng = input.rng;
   const ticks = input.ticks;
   const pickups: PickupNotice[] = [];
+  const projectiles: ProjectileNotice[] = [];
 
   if (player.combatCooldown > 0) {
     player = { ...player, combatCooldown: player.combatCooldown - 1 };
@@ -150,6 +159,7 @@ export function tickPlayer(input: PlayerTickInput): PlayerTickOutput {
         const out = resolvePlayerAttack(player, target, rng, ticks);
         if (out.attacked) {
           player = out.player;
+          if (out.projectile) projectiles.push(out.projectile);
           if (out.repPenaltyAmount > 0) {
             playerReputation = applyRepPenalty(
               playerReputation,
@@ -208,6 +218,7 @@ export function tickPlayer(input: PlayerTickInput): PlayerTickOutput {
     npcs,
     playerReputation,
     pickups,
+    projectiles,
     death: player.health <= 0,
   };
 }

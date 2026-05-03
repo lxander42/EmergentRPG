@@ -23,7 +23,7 @@ import { tickCombat } from "@/lib/sim/combat";
 
 export { biomeAt, isPassable, type Biome } from "@/lib/sim/biome";
 
-export const WORLD_VERSION = 7;
+export const WORLD_VERSION = 8;
 export const MAP_W = 32;
 export const MAP_H = 32;
 export const NPC_COUNT = 200;
@@ -45,6 +45,16 @@ export type PickupNotice = {
   tick: number;
   kind: import("@/content/resources").ResourceKind;
   amount: number;
+};
+
+export type ProjectileFx = {
+  id: string;
+  tick: number;
+  fromGx: number;
+  fromGy: number;
+  toGx: number;
+  toGy: number;
+  color: number;
 };
 
 export type World = {
@@ -74,6 +84,11 @@ export type World = {
   // BiomeScene drains them to spawn floating text and they fall off after
   // a short window.
   recentPickups: PickupNotice[];
+  // Same idea for ranged projectile fx — short-lived dotted-line shots.
+  recentProjectiles: ProjectileFx[];
+  // factionId -> last tick at which a member was attacked. Friendlies of
+  // an aggrieved faction flee from the player while this is fresh.
+  recentFactionAttacks: Record<string, number>;
   gameOver: boolean;
   gameOverReason: GameOverReason | null;
 };
@@ -100,6 +115,8 @@ export function createWorld(seed = Date.now() & 0xffffffff): World {
     playerReputation: {},
     factionRelations: {},
     recentPickups: [],
+    recentProjectiles: [],
+    recentFactionAttacks: {},
     gameOver: false,
     gameOverReason: null,
   };
@@ -153,6 +170,7 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
 
   const rng = createRng(world.rngState);
   const playerRegion = world.player ? globalToLocal(world.player.gx, world.player.gy) : null;
+  const ticks = world.ticks + 1;
   const tickCtx = {
     rng,
     mapW: MAP_W,
@@ -160,9 +178,11 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
     regionControl: world.regionControl,
     npcs: world.npcs,
     playerRegion: playerRegion ? { rx: playerRegion.rx, ry: playerRegion.ry } : null,
+    playerReputation: world.playerReputation,
+    recentFactionAttacks: world.recentFactionAttacks,
+    ticks,
   };
   let npcs = world.npcs.map((n) => tickNpc(n, tickCtx));
-  const ticks = world.ticks + 1;
 
   let player = world.player;
   let interiors = world.biomeInteriors;
@@ -171,6 +191,8 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
   let factionRelations = world.factionRelations;
   let playerReputation = world.playerReputation;
   let recentPickups = prunePickups(world.recentPickups, ticks);
+  let recentProjectiles = pruneProjectiles(world.recentProjectiles, ticks);
+  let recentFactionAttacks = world.recentFactionAttacks;
   const combatDeathEvents: WorldEvent[] = [];
   let gameOver: boolean = world.gameOver;
   let gameOverReason: GameOverReason | null = world.gameOverReason;
@@ -189,8 +211,42 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
     player = stepped.player;
     interiors = stepped.interiors;
     inventory = stepped.inventory;
+    const npcsBefore = npcs;
     npcs = stepped.npcs;
     playerReputation = stepped.playerReputation;
+    // Stamp the player's faction-attack ledger when an NPC took damage from
+    // the player this tick (detected by health drop on a still-living NPC).
+    for (const before of npcsBefore) {
+      const after = npcs.find((n) => n.id === before.id);
+      if (!after) {
+        // NPC removed from list — handled separately as a death.
+        continue;
+      }
+      if (after.combatHealth < before.combatHealth) {
+        recentFactionAttacks = {
+          ...recentFactionAttacks,
+          [after.factionId]: ticks,
+        };
+      }
+    }
+    if (stepped.projectiles.length > 0) {
+      let next = recentProjectiles;
+      for (const p of stepped.projectiles) {
+        next = [
+          ...next,
+          {
+            id: `proj-${ticks}-${next.length}`,
+            tick: ticks,
+            fromGx: p.fromGx,
+            fromGy: p.fromGy,
+            toGx: p.toGx,
+            toGy: p.toGy,
+            color: 0xd96846,
+          },
+        ];
+      }
+      recentProjectiles = next.slice(-12);
+    }
     if (stepped.pickups.length > 0) {
       let next = recentPickups;
       for (const p of stepped.pickups) {
@@ -313,6 +369,8 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
     factionRelations,
     playerReputation,
     recentPickups,
+    recentProjectiles,
+    recentFactionAttacks,
     recentEvents: startingEvents,
     gameOver,
     gameOverReason,
@@ -443,10 +501,18 @@ function dropDeathLoot(
 
 // Pickups are short-lived (UI hints). After ~10 ticks (~2.5s at 1x), drop.
 const PICKUP_TTL_TICKS = 10;
+const PROJECTILE_TTL_TICKS = 4;
 function prunePickups(prev: PickupNotice[], ticks: number): PickupNotice[] {
   const out: PickupNotice[] = [];
   for (const p of prev) {
     if (ticks - p.tick <= PICKUP_TTL_TICKS) out.push(p);
+  }
+  return out;
+}
+function pruneProjectiles(prev: ProjectileFx[], ticks: number): ProjectileFx[] {
+  const out: ProjectileFx[] = [];
+  for (const p of prev) {
+    if (ticks - p.tick <= PROJECTILE_TTL_TICKS) out.push(p);
   }
   return out;
 }
