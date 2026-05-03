@@ -37,7 +37,7 @@ export const BASE_ATTACK = 1;
 export const BASE_DEFENSE = 0;
 export const BASE_REACH = 1;
 
-export const WALK_ENERGY_PER_STEP = 0.4;
+export const WALK_ENERGY_PER_STEP = 0.3;
 export const STARVE_TICKS_PER_DAMAGE = 80;
 export const EAT_ENERGY_PER_FOOD = 3;
 export const EAT_HEALTH_PER_FOOD = 1;

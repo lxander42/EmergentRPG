@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect } from "react";
 import HUD from "@/components/hud/HUD";
 import NpcPanel from "@/components/panels/NpcPanel";
+import NpcContextMenu from "@/components/NpcContextMenu";
 import RegionPanel from "@/components/panels/RegionPanel";
 import InventoryPanel from "@/components/panels/InventoryPanel";
 import TutorialModal from "@/components/TutorialModal";
@@ -48,6 +49,7 @@ function PlayInner() {
       <RecenterButton />
       <FactionLegend />
       <NpcPanel />
+      <NpcContextMenu />
       <RegionPanel />
       <InventoryPanel />
       <EncounterToast />

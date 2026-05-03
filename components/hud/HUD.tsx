@@ -187,6 +187,8 @@ function gameOverBody(
 
 function DebugStrip() {
   const world = useGameStore((s) => s.world);
+  const minimized = useGameStore((s) => s.debugMinimized);
+  const toggleMinimized = useGameStore((s) => s.toggleDebugMinimized);
   if (!world) return null;
   const player = world.player;
   const here = player ? globalToLocal(player.gx, player.gy) : null;
@@ -198,13 +200,36 @@ function DebugStrip() {
     pwr: f.power,
     rep: world.playerReputation[f.id] ?? 0,
   }));
+
+  if (minimized) {
+    return (
+      <button
+        onClick={toggleMinimized}
+        aria-label="Expand debug overlay"
+        className="tactile pointer-events-auto absolute bottom-2 left-2 z-10 inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg)] shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
+      >
+        <Bug size={12} weight="fill" className="text-[var(--color-accent)]" />
+        Debug · {world.npcs.length} npcs
+      </button>
+    );
+  }
+
   return (
     <aside
       role="status"
       aria-label="Debug stats"
-      className="pointer-events-none absolute left-2 top-16 z-10 max-w-[60vw] rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 font-mono text-[10px] leading-tight text-[var(--color-fg)] shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
+      className="pointer-events-auto absolute bottom-2 left-2 z-10 max-w-[70vw] rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 font-mono text-[10px] leading-tight text-[var(--color-fg)] shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
     >
-      <div className="text-[var(--color-fg-muted)] uppercase tracking-wider">Debug</div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[var(--color-fg-muted)] uppercase tracking-wider">Debug</span>
+        <button
+          onClick={toggleMinimized}
+          aria-label="Minimize debug overlay"
+          className="tactile -my-0.5 -mr-1 inline-flex h-5 w-5 items-center justify-center rounded-full text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-warm)] hover:text-[var(--color-fg)]"
+        >
+          –
+        </button>
+      </div>
       <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
         <span className="text-[var(--color-fg-muted)]">npcs</span>
         <span className="tabular-nums">{world.npcs.length}</span>

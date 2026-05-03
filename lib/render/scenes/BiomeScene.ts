@@ -51,6 +51,7 @@ type VisitorView = {
   targetCx: number;
   targetCy: number;
   flashUntil: number;
+  fading: boolean;
 };
 
 type VisitorHit = { id: string; x: number; y: number; half: number };
@@ -628,8 +629,14 @@ export class BiomeScene extends Phaser.Scene {
           targetCx: target.x,
           targetCy: target.y,
           flashUntil: 0,
+          fading: false,
         };
         this.visitorViews.set(npc.id, view);
+      } else if (view.fading) {
+        // NPC came back mid-fade. Cancel the fade and reset.
+        this.tweens.killTweensOf(view.body);
+        view.body.setAlpha(1);
+        view.fading = false;
       }
       view.targetCx = target.x;
       view.targetCy = target.y;
@@ -647,14 +654,22 @@ export class BiomeScene extends Phaser.Scene {
         stroke: 1.5,
         strokeColor: COLORS.outline,
       });
-      hits.push({ id: npc.id, x: view.cx, y: view.cy, half: NPC_SIZE / 2 + 6 });
+      hits.push({ id: npc.id, x: view.cx, y: view.cy, half: NPC_SIZE / 2 + 14 });
     }
 
     for (const [id, view] of this.visitorViews) {
-      if (!seen.has(id)) {
-        view.body.destroy();
-        this.visitorViews.delete(id);
-      }
+      if (seen.has(id) || view.fading) continue;
+      view.fading = true;
+      this.tweens.add({
+        targets: view.body,
+        alpha: { from: 1, to: 0 },
+        duration: 250,
+        ease: "Cubic.easeOut",
+        onComplete: () => {
+          view.body.destroy();
+          this.visitorViews.delete(id);
+        },
+      });
     }
     this.visitorHits = hits;
   }
@@ -773,10 +788,11 @@ export class BiomeScene extends Phaser.Scene {
       const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
       const tappedVisitor = this.hitVisitorAt(world.x, world.y);
       if (tappedVisitor) {
-        useGameStore.getState().selectNpc(tappedVisitor);
+        useGameStore.getState().openNpcContextMenu(tappedVisitor, pointer.x, pointer.y);
       } else {
         const gx = Math.floor(world.x / CELL);
         const gy = Math.floor(world.y / CELL);
+        useGameStore.getState().closeNpcContextMenu();
         useGameStore.getState().walkPlayerTo(gx, gy);
       }
     }

@@ -33,12 +33,16 @@ import {
   spendRecipe,
 } from "@/lib/sim/weapons";
 import type { WeaponKind } from "@/content/weapons";
+import { RESOURCES, type ResourceKind } from "@/content/resources";
+import { EAT_ENERGY_PER_FOOD, EAT_HEALTH_PER_FOOD } from "@/lib/sim/player";
 
 const AUTOSAVE_EVERY_TICKS = 60;
 export const WALK_MAX_RADIUS = 80;
 
 export type SelectedRegion = { rx: number; ry: number };
 export type View = "world" | "biome";
+
+export type NpcContextMenu = { id: string; x: number; y: number };
 
 type GameStore = {
   world: World | null;
@@ -52,6 +56,8 @@ type GameStore = {
   inventoryOpen: boolean;
   tutorialOpen: boolean;
   debugMode: boolean;
+  debugMinimized: boolean;
+  npcContextMenu: NpcContextMenu | null;
 
   startNew: () => void;
   loadFromDisk: (slot: string) => Promise<void>;
@@ -80,6 +86,10 @@ type GameStore = {
   openTutorial: () => void;
   closeTutorial: () => void;
   toggleDebug: () => void;
+  toggleDebugMinimized: () => void;
+  openNpcContextMenu: (id: string, x: number, y: number) => void;
+  closeNpcContextMenu: () => void;
+  eatFood: (kind: import("@/content/resources").ResourceKind) => void;
   teleportToRegion: (rx: number, ry: number) => void;
   inspectBiome: (rx: number, ry: number) => void;
 };
@@ -96,6 +106,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   inventoryOpen: false,
   tutorialOpen: false,
   debugMode: false,
+  debugMinimized: false,
+  npcContextMenu: null,
 
   startNew: () => {
     set({
@@ -320,6 +332,30 @@ export const useGameStore = create<GameStore>((set, get) => ({
   openTutorial: () => set({ tutorialOpen: true }),
   closeTutorial: () => set({ tutorialOpen: false }),
   toggleDebug: () => set({ debugMode: !get().debugMode }),
+  toggleDebugMinimized: () => set({ debugMinimized: !get().debugMinimized }),
+
+  openNpcContextMenu: (id, x, y) =>
+    set({
+      npcContextMenu: { id, x, y },
+      selectedNpcId: null,
+      selectedRegion: null,
+    }),
+  closeNpcContextMenu: () => set({ npcContextMenu: null }),
+
+  eatFood: (kind: ResourceKind) => {
+    const current = get().world;
+    if (!current?.player || current.gameOver) return;
+    if (!RESOURCES[kind].food) return;
+    const have = current.inventory[kind] ?? 0;
+    if (have <= 0) return;
+    const inventory = { ...current.inventory, [kind]: have - 1 };
+    const player: Player = {
+      ...current.player,
+      energy: Math.min(current.player.energyMax, current.player.energy + EAT_ENERGY_PER_FOOD),
+      health: Math.min(current.player.healthMax, current.player.health + EAT_HEALTH_PER_FOOD),
+    };
+    set({ world: { ...current, inventory, player } });
+  },
 
   teleportToRegion: (rx, ry) => {
     const current = get().world;

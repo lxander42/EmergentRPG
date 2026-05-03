@@ -1,6 +1,4 @@
 import {
-  EAT_ENERGY_PER_FOOD,
-  EAT_HEALTH_PER_FOOD,
   STARVE_TICKS_PER_DAMAGE,
   WALK_ENERGY_PER_STEP,
   type PendingAction,
@@ -17,7 +15,7 @@ import {
   type BiomeInterior,
 } from "@/lib/sim/biome-interior";
 import type { Inventory } from "@/lib/sim/inventory";
-import { RESOURCES, type ResourceKind } from "@/content/resources";
+import type { ResourceKind } from "@/content/resources";
 import type { Npc } from "@/lib/sim/npc";
 import { applyRepPenalty, resolvePlayerAttack } from "@/lib/sim/combat";
 import type { Rng } from "@/lib/sim/rng";
@@ -197,7 +195,6 @@ function tryCollect(
     return { player, interiors, inventory, pickup: null };
   }
 
-  const meta = RESOURCES[resource.kind];
   const updatedInterior = removeResource(interior, resource.id);
   const updatedInteriors = { ...interiors, [regionKey(rx, ry)]: updatedInterior };
   const updatedInventory: Inventory = {
@@ -205,17 +202,8 @@ function tryCollect(
     [resource.kind]: (inventory[resource.kind] ?? 0) + 1,
   };
 
-  let nextPlayer = player;
-  if (meta.food) {
-    nextPlayer = {
-      ...player,
-      energy: Math.min(player.energyMax, player.energy + EAT_ENERGY_PER_FOOD),
-      health: Math.min(player.healthMax, player.health + EAT_HEALTH_PER_FOOD),
-    };
-  }
-
   return {
-    player: nextPlayer,
+    player,
     interiors: updatedInteriors,
     inventory: updatedInventory,
     pickup: { kind: resource.kind, amount: 1 },

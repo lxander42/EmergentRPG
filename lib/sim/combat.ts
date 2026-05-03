@@ -319,7 +319,7 @@ function stepTowardTarget(
     target.lx === interiorPos.lx &&
     target.ly === interiorPos.ly &&
     isEdgeTile(target.lx, target.ly) &&
-    wantsToLeaveRegion(npc, here)
+    wantsToLeaveRegion(npc, here, npcs)
   ) {
     const transit = neighborRegionForEdge(here.rx, here.ry, target.lx, target.ly, mapW, mapH);
     if (transit) return { next: null, tileIntent: null, transitioned: transit };
@@ -345,7 +345,7 @@ function stepTowardTarget(
     step.px === target.lx &&
     step.py === target.ly &&
     isEdgeTile(step.px, step.py) &&
-    wantsToLeaveRegion(npc, here)
+    wantsToLeaveRegion(npc, here, npcs)
   ) {
     const transit = neighborRegionForEdge(here.rx, here.ry, step.px, step.py, mapW, mapH);
     if (transit) return { next: null, tileIntent: null, transitioned: transit };
@@ -433,6 +433,19 @@ function pickDynamicTileTarget(
     }
   }
 
+  // Trade peer in this interior: walk to them so the goal can register as
+  // done at tile level. Without this they'd both wander past each other.
+  if (npc.goal.kind === "trade") {
+    const peerId = npc.goal.peerNpcId;
+    for (const j of inHere) {
+      if (j === selfIdx) continue;
+      const m = npcs[j]!;
+      if (m.id !== peerId) continue;
+      if (!m.interior) continue;
+      return { lx: m.interior.lx, ly: m.interior.ly };
+    }
+  }
+
   const regionTarget = goalTarget(npc.goal, npc, npcs);
   if (regionTarget && (regionTarget.rx !== here.rx || regionTarget.ry !== here.ry)) {
     const dx = regionTarget.rx - here.rx;
@@ -450,8 +463,9 @@ function pickDynamicTileTarget(
 function wantsToLeaveRegion(
   npc: Npc,
   here: { rx: number; ry: number },
+  npcs: Npc[],
 ): boolean {
-  const t = goalTarget(npc.goal, npc, []);
+  const t = goalTarget(npc.goal, npc, npcs);
   if (!t) return false;
   return t.rx !== here.rx || t.ry !== here.ry;
 }

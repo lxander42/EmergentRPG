@@ -1,6 +1,6 @@
 "use client";
 
-import { Hammer, Knife, Package, X } from "@phosphor-icons/react/dist/ssr";
+import { ForkKnife, Hammer, Knife, Package, X } from "@phosphor-icons/react/dist/ssr";
 import { useGameStore } from "@/lib/state/game-store";
 import { RESOURCES, type ResourceKind } from "@/content/resources";
 import {
@@ -15,6 +15,7 @@ export default function InventoryPanel() {
   const close = useGameStore((s) => s.closeInventory);
   const world = useGameStore((s) => s.world);
   const craft = useGameStore((s) => s.craft);
+  const eatFood = useGameStore((s) => s.eatFood);
 
   if (!open || !world) return null;
 
@@ -67,7 +68,7 @@ export default function InventoryPanel() {
               the biome to collect them.
             </p>
           ) : (
-            <ul className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <ul className="mt-3 flex flex-col gap-2">
               {entries.map(([kind, count]) => {
                 const meta = RESOURCES[kind];
                 return (
@@ -82,10 +83,25 @@ export default function InventoryPanel() {
                     />
                     <span className="flex-1 text-sm text-[var(--color-fg)]">
                       {meta.label}
+                      {meta.food && (
+                        <span className="ml-2 font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
+                          food · +energy +hp
+                        </span>
+                      )}
                     </span>
                     <span className="font-mono text-[11px] tabular-nums text-[var(--color-fg-muted)]">
                       {count}
                     </span>
+                    {meta.food && (
+                      <button
+                        onClick={() => eatFood(kind)}
+                        disabled={!player || world.gameOver}
+                        className="tactile inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg)] disabled:opacity-50"
+                      >
+                        <ForkKnife size={12} weight="fill" className="text-[var(--color-accent)]" />
+                        Eat
+                      </button>
+                    )}
                   </li>
                 );
               })}

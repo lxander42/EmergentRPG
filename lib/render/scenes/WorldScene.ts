@@ -153,7 +153,11 @@ export class WorldScene extends Phaser.Scene {
 
     if (world.ticks !== this.lastDrawnTick) {
       this.renderNpcs(world.npcs);
-      this.renderTelegraphs(world.npcs);
+      if (useGameStore.getState().debugMode) {
+        this.renderTelegraphs(world.npcs);
+      } else {
+        this.telegraphLayer.clear();
+      }
       this.renderFactionRings(world.regionControl, world.home);
       this.lastDrawnTick = world.ticks;
     }
