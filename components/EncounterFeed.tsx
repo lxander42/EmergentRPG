@@ -6,9 +6,10 @@ import { useGameStore } from "@/lib/state/game-store";
 
 export default function EncounterFeed() {
   const events = useGameStore((s) => s.world?.recentEvents ?? []);
+  const debugMode = useGameStore((s) => s.debugMode);
   const [open, setOpen] = useState(false);
 
-  if (events.length === 0) return null;
+  if (!debugMode || events.length === 0) return null;
 
   if (!open) {
     const latest = events[0]!;
