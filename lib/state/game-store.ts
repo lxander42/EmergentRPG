@@ -14,7 +14,7 @@ import {
 import { loadWorld, saveWorld } from "@/lib/save/db";
 import { bus } from "@/lib/render/bus";
 import type { WorldEvent } from "@/lib/sim/events";
-import { gainRep } from "@/lib/sim/faction";
+import { gainPlayerRep } from "@/lib/sim/faction";
 import {
   globalToLocal,
   isLocalObstacle,
@@ -26,12 +26,24 @@ import {
 } from "@/lib/sim/biome-interior";
 import { bfsPredicate } from "@/lib/sim/path";
 import type { PendingAction, Player } from "@/lib/sim/player";
+import { createPlayer } from "@/lib/sim/player";
+import { setPendingAttack } from "@/lib/sim/player-tick";
+import {
+  affordable,
+  makeWeapon,
+  spendRecipe,
+} from "@/lib/sim/weapons";
+import type { WeaponKind } from "@/content/weapons";
+import { RESOURCES, type ResourceKind } from "@/content/resources";
+import { EAT_ENERGY_PER_FOOD, EAT_HEALTH_PER_FOOD } from "@/lib/sim/player";
 
 const AUTOSAVE_EVERY_TICKS = 60;
 export const WALK_MAX_RADIUS = 80;
 
 export type SelectedRegion = { rx: number; ry: number };
 export type View = "world" | "biome";
+
+export type NpcContextMenu = { id: string; x: number; y: number };
 
 type GameStore = {
   world: World | null;
@@ -42,6 +54,12 @@ type GameStore = {
   lastEvent: WorldEvent | null;
   view: View;
   homePending: boolean;
+  inventoryOpen: boolean;
+  tutorialOpen: boolean;
+  debugMode: boolean;
+  debugMinimized: boolean;
+  mapShowFactions: boolean;
+  npcContextMenu: NpcContextMenu | null;
 
   startNew: () => void;
   loadFromDisk: (slot: string) => Promise<void>;
@@ -61,6 +79,22 @@ type GameStore = {
 
   acceptEncounter: () => void;
   dismissEncounter: () => void;
+
+  craft: (kind: WeaponKind) => boolean;
+  attackNpc: (id: string) => void;
+
+  openInventory: () => void;
+  closeInventory: () => void;
+  openTutorial: () => void;
+  closeTutorial: () => void;
+  toggleDebug: () => void;
+  toggleDebugMinimized: () => void;
+  toggleMapFactions: () => void;
+  openNpcContextMenu: (id: string, x: number, y: number) => void;
+  closeNpcContextMenu: () => void;
+  eatFood: (kind: import("@/content/resources").ResourceKind) => void;
+  teleportToRegion: (rx: number, ry: number) => void;
+  inspectBiome: (rx: number, ry: number) => void;
 };
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -72,6 +106,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
   lastEvent: null,
   view: "world",
   homePending: false,
+  inventoryOpen: false,
+  tutorialOpen: false,
+  debugMode: false,
+  debugMinimized: false,
+  mapShowFactions: true,
+  npcContextMenu: null,
 
   startNew: () => {
     set({
@@ -82,6 +122,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       paused: false,
       view: "world",
       homePending: true,
+      inventoryOpen: false,
+      tutorialOpen: true,
     });
   },
 
@@ -226,14 +268,51 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   resetAfterDeath: () => {
+    const current = get().world;
+    if (!current) return;
+    // Respawn into the same world: keep NPCs, factions, regions, faction
+    // relations, and any death loot we just dropped. Only the player and
+    // the run-specific UI flags reset. If the player never settled a home
+    // we can't respawn — fall back to a fresh world (treat it like a new game).
+    if (!current.home) {
+      set({
+        world: createWorld(),
+        selectedNpcId: null,
+        selectedRegion: null,
+        lastEvent: null,
+        paused: false,
+        view: "world",
+        homePending: true,
+        inventoryOpen: false,
+        tutorialOpen: false,
+        npcContextMenu: null,
+      });
+      return;
+    }
+    const center = regionCenterGlobal(current.home.rx, current.home.ry);
+    const seeded = ensureInteriorsForRegion(current, current.home.rx, current.home.ry);
+    const interior = seeded.biomeInteriors[regionKey(current.home.rx, current.home.ry)];
+    const spawn = interior
+      ? nearestPassable(interior, center.gx, center.gy, current.home.rx, current.home.ry)
+      : center;
+    const fresh = createPlayer(spawn);
     set({
-      world: createWorld(),
+      world: {
+        ...seeded,
+        player: fresh,
+        gameOver: false,
+        gameOverReason: null,
+        recentPickups: [],
+      },
       selectedNpcId: null,
       selectedRegion: null,
       lastEvent: null,
       paused: false,
-      view: "world",
-      homePending: true,
+      view: "biome",
+      homePending: false,
+      inventoryOpen: false,
+      tutorialOpen: false,
+      npcContextMenu: null,
     });
   },
 
@@ -254,9 +333,119 @@ export const useGameStore = create<GameStore>((set, get) => ({
       const prev = inventory[enc.offer.kind] ?? 0;
       inventory = { ...inventory, [enc.offer.kind]: prev + enc.offer.amount };
     }
-    const factions = gainRep(current.factions, enc.factionId, 2);
-    set({ world: { ...current, inventory, factions }, lastEvent: null });
+    const playerReputation = gainPlayerRep(current.playerReputation, enc.factionId, 2);
+    set({ world: { ...current, inventory, playerReputation }, lastEvent: null });
   },
 
   dismissEncounter: () => set({ lastEvent: null }),
+
+  craft: (kind) => {
+    const current = get().world;
+    if (!current?.player) return false;
+    if (!affordable(current.inventory, kind)) return false;
+    const nextInventory = spendRecipe(current.inventory, kind);
+    if (!nextInventory) return false;
+    const weapon = makeWeapon(kind);
+    const player: Player = {
+      ...current.player,
+      weapons: [...current.player.weapons, weapon],
+    };
+    set({ world: { ...current, inventory: nextInventory, player } });
+    return true;
+  },
+
+  attackNpc: (id) => {
+    const current = get().world;
+    if (!current?.player || current.gameOver) return;
+    const player = setPendingAttack(current.player, id);
+    set({ world: { ...current, player } });
+  },
+
+  openInventory: () =>
+    set({
+      inventoryOpen: true,
+      selectedNpcId: null,
+      selectedRegion: null,
+    }),
+  closeInventory: () => set({ inventoryOpen: false }),
+  openTutorial: () => set({ tutorialOpen: true }),
+  closeTutorial: () => set({ tutorialOpen: false }),
+  toggleDebug: () => set({ debugMode: !get().debugMode }),
+  toggleDebugMinimized: () => set({ debugMinimized: !get().debugMinimized }),
+  toggleMapFactions: () => set({ mapShowFactions: !get().mapShowFactions }),
+
+  openNpcContextMenu: (id, x, y) =>
+    set({
+      npcContextMenu: { id, x, y },
+      selectedNpcId: null,
+      selectedRegion: null,
+    }),
+  closeNpcContextMenu: () => set({ npcContextMenu: null }),
+
+  eatFood: (kind: ResourceKind) => {
+    const current = get().world;
+    if (!current?.player || current.gameOver) return;
+    if (!RESOURCES[kind].food) return;
+    const have = current.inventory[kind] ?? 0;
+    if (have <= 0) return;
+    const inventory = { ...current.inventory, [kind]: have - 1 };
+    const player: Player = {
+      ...current.player,
+      energy: Math.min(current.player.energyMax, current.player.energy + EAT_ENERGY_PER_FOOD),
+      health: Math.min(current.player.healthMax, current.player.health + EAT_HEALTH_PER_FOOD),
+    };
+    set({ world: { ...current, inventory, player } });
+  },
+
+  teleportToRegion: (rx, ry) => {
+    const current = get().world;
+    if (!current?.player || current.gameOver) return;
+    const center = regionCenterGlobal(rx, ry);
+    const seeded = ensureInteriorsForRegion(current, rx, ry);
+    const interior = seeded.biomeInteriors[regionKey(rx, ry)];
+    if (!interior) return;
+    const target = nearestPassable(interior, center.gx, center.gy, rx, ry);
+    const player: Player = {
+      ...seeded.player!,
+      gx: target.gx,
+      gy: target.gy,
+      route: null,
+      stepCooldown: 0,
+      pendingAction: null,
+    };
+    set({
+      world: { ...seeded, player },
+      view: "biome",
+      selectedNpcId: null,
+      selectedRegion: null,
+    });
+    bus.emit("npc:deselected");
+  },
+
+  inspectBiome: (rx, ry) => {
+    get().teleportToRegion(rx, ry);
+  },
 }));
+
+function nearestPassable(
+  interior: import("@/lib/sim/biome-interior").BiomeInterior,
+  gx: number,
+  gy: number,
+  rx: number,
+  ry: number,
+): { gx: number; gy: number } {
+  for (let r = 0; r <= 8; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+        const tgx = gx + dx;
+        const tgy = gy + dy;
+        const lx = tgx - rx * INTERIOR_W;
+        const ly = tgy - ry * INTERIOR_H;
+        if (lx < 0 || ly < 0 || lx >= INTERIOR_W || ly >= INTERIOR_H) continue;
+        if (!isLocalObstacle(interior, lx, ly)) return { gx: tgx, gy: tgy };
+      }
+    }
+  }
+  return { gx, gy };
+}

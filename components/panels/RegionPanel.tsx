@@ -16,6 +16,9 @@ export default function RegionPanel() {
   const homePending = useGameStore((s) => s.homePending);
   const claimHome = useGameStore((s) => s.claimHome);
   const travelToRegion = useGameStore((s) => s.travelToRegion);
+  const teleportToRegion = useGameStore((s) => s.teleportToRegion);
+  const debug = useGameStore((s) => s.debugMode);
+  const inspectBiome = useGameStore((s) => s.inspectBiome);
 
   if (!region || !world) return null;
 
@@ -124,6 +127,23 @@ export default function RegionPanel() {
             <Footprints size={16} weight="fill" />
             {reachable ? "Travel here" : `Too far to walk (${distance} tiles)`}
           </button>
+        )}
+
+        {debug && Boolean(player) && !isCurrentRegion && meta.passable && !world.gameOver && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              onClick={() => teleportToRegion(region.rx, region.ry)}
+              className="tactile inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface-warm)] px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider text-[var(--color-fg)]"
+            >
+              Teleport
+            </button>
+            <button
+              onClick={() => inspectBiome(region.rx, region.ry)}
+              className="tactile inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface-warm)] px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider text-[var(--color-fg)]"
+            >
+              Inspect biome
+            </button>
+          </div>
         )}
 
         <dl className="mt-4 grid grid-cols-[auto_1fr] items-start gap-x-5 gap-y-3">

@@ -19,10 +19,11 @@ import { createPlayer } from "@/lib/sim/player";
 import { tickPlayer } from "@/lib/sim/player-tick";
 import type { Inventory } from "@/lib/sim/inventory";
 import { biomeAt, isPassable, type Biome } from "@/lib/sim/biome";
+import { tickCombat } from "@/lib/sim/combat";
 
 export { biomeAt, isPassable, type Biome } from "@/lib/sim/biome";
 
-export const WORLD_VERSION = 6;
+export const WORLD_VERSION = 7;
 export const MAP_W = 32;
 export const MAP_H = 32;
 export const NPC_COUNT = 200;
@@ -34,6 +35,17 @@ const CONTROL_DECAY_EVERY = 16;
 const CONTROL_DECAY_FACTOR = 0.85;
 const CONTROL_THRESHOLD = 5;
 const CONTROL_DROP_BELOW = 0.5;
+
+export type GameOverReason =
+  | "starved"
+  | { kind: "killed"; killerNpcId: string; killerName: string; factionId: string };
+
+export type PickupNotice = {
+  id: string;
+  tick: number;
+  kind: import("@/content/resources").ResourceKind;
+  amount: number;
+};
 
 export type World = {
   version: number;
@@ -54,7 +66,16 @@ export type World = {
   // Set as the player visits regions. Phase 4 reads this for fog-of-war
   // on the world map; for Phase 1 it's just bookkeeping.
   discoveredRegions: Record<string, true>;
+  // factionId -> per-player reputation. Drives hostile/friendly encounters.
+  playerReputation: Record<string, number>;
+  // pairKey(a,b) -> faction-vs-faction relation. Negative = hostile.
+  factionRelations: Record<string, number>;
+  // Ring buffer of recent player pickups (resources + loot). Ephemeral —
+  // BiomeScene drains them to spawn floating text and they fall off after
+  // a short window.
+  recentPickups: PickupNotice[];
   gameOver: boolean;
+  gameOverReason: GameOverReason | null;
 };
 
 export function createWorld(seed = Date.now() & 0xffffffff): World {
@@ -76,7 +97,11 @@ export function createWorld(seed = Date.now() & 0xffffffff): World {
     regionPresence: {},
     regionControl: {},
     discoveredRegions: {},
+    playerReputation: {},
+    factionRelations: {},
+    recentPickups: [],
     gameOver: false,
+    gameOverReason: null,
   };
 }
 
@@ -127,30 +152,73 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
   if (world.gameOver) return { world, event: null };
 
   const rng = createRng(world.rngState);
+  const playerRegion = world.player ? globalToLocal(world.player.gx, world.player.gy) : null;
   const tickCtx = {
     rng,
     mapW: MAP_W,
     mapH: MAP_H,
     regionControl: world.regionControl,
     npcs: world.npcs,
+    playerRegion: playerRegion ? { rx: playerRegion.rx, ry: playerRegion.ry } : null,
   };
-  const npcs = world.npcs.map((n) => tickNpc(n, tickCtx));
+  let npcs = world.npcs.map((n) => tickNpc(n, tickCtx));
   const ticks = world.ticks + 1;
 
   let player = world.player;
   let interiors = world.biomeInteriors;
   let inventory = world.inventory;
+  let factions = world.factions;
+  let factionRelations = world.factionRelations;
+  let playerReputation = world.playerReputation;
+  let recentPickups = prunePickups(world.recentPickups, ticks);
+  const combatDeathEvents: WorldEvent[] = [];
   let gameOver: boolean = world.gameOver;
+  let gameOverReason: GameOverReason | null = world.gameOverReason;
   let discoveredRegions = world.discoveredRegions;
 
   if (player) {
-    const stepped = tickPlayer({ player, interiors, inventory });
+    const stepped = tickPlayer({
+      player,
+      interiors,
+      inventory,
+      npcs,
+      playerReputation,
+      rng,
+      ticks,
+    });
     player = stepped.player;
     interiors = stepped.interiors;
     inventory = stepped.inventory;
+    npcs = stepped.npcs;
+    playerReputation = stepped.playerReputation;
+    if (stepped.pickups.length > 0) {
+      let next = recentPickups;
+      for (const p of stepped.pickups) {
+        next = [
+          ...next,
+          {
+            id: `pkp-${ticks}-${next.length}`,
+            tick: ticks,
+            kind: p.kind,
+            amount: p.amount,
+          },
+        ];
+      }
+      recentPickups = next.slice(-12);
+    }
     if (stepped.death) {
       gameOver = true;
-      player = { ...player, route: null, pendingAction: null, stepCooldown: 0 };
+      gameOverReason = "starved";
+      const dropped = dropDeathLoot(player, inventory, interiors, ticks);
+      interiors = dropped.interiors;
+      inventory = {};
+      player = {
+        ...player,
+        weapons: [],
+        route: null,
+        pendingAction: null,
+        stepCooldown: 0,
+      };
     }
 
     const cur = globalToLocal(player.gx, player.gy);
@@ -161,6 +229,63 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
     interiors = ensureNeighbors(interiors, world.seed, cur.rx, cur.ry);
   }
 
+  if (!gameOver) {
+    const combat = tickCombat(
+      {
+        npcs,
+        player,
+        interiors,
+        factions,
+        factionRelations,
+        playerReputation,
+        mapW: MAP_W,
+        mapH: MAP_H,
+        ticks,
+      },
+      rng,
+    );
+    npcs = combat.npcs;
+    player = combat.player;
+    interiors = combat.interiors;
+    factions = combat.factions;
+    factionRelations = combat.factionRelations;
+    playerReputation = combat.playerReputation;
+    if (combat.playerKilledBy && player && player.health <= 0) {
+      gameOver = true;
+      gameOverReason = {
+        kind: "killed",
+        killerNpcId: combat.playerKilledBy.npcId,
+        killerName: combat.playerKilledBy.name,
+        factionId: combat.playerKilledBy.factionId,
+      };
+      const dropped = dropDeathLoot(player, inventory, interiors, ticks);
+      interiors = dropped.interiors;
+      inventory = {};
+      player = {
+        ...player,
+        weapons: [],
+        route: null,
+        pendingAction: null,
+        stepCooldown: 0,
+      };
+    }
+    // Build combat-death events to splice into the feed below.
+    for (const d of combat.deaths) {
+      const killer = d.killerName ? `${d.killerName} ` : "";
+      combatDeathEvents.push({
+        id: `kill-${ticks}-${d.npcId}`,
+        tick: ticks,
+        topic: d.killerKind === "player" ? "combat:player-kill" : "combat:npc-kill",
+        context:
+          d.killerKind === "player"
+            ? `You killed ${d.name}.`
+            : `${killer}killed ${d.name}.`,
+      });
+    }
+    // Remove dead NPCs from the canonical list.
+    npcs = npcs.filter((n) => n.combatHealth > 0);
+  }
+
   const built = updatePresence(
     world.regionPresence,
     npcs,
@@ -169,6 +294,10 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
   const regionPresence = built.presence;
   const regionControl = built.control;
 
+  const startingEvents =
+    combatDeathEvents.length > 0
+      ? [...combatDeathEvents, ...world.recentEvents].slice(0, 8)
+      : world.recentEvents;
   const next: World = {
     ...world,
     ticks,
@@ -180,13 +309,19 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
     regionPresence,
     regionControl,
     discoveredRegions,
+    factions,
+    factionRelations,
+    playerReputation,
+    recentPickups,
+    recentEvents: startingEvents,
     gameOver,
+    gameOverReason,
   };
 
   let encounter: WorldEvent | null = null;
   if (player) {
-    const playerRegion = globalToLocal(player.gx, player.gy);
-    encounter = detectEncounter(world.npcs, npcs, next, playerRegion, rng);
+    const region = globalToLocal(player.gx, player.gy);
+    encounter = detectEncounter(world.npcs, npcs, next, region, rng);
     if (encounter) {
       next.recentEvents = [encounter, ...next.recentEvents].slice(0, 8);
       next.rngState = rng.state();
@@ -263,9 +398,10 @@ function detectEncounter(
   playerRegion: { rx: number; ry: number; lx: number; ly: number },
   rng: import("@/lib/sim/rng").Rng,
 ): WorldEvent | null {
-  for (let i = 0; i < nextNpcs.length; i++) {
-    const next = nextNpcs[i]!;
-    const prev = prevNpcs[i];
+  const prevById = new Map<string, Npc>();
+  for (const p of prevNpcs) prevById.set(p.id, p);
+  for (const next of nextNpcs) {
+    const prev = prevById.get(next.id);
     if (!prev) continue;
     if (prev.rx === next.rx && prev.ry === next.ry) continue;
     if (next.rx !== playerRegion.rx || next.ry !== playerRegion.ry) continue;
@@ -274,6 +410,45 @@ function detectEncounter(
     return buildEncounterEvent(world, next, faction, rng);
   }
   return null;
+}
+
+function dropDeathLoot(
+  player: Player,
+  inventory: Inventory,
+  interiors: Record<string, BiomeInterior>,
+  ticks: number,
+): { interiors: Record<string, BiomeInterior> } {
+  const { rx, ry, lx, ly } = globalToLocal(player.gx, player.gy);
+  const k = regionKey(rx, ry);
+  const interior = interiors[k];
+  if (!interior) return { interiors };
+  const items: Inventory = {};
+  for (const key of Object.keys(inventory) as Array<keyof Inventory>) {
+    const v = inventory[key] ?? 0;
+    if (v > 0) items[key] = v;
+  }
+  const weapons = player.weapons.length > 0 ? [...player.weapons] : undefined;
+  if (Object.keys(items).length === 0 && !weapons) return { interiors };
+  const pile = {
+    id: `grave-${ticks}-${rx}-${ry}-${lx}-${ly}`,
+    lx,
+    ly,
+    items,
+    weapons,
+    fromDeath: true,
+  };
+  const next = { ...interior, loot: [...interior.loot, pile] };
+  return { interiors: { ...interiors, [k]: next } };
+}
+
+// Pickups are short-lived (UI hints). After ~10 ticks (~2.5s at 1x), drop.
+const PICKUP_TTL_TICKS = 10;
+function prunePickups(prev: PickupNotice[], ticks: number): PickupNotice[] {
+  const out: PickupNotice[] = [];
+  for (const p of prev) {
+    if (ticks - p.tick <= PICKUP_TTL_TICKS) out.push(p);
+  }
+  return out;
 }
 
 function ensureNeighbors(

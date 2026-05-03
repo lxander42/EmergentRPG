@@ -17,12 +17,24 @@ export type InteriorResource = {
   kind: ResourceKind;
 };
 
+export type LootPile = {
+  id: string;
+  lx: number;
+  ly: number;
+  items: Partial<Record<ResourceKind, number>>;
+  weapons?: import("@/lib/sim/weapons").WeaponInstance[];
+  // Optional flag: this pile was dropped by the player on death. Lets the
+  // render layer show it differently and the encounter feed reference it.
+  fromDeath?: boolean;
+};
+
 export type BiomeInterior = {
   rx: number;
   ry: number;
   biome: Biome;
   obstacles: boolean[];
   resources: InteriorResource[];
+  loot: LootPile[];
 };
 
 export function regionKey(rx: number, ry: number): string {
@@ -68,12 +80,13 @@ export function generateInterior(worldSeed: number, rx: number, ry: number): Bio
       biome,
       obstacles: new Array<boolean>(INTERIOR_W * INTERIOR_H).fill(true),
       resources: [],
+      loot: [],
     };
   }
 
   const obstacles = scatterObstacles(rng);
   const resources = scatterResources(rng, biome, obstacles);
-  return { rx, ry, biome, obstacles, resources };
+  return { rx, ry, biome, obstacles, resources, loot: [] };
 }
 
 export function isLocalObstacle(interior: BiomeInterior, lx: number, ly: number): boolean {
@@ -96,6 +109,48 @@ export function removeResource(
   const next = interior.resources.filter((r) => r.id !== resourceId);
   if (next.length === interior.resources.length) return interior;
   return { ...interior, resources: next };
+}
+
+export function lootAtLocal(
+  interior: BiomeInterior,
+  lx: number,
+  ly: number,
+): LootPile | null {
+  return interior.loot.find((l) => l.lx === lx && l.ly === ly) ?? null;
+}
+
+export function addLoot(interior: BiomeInterior, pile: LootPile): BiomeInterior {
+  return { ...interior, loot: [...interior.loot, pile] };
+}
+
+export function removeLoot(interior: BiomeInterior, lootId: string): BiomeInterior {
+  const next = interior.loot.filter((l) => l.id !== lootId);
+  if (next.length === interior.loot.length) return interior;
+  return { ...interior, loot: next };
+}
+
+// Find a passable interior tile near (cx, cy) that isn't occupied by another
+// NPC. Used for spawning NPC interior slots and loot piles.
+export function findPassableTile(
+  interior: BiomeInterior,
+  cx: number,
+  cy: number,
+  isOccupied: (lx: number, ly: number) => boolean,
+): { lx: number; ly: number } | null {
+  for (let r = 0; r <= Math.max(INTERIOR_W, INTERIOR_H); r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+        const lx = cx + dx;
+        const ly = cy + dy;
+        if (lx < 0 || ly < 0 || lx >= INTERIOR_W || ly >= INTERIOR_H) continue;
+        if (isLocalObstacle(interior, lx, ly)) continue;
+        if (isOccupied(lx, ly)) continue;
+        return { lx, ly };
+      }
+    }
+  }
+  return null;
 }
 
 function mixSeed(worldSeed: number, rx: number, ry: number): number {

@@ -53,7 +53,9 @@ export function buildEncounterEvent(
   faction: FactionState,
   rng: Rng,
 ): WorldEvent {
-  const sentiment: EncounterSentiment = faction.reputation >= 0 ? "friendly" : "hostile";
+  const playerRep = world.playerReputation[npc.factionId];
+  const repForSentiment = playerRep ?? faction.reputation;
+  const sentiment: EncounterSentiment = repForSentiment >= 0 ? "friendly" : "hostile";
   const factionName = faction.name;
   if (sentiment === "friendly") {
     const offer = pickOffer(npc, rng);
