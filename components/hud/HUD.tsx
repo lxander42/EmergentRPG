@@ -3,6 +3,8 @@
 import Link from "next/link";
 import {
   Bug,
+  Eye,
+  EyeSlash,
   House,
   Pause,
   Play,
@@ -52,6 +54,8 @@ export default function HUD() {
   const openInventory = useGameStore((s) => s.openInventory);
   const debugMode = useGameStore((s) => s.debugMode);
   const toggleDebug = useGameStore((s) => s.toggleDebug);
+  const mapShowFactions = useGameStore((s) => s.mapShowFactions);
+  const toggleMapFactions = useGameStore((s) => s.toggleMapFactions);
 
   return (
     <>
@@ -105,6 +109,28 @@ export default function HUD() {
                   <MapTrifold size={16} weight="duotone" />
                 ) : (
                   <House size={16} weight="duotone" />
+                )}
+              </button>
+            </>
+          )}
+
+          {view === "world" && (
+            <>
+              <span className="mx-1 h-4 w-px bg-[var(--color-border)]" aria-hidden />
+              <button
+                aria-label={
+                  mapShowFactions ? "Hide faction zones" : "Show faction zones"
+                }
+                aria-pressed={mapShowFactions}
+                onClick={toggleMapFactions}
+                className={`tactile inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-[var(--color-surface-warm)] ${
+                  mapShowFactions ? "text-[var(--color-fg)]" : "text-[var(--color-fg-muted)]"
+                }`}
+              >
+                {mapShowFactions ? (
+                  <Eye size={16} weight="duotone" />
+                ) : (
+                  <EyeSlash size={16} weight="duotone" />
                 )}
               </button>
             </>

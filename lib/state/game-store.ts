@@ -57,6 +57,7 @@ type GameStore = {
   tutorialOpen: boolean;
   debugMode: boolean;
   debugMinimized: boolean;
+  mapShowFactions: boolean;
   npcContextMenu: NpcContextMenu | null;
 
   startNew: () => void;
@@ -87,6 +88,7 @@ type GameStore = {
   closeTutorial: () => void;
   toggleDebug: () => void;
   toggleDebugMinimized: () => void;
+  toggleMapFactions: () => void;
   openNpcContextMenu: (id: string, x: number, y: number) => void;
   closeNpcContextMenu: () => void;
   eatFood: (kind: import("@/content/resources").ResourceKind) => void;
@@ -107,6 +109,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   tutorialOpen: false,
   debugMode: false,
   debugMinimized: false,
+  mapShowFactions: true,
   npcContextMenu: null,
 
   startNew: () => {
@@ -333,6 +336,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   closeTutorial: () => set({ tutorialOpen: false }),
   toggleDebug: () => set({ debugMode: !get().debugMode }),
   toggleDebugMinimized: () => set({ debugMinimized: !get().debugMinimized }),
+  toggleMapFactions: () => set({ mapShowFactions: !get().mapShowFactions }),
 
   openNpcContextMenu: (id, x, y) =>
     set({

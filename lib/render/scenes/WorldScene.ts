@@ -152,13 +152,21 @@ export class WorldScene extends Phaser.Scene {
     if (!world) return;
 
     if (world.ticks !== this.lastDrawnTick) {
-      this.renderNpcs(world.npcs);
-      if (useGameStore.getState().debugMode) {
+      const debug = useGameStore.getState().debugMode;
+      if (debug) {
+        this.renderNpcs(world.npcs);
         this.renderTelegraphs(world.npcs);
       } else {
+        this.npcLayer.clear();
         this.telegraphLayer.clear();
+        this.npcHits = [];
       }
-      this.renderFactionRings(world.regionControl, world.home);
+      const showFactions = useGameStore.getState().mapShowFactions;
+      if (showFactions) {
+        this.renderFactionRings(world.regionControl, world.home);
+      } else {
+        this.factionRingLayer.clear();
+      }
       this.lastDrawnTick = world.ticks;
     }
     this.renderHomeMarker();
@@ -196,6 +204,9 @@ export class WorldScene extends Phaser.Scene {
     home: { rx: number; ry: number } | null,
   ) {
     this.factionRingLayer.clear();
+    // Group regions by faction so each faction renders once. Skip the home
+    // region (it has its own marker) so the player's tile stays uncluttered.
+    const owned = new Map<string, Array<{ rx: number; ry: number }>>();
     for (const key of Object.keys(regionControl)) {
       const factionId = regionControl[key]!;
       const [sx, sy] = key.split(",");
@@ -203,16 +214,106 @@ export class WorldScene extends Phaser.Scene {
       const ry = Number(sy);
       if (!Number.isFinite(rx) || !Number.isFinite(ry)) continue;
       if (home && home.rx === rx && home.ry === ry) continue;
+      const arr = owned.get(factionId) ?? [];
+      arr.push({ rx, ry });
+      owned.set(factionId, arr);
+    }
+    for (const [factionId, regions] of owned) {
       const faction = FACTIONS.find((f) => f.id === factionId);
       if (!faction) continue;
-      const px = rx * REGION + PADDING;
-      const py = ry * REGION + PADDING;
-      // Soft tinted fill so zones read as territory, not as a thin border
-      // that competes with tile edges and the selection ring.
-      this.factionRingLayer.fillStyle(faction.color, 0.28);
-      this.factionRingLayer.fillRoundedRect(px, py, INNER, INNER, RADIUS);
-      this.factionRingLayer.lineStyle(2.5, faction.color, 0.85);
-      this.factionRingLayer.strokeRoundedRect(px, py, INNER, INNER, RADIUS);
+      const occupied = new Set(regions.map((r) => `${r.rx},${r.ry}`));
+      const isOwn = (rx: number, ry: number) => occupied.has(`${rx},${ry}`);
+
+      // Soft underlay so the hatch reads against very light biome tiles.
+      this.factionRingLayer.fillStyle(faction.color, 0.10);
+      for (const r of regions) {
+        const px = r.rx * REGION;
+        const py = r.ry * REGION;
+        this.factionRingLayer.fillRect(px, py, REGION, REGION);
+      }
+
+      // Cross-hatch fill, anchored to a global lattice so adjacent same-
+      // faction regions share continuous lines (no seams at region edges).
+      this.factionRingLayer.lineStyle(1, faction.color, 0.55);
+      const hatchStep = 8;
+      for (const r of regions) {
+        this.drawHatchInRegion(r.rx, r.ry, hatchStep, +1);
+        this.drawHatchInRegion(r.rx, r.ry, hatchStep, -1);
+      }
+
+      // Perimeter: only stroke an edge when the neighbouring region isn't
+      // the same faction. Adjacent same-faction regions visually merge.
+      this.factionRingLayer.lineStyle(2, faction.color, 0.9);
+      for (const r of regions) {
+        const px = r.rx * REGION;
+        const py = r.ry * REGION;
+        if (!isOwn(r.rx, r.ry - 1)) {
+          this.factionRingLayer.beginPath();
+          this.factionRingLayer.moveTo(px, py);
+          this.factionRingLayer.lineTo(px + REGION, py);
+          this.factionRingLayer.strokePath();
+        }
+        if (!isOwn(r.rx + 1, r.ry)) {
+          this.factionRingLayer.beginPath();
+          this.factionRingLayer.moveTo(px + REGION, py);
+          this.factionRingLayer.lineTo(px + REGION, py + REGION);
+          this.factionRingLayer.strokePath();
+        }
+        if (!isOwn(r.rx, r.ry + 1)) {
+          this.factionRingLayer.beginPath();
+          this.factionRingLayer.moveTo(px, py + REGION);
+          this.factionRingLayer.lineTo(px + REGION, py + REGION);
+          this.factionRingLayer.strokePath();
+        }
+        if (!isOwn(r.rx - 1, r.ry)) {
+          this.factionRingLayer.beginPath();
+          this.factionRingLayer.moveTo(px, py);
+          this.factionRingLayer.lineTo(px, py + REGION);
+          this.factionRingLayer.strokePath();
+        }
+      }
+    }
+  }
+
+  // Draw clipped diagonal lines y = slope*x + c within one region rect.
+  // c is a multiple of step so adjacent regions in the same faction share
+  // the same lattice and the lines look continuous across the seam.
+  private drawHatchInRegion(rx: number, ry: number, step: number, slope: 1 | -1) {
+    const x0 = rx * REGION;
+    const y0 = ry * REGION;
+    const x1 = x0 + REGION;
+    const y1 = y0 + REGION;
+    // y = slope*x + c => c = y - slope*x. Range over rect corners:
+    const cs = [
+      y0 - slope * x0,
+      y0 - slope * x1,
+      y1 - slope * x0,
+      y1 - slope * x1,
+    ];
+    const cMin = Math.ceil(Math.min(...cs) / step) * step;
+    const cMax = Math.floor(Math.max(...cs) / step) * step;
+    for (let c = cMin; c <= cMax; c += step) {
+      // Find intersection with rect edges.
+      const ys: Array<{ x: number; y: number }> = [];
+      // x = x0
+      const yAtX0 = slope * x0 + c;
+      if (yAtX0 >= y0 && yAtX0 <= y1) ys.push({ x: x0, y: yAtX0 });
+      // x = x1
+      const yAtX1 = slope * x1 + c;
+      if (yAtX1 >= y0 && yAtX1 <= y1) ys.push({ x: x1, y: yAtX1 });
+      // y = y0
+      const xAtY0 = (y0 - c) / slope;
+      if (xAtY0 > x0 && xAtY0 < x1) ys.push({ x: xAtY0, y: y0 });
+      // y = y1
+      const xAtY1 = (y1 - c) / slope;
+      if (xAtY1 > x0 && xAtY1 < x1) ys.push({ x: xAtY1, y: y1 });
+      if (ys.length < 2) continue;
+      const a = ys[0]!;
+      const b = ys[1]!;
+      this.factionRingLayer.beginPath();
+      this.factionRingLayer.moveTo(a.x, a.y);
+      this.factionRingLayer.lineTo(b.x, b.y);
+      this.factionRingLayer.strokePath();
     }
   }
 
