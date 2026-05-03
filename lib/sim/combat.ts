@@ -35,6 +35,9 @@ export const TILE_STEP_COOLDOWN_MIN = 1;
 export const TILE_STEP_COOLDOWN_MAX = 4;
 export const REGION_PAIRS_PER_TICK = 4;
 export const MAX_REGION_HITS_PER_TICK = 6;
+// How long a hit lingers as "engaged" on an NPC's mind. After this many
+// ticks of no follow-up, they drop pursuit.
+export const ENGAGED_TTL_TICKS = 200;
 
 export type CombatHit = {
   defenderKind: "player" | "npc";
@@ -75,6 +78,7 @@ export type CombatInput = {
   playerReputation: Record<string, number>;
   mapW: number;
   mapH: number;
+  ticks: number;
 };
 
 export function tickCombat(input: CombatInput, rng: Rng): CombatResult {
@@ -93,9 +97,9 @@ export function tickCombat(input: CombatInput, rng: Rng): CombatResult {
   // abstract combat. This keeps the player's neighbourhood crisp and lets
   // off-screen kills affect faction power before encounter detection.
   if (result.player) {
-    runInteriorCombat(result, rng, input.mapW, input.mapH);
+    runInteriorCombat(result, rng, input.mapW, input.mapH, input.ticks);
   }
-  runRegionCombat(result, rng, input.mapW, input.mapH);
+  runRegionCombat(result, rng, input.mapW, input.mapH, input.ticks);
   return result;
 }
 
@@ -104,6 +108,7 @@ function runInteriorCombat(
   rng: Rng,
   mapW: number,
   mapH: number,
+  ticks: number,
 ): void {
   const player = res.player;
   if (!player) return;
@@ -156,6 +161,7 @@ function runInteriorCombat(
         tileIntent: null,
         stepCooldown: rng.int(TILE_STEP_COOLDOWN_MIN, TILE_STEP_COOLDOWN_MAX + 1),
         lastHitTick: -999,
+        wanderUntil: ticks + rng.int(40, 100),
       },
     };
   }
@@ -225,7 +231,7 @@ function runInteriorCombat(
       };
       continue;
     }
-    const stepped = stepTowardTarget(n, npcs, inHere, idx, here, interior, mapW, mapH, res, rng);
+    const stepped = stepTowardTarget(n, npcs, inHere, idx, here, interior, mapW, mapH, res, rng, ticks);
     if (stepped.transitioned) {
       // NPC left the player's region; clear interior, advance rx/ry.
       npcs[idx] = {
@@ -279,6 +285,7 @@ function stepTowardTarget(
   mapH: number,
   res: CombatResult,
   rng: Rng,
+  ticks: number,
 ): StepResult {
   const interiorPos = npc.interior!;
 
@@ -292,7 +299,7 @@ function stepTowardTarget(
     occupied[m.interior.ly * INTERIOR_W + m.interior.lx] = true;
   }
 
-  const dynamicTarget = pickDynamicTileTarget(npc, npcs, inHere, selfIdx, here, res);
+  const dynamicTarget = pickDynamicTileTarget(npc, npcs, inHere, selfIdx, here, res, ticks, rng);
 
   // Decide effective target: dynamic (player/enemy/edge) overrides any cached
   // wander; otherwise reuse cached tileIntent until we arrive, then reroll.
@@ -319,7 +326,7 @@ function stepTowardTarget(
     target.lx === interiorPos.lx &&
     target.ly === interiorPos.ly &&
     isEdgeTile(target.lx, target.ly) &&
-    wantsToLeaveRegion(npc, here, npcs)
+    wantsToLeaveRegion(npc, here, npcs, ticks)
   ) {
     const transit = neighborRegionForEdge(here.rx, here.ry, target.lx, target.ly, mapW, mapH);
     if (transit) return { next: null, tileIntent: null, transitioned: transit };
@@ -345,7 +352,7 @@ function stepTowardTarget(
     step.px === target.lx &&
     step.py === target.ly &&
     isEdgeTile(step.px, step.py) &&
-    wantsToLeaveRegion(npc, here, npcs)
+    wantsToLeaveRegion(npc, here, npcs, ticks)
   ) {
     const transit = neighborRegionForEdge(here.rx, here.ry, step.px, step.py, mapW, mapH);
     if (transit) return { next: null, tileIntent: null, transitioned: transit };
@@ -410,9 +417,12 @@ function pickDynamicTileTarget(
   selfIdx: number,
   here: { rx: number; ry: number; lx: number; ly: number },
   res: CombatResult,
+  ticks: number,
+  rng: Rng,
 ): { lx: number; ly: number } | null {
-  const playerHostile = (res.playerReputation[npc.factionId] ?? 0) < 0;
-  if (playerHostile && res.player) {
+  const repHostile = (res.playerReputation[npc.factionId] ?? 0) < 0;
+  const engaged = npc.engagedTick !== null && ticks - npc.engagedTick < ENGAGED_TTL_TICKS;
+  if ((repHostile || engaged) && res.player) {
     return { lx: here.lx, ly: here.ly };
   }
 
@@ -457,14 +467,43 @@ function pickDynamicTileTarget(
       return { lx: clamp(npc.interior!.lx, 0, INTERIOR_W - 1), ly: dy > 0 ? INTERIOR_H - 1 : 0 };
     }
   }
+
+  // Wandering NPCs that have been milling around long enough should head to
+  // an edge tile so they migrate out of the player's region naturally instead
+  // of looping inside forever.
+  if (npc.interior && ticks >= npc.interior.wanderUntil) {
+    return pickRandomEdgeTile(npc.interior.lx, npc.interior.ly, rng);
+  }
   return null;
+}
+
+function pickRandomEdgeTile(
+  lx: number,
+  ly: number,
+  rng: Rng,
+): { lx: number; ly: number } {
+  const side = rng.int(0, 4);
+  switch (side) {
+    case 0:
+      return { lx: clamp(lx + rng.int(-3, 4), 0, INTERIOR_W - 1), ly: 0 };
+    case 1:
+      return { lx: INTERIOR_W - 1, ly: clamp(ly + rng.int(-3, 4), 0, INTERIOR_H - 1) };
+    case 2:
+      return { lx: clamp(lx + rng.int(-3, 4), 0, INTERIOR_W - 1), ly: INTERIOR_H - 1 };
+    default:
+      return { lx: 0, ly: clamp(ly + rng.int(-3, 4), 0, INTERIOR_H - 1) };
+  }
 }
 
 function wantsToLeaveRegion(
   npc: Npc,
   here: { rx: number; ry: number },
   npcs: Npc[],
+  ticks: number,
 ): boolean {
+  // Wandering NPCs whose dwell timer has lapsed should drift out so they
+  // don't loop inside the player's interior forever.
+  if (npc.interior && ticks >= npc.interior.wanderUntil) return true;
   const t = goalTarget(npc.goal, npc, npcs);
   if (!t) return false;
   return t.rx !== here.rx || t.ry !== here.ry;
@@ -625,8 +664,9 @@ function lootPileFor(
 function runRegionCombat(
   res: CombatResult,
   rng: Rng,
-  mapW: number,
-  mapH: number,
+  _mapW: number,
+  _mapH: number,
+  _ticks: number,
 ): void {
   // Group NPCs by region (excluding the player's region — handled by interior
   // combat). For each region with multiple NPCs, sample a few hostile pairs
@@ -748,6 +788,7 @@ export function resolvePlayerAttack(
   player: Player,
   npc: Npc,
   rng: Rng,
+  ticks: number,
 ): {
   player: Player;
   npc: Npc;
@@ -798,7 +839,11 @@ export function resolvePlayerAttack(
     combatCooldown: COMBAT_COOLDOWN_TICKS,
     pendingAction: null,
   };
-  const updatedNpc: Npc = { ...npc, combatHealth: nextNpcHealth };
+  const updatedNpc: Npc = {
+    ...npc,
+    combatHealth: nextNpcHealth,
+    engagedTick: ticks,
+  };
   const hits: CombatHit[] = [
     {
       defenderKind: "npc",

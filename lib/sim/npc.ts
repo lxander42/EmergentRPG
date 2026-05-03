@@ -20,6 +20,7 @@ export type NpcInterior = {
   tileIntent: { lx: number; ly: number } | null;
   stepCooldown: number;
   lastHitTick: number;
+  wanderUntil: number;
 };
 
 export type CombatIntent = "approach" | "attack" | "flee" | null;
@@ -49,6 +50,9 @@ export type Npc = {
   combatIntent: CombatIntent;
   weapon: WeaponInstance | null;
   interior: NpcInterior | null;
+  // Tick at which the player last attacked this NPC. While set and recent,
+  // the NPC pursues the player as if hostile regardless of faction rep.
+  engagedTick: number | null;
 };
 
 const IDLE_MIN = 12;
@@ -112,6 +116,7 @@ export function spawnNpc(rng: Rng, id: number, mapW: number, mapH: number): Npc 
     combatIntent: null,
     weapon: null,
     interior: null,
+    engagedTick: null,
   };
 }
 

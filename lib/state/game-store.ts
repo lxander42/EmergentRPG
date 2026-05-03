@@ -26,6 +26,7 @@ import {
 } from "@/lib/sim/biome-interior";
 import { bfsPredicate } from "@/lib/sim/path";
 import type { PendingAction, Player } from "@/lib/sim/player";
+import { createPlayer } from "@/lib/sim/player";
 import { setPendingAttack } from "@/lib/sim/player-tick";
 import {
   affordable,
@@ -267,16 +268,51 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   resetAfterDeath: () => {
+    const current = get().world;
+    if (!current) return;
+    // Respawn into the same world: keep NPCs, factions, regions, faction
+    // relations, and any death loot we just dropped. Only the player and
+    // the run-specific UI flags reset. If the player never settled a home
+    // we can't respawn — fall back to a fresh world (treat it like a new game).
+    if (!current.home) {
+      set({
+        world: createWorld(),
+        selectedNpcId: null,
+        selectedRegion: null,
+        lastEvent: null,
+        paused: false,
+        view: "world",
+        homePending: true,
+        inventoryOpen: false,
+        tutorialOpen: false,
+        npcContextMenu: null,
+      });
+      return;
+    }
+    const center = regionCenterGlobal(current.home.rx, current.home.ry);
+    const seeded = ensureInteriorsForRegion(current, current.home.rx, current.home.ry);
+    const interior = seeded.biomeInteriors[regionKey(current.home.rx, current.home.ry)];
+    const spawn = interior
+      ? nearestPassable(interior, center.gx, center.gy, current.home.rx, current.home.ry)
+      : center;
+    const fresh = createPlayer(spawn);
     set({
-      world: createWorld(),
+      world: {
+        ...seeded,
+        player: fresh,
+        gameOver: false,
+        gameOverReason: null,
+        recentPickups: [],
+      },
       selectedNpcId: null,
       selectedRegion: null,
       lastEvent: null,
       paused: false,
-      view: "world",
-      homePending: true,
+      view: "biome",
+      homePending: false,
       inventoryOpen: false,
       tutorialOpen: false,
+      npcContextMenu: null,
     });
   },
 

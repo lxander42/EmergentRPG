@@ -11,6 +11,7 @@ import InventoryPanel from "@/components/panels/InventoryPanel";
 import TutorialModal from "@/components/TutorialModal";
 import RecenterButton from "@/components/RecenterButton";
 import EncounterToast from "@/components/EncounterToast";
+import EncounterFeed from "@/components/EncounterFeed";
 import FactionLegend from "@/components/FactionLegend";
 import { useGameStore } from "@/lib/state/game-store";
 
@@ -53,6 +54,7 @@ function PlayInner() {
       <RegionPanel />
       <InventoryPanel />
       <EncounterToast />
+      <EncounterFeed />
       <TutorialModal />
     </main>
   );

@@ -171,6 +171,7 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
   let factionRelations = world.factionRelations;
   let playerReputation = world.playerReputation;
   let recentPickups = prunePickups(world.recentPickups, ticks);
+  const combatDeathEvents: WorldEvent[] = [];
   let gameOver: boolean = world.gameOver;
   let gameOverReason: GameOverReason | null = world.gameOverReason;
   let discoveredRegions = world.discoveredRegions;
@@ -208,7 +209,16 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
     if (stepped.death) {
       gameOver = true;
       gameOverReason = "starved";
-      player = { ...player, route: null, pendingAction: null, stepCooldown: 0 };
+      const dropped = dropDeathLoot(player, inventory, interiors, ticks);
+      interiors = dropped.interiors;
+      inventory = {};
+      player = {
+        ...player,
+        weapons: [],
+        route: null,
+        pendingAction: null,
+        stepCooldown: 0,
+      };
     }
 
     const cur = globalToLocal(player.gx, player.gy);
@@ -230,6 +240,7 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
         playerReputation,
         mapW: MAP_W,
         mapH: MAP_H,
+        ticks,
       },
       rng,
     );
@@ -247,7 +258,29 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
         killerName: combat.playerKilledBy.name,
         factionId: combat.playerKilledBy.factionId,
       };
-      player = { ...player, route: null, pendingAction: null, stepCooldown: 0 };
+      const dropped = dropDeathLoot(player, inventory, interiors, ticks);
+      interiors = dropped.interiors;
+      inventory = {};
+      player = {
+        ...player,
+        weapons: [],
+        route: null,
+        pendingAction: null,
+        stepCooldown: 0,
+      };
+    }
+    // Build combat-death events to splice into the feed below.
+    for (const d of combat.deaths) {
+      const killer = d.killerName ? `${d.killerName} ` : "";
+      combatDeathEvents.push({
+        id: `kill-${ticks}-${d.npcId}`,
+        tick: ticks,
+        topic: d.killerKind === "player" ? "combat:player-kill" : "combat:npc-kill",
+        context:
+          d.killerKind === "player"
+            ? `You killed ${d.name}.`
+            : `${killer}killed ${d.name}.`,
+      });
     }
     // Remove dead NPCs from the canonical list.
     npcs = npcs.filter((n) => n.combatHealth > 0);
@@ -261,6 +294,10 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
   const regionPresence = built.presence;
   const regionControl = built.control;
 
+  const startingEvents =
+    combatDeathEvents.length > 0
+      ? [...combatDeathEvents, ...world.recentEvents].slice(0, 8)
+      : world.recentEvents;
   const next: World = {
     ...world,
     ticks,
@@ -276,6 +313,7 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
     factionRelations,
     playerReputation,
     recentPickups,
+    recentEvents: startingEvents,
     gameOver,
     gameOverReason,
   };
@@ -372,6 +410,35 @@ function detectEncounter(
     return buildEncounterEvent(world, next, faction, rng);
   }
   return null;
+}
+
+function dropDeathLoot(
+  player: Player,
+  inventory: Inventory,
+  interiors: Record<string, BiomeInterior>,
+  ticks: number,
+): { interiors: Record<string, BiomeInterior> } {
+  const { rx, ry, lx, ly } = globalToLocal(player.gx, player.gy);
+  const k = regionKey(rx, ry);
+  const interior = interiors[k];
+  if (!interior) return { interiors };
+  const items: Inventory = {};
+  for (const key of Object.keys(inventory) as Array<keyof Inventory>) {
+    const v = inventory[key] ?? 0;
+    if (v > 0) items[key] = v;
+  }
+  const weapons = player.weapons.length > 0 ? [...player.weapons] : undefined;
+  if (Object.keys(items).length === 0 && !weapons) return { interiors };
+  const pile = {
+    id: `grave-${ticks}-${rx}-${ry}-${lx}-${ly}`,
+    lx,
+    ly,
+    items,
+    weapons,
+    fromDeath: true,
+  };
+  const next = { ...interior, loot: [...interior.loot, pile] };
+  return { interiors: { ...interiors, [k]: next } };
 }
 
 // Pickups are short-lived (UI hints). After ~10 ticks (~2.5s at 1x), drop.

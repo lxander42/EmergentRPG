@@ -22,6 +22,10 @@ export type LootPile = {
   lx: number;
   ly: number;
   items: Partial<Record<ResourceKind, number>>;
+  weapons?: import("@/lib/sim/weapons").WeaponInstance[];
+  // Optional flag: this pile was dropped by the player on death. Lets the
+  // render layer show it differently and the encounter feed reference it.
+  fromDeath?: boolean;
 };
 
 export type BiomeInterior = {
