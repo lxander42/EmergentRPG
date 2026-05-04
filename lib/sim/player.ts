@@ -14,7 +14,15 @@ export type PendingAction =
   | { kind: "collect"; resourceId: string }
   | { kind: "attack"; npcId: string }
   | { kind: "harvest"; rx: number; ry: number; lx: number; ly: number; obstacle: ObstacleKind }
-  | { kind: "workbench"; rx: number; ry: number; lx: number; ly: number };
+  | { kind: "workbench"; rx: number; ry: number; lx: number; ly: number }
+  | {
+      kind: "deconstruct";
+      rx: number;
+      ry: number;
+      lx: number;
+      ly: number;
+      obstacle: ObstacleKind;
+    };
 
 export type Player = {
   gx: number;

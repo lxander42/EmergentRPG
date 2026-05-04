@@ -178,6 +178,46 @@ export function findWorkbenchTile(
   return null;
 }
 
+// Spiral-search for the first tile within `radius` of (lx, ly) that is
+// passable and not occupied by a resource. Deterministic — used by
+// player-initiated structure placement so the chosen slot is stable.
+export function findAdjacentPassable(
+  interior: BiomeInterior,
+  lx: number,
+  ly: number,
+  radius: number,
+): { lx: number; ly: number } | null {
+  for (let r = 1; r <= radius; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+        const tlx = lx + dx;
+        const tly = ly + dy;
+        if (tlx < 0 || tly < 0 || tlx >= INTERIOR_W || tly >= INTERIOR_H) continue;
+        const idx = tly * INTERIOR_W + tlx;
+        if (interior.obstacles[idx] != null) continue;
+        if (interior.resources.some((res) => res.lx === tlx && res.ly === tly)) continue;
+        return { lx: tlx, ly: tly };
+      }
+    }
+  }
+  return null;
+}
+
+export function placeObstacle(
+  interior: BiomeInterior,
+  lx: number,
+  ly: number,
+  kind: ObstacleKind,
+): BiomeInterior {
+  if (lx < 0 || ly < 0 || lx >= INTERIOR_W || ly >= INTERIOR_H) return interior;
+  const idx = ly * INTERIOR_W + lx;
+  if (interior.obstacles[idx] != null) return interior;
+  const next = interior.obstacles.slice();
+  next[idx] = kind;
+  return { ...interior, obstacles: next };
+}
+
 export function resourceAtLocal(
   interior: BiomeInterior,
   lx: number,

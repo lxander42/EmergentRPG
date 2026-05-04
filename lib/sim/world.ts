@@ -10,8 +10,6 @@ import {
   generateInterior,
   globalToLocal,
   isLocalObstacle,
-  mixSeed,
-  placeWorkbench,
   regionCenterGlobal,
   regionKey,
   type BiomeInterior,
@@ -153,26 +151,14 @@ export function claimHome(world: World, rx: number, ry: number): World | null {
 
   const seeded = ensureInteriorsForRegion(world, rx, ry);
   const center = regionCenterGlobal(rx, ry);
-  const baseInterior = seeded.biomeInteriors[regionKey(rx, ry)];
-  if (!baseInterior) return null;
+  const interior = seeded.biomeInteriors[regionKey(rx, ry)];
+  if (!interior) return null;
 
   const spawn = nudgeToOpen(seeded, center.gx, center.gy);
   const player = createPlayer(spawn);
-  const spawnLocal = globalToLocal(spawn.gx, spawn.gy);
-  const wbRng = createRng((mixSeed(seeded.seed, rx, ry) ^ 0x111) >>> 0);
-  const interiorWithBench = placeWorkbench(
-    baseInterior,
-    { lx: spawnLocal.lx, ly: spawnLocal.ly },
-    wbRng,
-  );
-  const biomeInteriors = {
-    ...seeded.biomeInteriors,
-    [regionKey(rx, ry)]: interiorWithBench,
-  };
   const discoveredRegions = { ...seeded.discoveredRegions, [regionKey(rx, ry)]: true as const };
   return {
     ...seeded,
-    biomeInteriors,
     player,
     home: { rx, ry },
     discoveredRegions,
