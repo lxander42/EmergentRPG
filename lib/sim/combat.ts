@@ -26,6 +26,7 @@ import {
   weaponReach,
   type WeaponInstance,
 } from "@/lib/sim/weapons";
+import { WEAPONS } from "@/content/weapons";
 import { bfs } from "@/lib/sim/path";
 import { goalTarget } from "@/lib/sim/goal";
 import type { ResourceKind } from "@/content/resources";
@@ -784,12 +785,7 @@ export function pruneDeadNpcs(npcs: Npc[]): Npc[] {
 }
 
 // Player-initiated attack: called from player-tick when pendingAction kicks in.
-export function resolvePlayerAttack(
-  player: Player,
-  npc: Npc,
-  rng: Rng,
-  ticks: number,
-): {
+export type PlayerAttackResult = {
   player: Player;
   npc: Npc;
   hits: CombatHit[];
@@ -798,7 +794,20 @@ export function resolvePlayerAttack(
   repPenaltyFactionId: string;
   repPenaltyAmount: number;
   attacked: boolean;
-} {
+  projectile: {
+    fromGx: number;
+    fromGy: number;
+    toGx: number;
+    toGy: number;
+  } | null;
+};
+
+export function resolvePlayerAttack(
+  player: Player,
+  npc: Npc,
+  rng: Rng,
+  ticks: number,
+): PlayerAttackResult {
   if (!npc.interior || player.combatCooldown > 0) {
     return {
       player,
@@ -809,6 +818,7 @@ export function resolvePlayerAttack(
       repPenaltyFactionId: npc.factionId,
       repPenaltyAmount: 0,
       attacked: false,
+      projectile: null,
     };
   }
   const here = globalToLocal(player.gx, player.gy);
@@ -825,6 +835,7 @@ export function resolvePlayerAttack(
       repPenaltyFactionId: npc.factionId,
       repPenaltyAmount: 0,
       attacked: false,
+      projectile: null,
     };
   }
   const damage = Math.max(
@@ -876,6 +887,15 @@ export function resolvePlayerAttack(
       items,
     };
   }
+  const ranged = weapon ? WEAPONS[weapon.kind].ranged : false;
+  const projectile = ranged
+    ? {
+        fromGx: player.gx,
+        fromGy: player.gy,
+        toGx: npc.rx * INTERIOR_W + npc.interior.lx,
+        toGy: npc.ry * INTERIOR_H + npc.interior.ly,
+      }
+    : null;
   return {
     player: nextPlayer,
     npc: updatedNpc,
@@ -885,6 +905,7 @@ export function resolvePlayerAttack(
     repPenaltyFactionId: npc.factionId,
     repPenaltyAmount,
     attacked: true,
+    projectile,
   };
 }
 

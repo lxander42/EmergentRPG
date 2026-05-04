@@ -11,6 +11,7 @@ import {
   type Goal,
 } from "@/lib/sim/goal";
 import type { WeaponInstance } from "@/lib/sim/weapons";
+import { ENGAGED_TTL_TICKS } from "@/lib/sim/combat";
 
 export type Intent = { rx: number; ry: number };
 
@@ -133,7 +134,13 @@ export type TickNpcCtx = {
   regionControl: Record<string, string>;
   npcs: Npc[];
   playerRegion: { rx: number; ry: number } | null;
+  playerReputation: Record<string, number>;
+  recentFactionAttacks: Record<string, number>;
+  ticks: number;
 };
+
+export const NPC_PERCEPTION_REGIONS = 3;
+export const FLEE_TTL_TICKS = 480;
 
 export function tickNpc(npc: Npc, ctx: TickNpcCtx): Npc {
   const { rng, mapW, mapH } = ctx;
@@ -189,7 +196,29 @@ export function tickNpc(npc: Npc, ctx: TickNpcCtx): Npc {
     return { ...moved, goal: advanceGoalState(moved, moved.goal) };
   }
 
-  const target = goalTarget(goal, npc, ctx.npcs);
+  // Region-level chase / flee override: when faction is hostile to the player
+  // and the player's region is within perception, head toward them. When
+  // friendly but the faction was attacked recently, drift away.
+  let target = goalTarget(goal, npc, ctx.npcs);
+  if (ctx.playerRegion) {
+    const dRegion = chebyshevR(npc.rx, npc.ry, ctx.playerRegion.rx, ctx.playerRegion.ry);
+    const repHostile = (ctx.playerReputation[npc.factionId] ?? 0) < 0;
+    const engaged =
+      npc.engagedTick !== null && ctx.ticks - npc.engagedTick < ENGAGED_TTL_TICKS;
+    if ((repHostile || engaged) && dRegion <= NPC_PERCEPTION_REGIONS) {
+      target = { rx: ctx.playerRegion.rx, ry: ctx.playerRegion.ry };
+    } else {
+      const lastAttacked = ctx.recentFactionAttacks[npc.factionId];
+      if (
+        !repHostile &&
+        lastAttacked !== undefined &&
+        ctx.ticks - lastAttacked < FLEE_TTL_TICKS &&
+        dRegion <= NPC_PERCEPTION_REGIONS
+      ) {
+        target = fleeTargetFromPlayer(npc, ctx.playerRegion, mapW, mapH);
+      }
+    }
+  }
   const candidates = passableNeighbors(npc.rx, npc.ry, mapW, mapH);
 
   if (candidates.length === 0) {
@@ -283,4 +312,24 @@ function passableNeighbors(
 
 function manhattan(ax: number, ay: number, bx: number, by: number): number {
   return Math.abs(ax - bx) + Math.abs(ay - by);
+}
+
+function chebyshevR(ax: number, ay: number, bx: number, by: number): number {
+  return Math.max(Math.abs(ax - bx), Math.abs(ay - by));
+}
+
+function fleeTargetFromPlayer(
+  npc: Npc,
+  playerRegion: { rx: number; ry: number },
+  mapW: number,
+  mapH: number,
+): { rx: number; ry: number } {
+  // Step away from the player on the dominant axis, clamped to map bounds.
+  const dx = npc.rx - playerRegion.rx;
+  const dy = npc.ry - playerRegion.ry;
+  const sx = dx === 0 ? 1 : Math.sign(dx);
+  const sy = dy === 0 ? 1 : Math.sign(dy);
+  const tx = Math.max(0, Math.min(mapW - 1, npc.rx + sx * 3));
+  const ty = Math.max(0, Math.min(mapH - 1, npc.ry + sy * 3));
+  return { rx: tx, ry: ty };
 }
