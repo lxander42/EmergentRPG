@@ -105,3 +105,10 @@ export const RECIPES: Recipe[] = [
 
 export const RECIPES_BY_ID: Record<string, Recipe> = {};
 for (const r of RECIPES) RECIPES_BY_ID[r.id] = r;
+
+export function recipeForStructure(kind: StructureKind): Recipe | null {
+  for (const r of RECIPES) {
+    if (r.result.kind === "structure" && r.result.id === kind) return r;
+  }
+  return null;
+}

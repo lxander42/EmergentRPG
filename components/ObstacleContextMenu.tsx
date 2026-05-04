@@ -137,6 +137,13 @@ export default function ObstacleContextMenu() {
       icon: "hammer",
       onClick: () => interact(rx, ry, lx, ly, "workbench"),
     });
+    actions.push({
+      id: "deconstruct",
+      label: "Deconstruct",
+      description: "recover materials",
+      icon: "hammer",
+      onClick: () => interact(rx, ry, lx, ly, "deconstruct"),
+    });
   }
 
   const onPointerDown = (e: React.PointerEvent) => {

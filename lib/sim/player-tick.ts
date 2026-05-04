@@ -7,6 +7,7 @@ import {
 import {
   INTERIOR_W,
   INTERIOR_H,
+  addLoot,
   globalToLocal,
   isLocalObstacle,
   localToGlobal,
@@ -18,8 +19,10 @@ import {
   obstacleKindAt,
   clearObstacle,
   type BiomeInterior,
+  type LootPile,
   type ObstacleKind,
 } from "@/lib/sim/biome-interior";
+import { recipeForStructure } from "@/content/recipes";
 import {
   addToInventory,
   inventoryCapFromBaskets,
@@ -183,6 +186,12 @@ export function tickPlayer(input: PlayerTickInput): PlayerTickOutput {
         workbenchOpened = true;
       }
       player = { ...player, pendingAction: null };
+    } else if (action.kind === "deconstruct") {
+      const result = tryDeconstruct(player, interiors, inventory, action, ticks);
+      player = result.player;
+      interiors = result.interiors;
+      inventory = result.inventory;
+      for (const p of result.pickups) pickups.push(p);
     } else if (action.kind === "attack") {
       const targetIdx = npcs.findIndex((n) => n.id === action.npcId);
       if (targetIdx >= 0) {
@@ -425,6 +434,71 @@ function tryHarvest(
     interiors: updatedInteriors,
     inventory: added.inv,
     pickup: { kind: drop, amount: added.added },
+  };
+}
+
+function tryDeconstruct(
+  player: Player,
+  interiors: Record<string, BiomeInterior>,
+  inventory: Inventory,
+  action: Extract<PendingAction, { kind: "deconstruct" }>,
+  ticks: number,
+): {
+  player: Player;
+  interiors: Record<string, BiomeInterior>;
+  inventory: Inventory;
+  pickups: PickupNotice[];
+} {
+  const nextPlayer: Player = { ...player, pendingAction: null };
+  const here = globalToLocal(player.gx, player.gy);
+  if (here.rx !== action.rx || here.ry !== action.ry) {
+    return { player: nextPlayer, interiors, inventory, pickups: [] };
+  }
+  if (chebyshev(here.lx, here.ly, action.lx, action.ly) > 1) {
+    return { player: nextPlayer, interiors, inventory, pickups: [] };
+  }
+  const k = regionKey(action.rx, action.ry);
+  const interior = interiors[k];
+  if (!interior) return { player: nextPlayer, interiors, inventory, pickups: [] };
+  const stillThere = obstacleKindAt(interior, action.lx, action.ly);
+  if (stillThere !== action.obstacle) {
+    return { player: nextPlayer, interiors, inventory, pickups: [] };
+  }
+  if (action.obstacle !== "workbench") {
+    return { player: nextPlayer, interiors, inventory, pickups: [] };
+  }
+  const recipe = recipeForStructure(action.obstacle);
+  if (!recipe) return { player: nextPlayer, interiors, inventory, pickups: [] };
+
+  const cap = inventoryCapFromBaskets(basketCount(nextPlayer.tools));
+  let nextInventory: Inventory = inventory;
+  const pickups: PickupNotice[] = [];
+  const overflow: Inventory = {};
+  for (const key of Object.keys(recipe.inputs) as ResourceKind[]) {
+    const need = recipe.inputs[key] ?? 0;
+    if (need <= 0) continue;
+    const result = addToInventory(nextInventory, key, need, cap);
+    nextInventory = result.inv;
+    if (result.added > 0) pickups.push({ kind: key, amount: result.added });
+    const leftover = need - result.added;
+    if (leftover > 0) overflow[key] = (overflow[key] ?? 0) + leftover;
+  }
+
+  let updatedInterior = clearObstacle(interior, action.lx, action.ly);
+  if (Object.keys(overflow).length > 0) {
+    const pile: LootPile = {
+      id: `dec-${ticks}-${action.rx}-${action.ry}-${action.lx}-${action.ly}`,
+      lx: action.lx,
+      ly: action.ly,
+      items: overflow,
+    };
+    updatedInterior = addLoot(updatedInterior, pile);
+  }
+  return {
+    player: nextPlayer,
+    interiors: { ...interiors, [k]: updatedInterior },
+    inventory: nextInventory,
+    pickups,
   };
 }
 

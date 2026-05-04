@@ -99,7 +99,7 @@ type GameStore = {
     ry: number,
     lx: number,
     ly: number,
-    action: "harvest" | "workbench",
+    action: "harvest" | "workbench" | "deconstruct",
   ) => void;
   resetAfterDeath: () => void;
 
@@ -389,10 +389,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
       return;
     }
 
-    const pendingAction: PendingAction =
-      action === "harvest"
-        ? { kind: "harvest", rx, ry, lx, ly, obstacle }
-        : { kind: "workbench", rx, ry, lx, ly };
+    let pendingAction: PendingAction;
+    if (action === "harvest") {
+      pendingAction = { kind: "harvest", rx, ry, lx, ly, obstacle };
+    } else if (action === "deconstruct") {
+      pendingAction = { kind: "deconstruct", rx, ry, lx, ly, obstacle };
+    } else {
+      pendingAction = { kind: "workbench", rx, ry, lx, ly };
+    }
 
     const player: Player = {
       ...startingPlayer,
