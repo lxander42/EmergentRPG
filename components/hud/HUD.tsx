@@ -34,6 +34,7 @@ import {
 } from "@/lib/sim/tools";
 
 const SPEEDS = [1, 2, 4] as const;
+const EMPTY_INVENTORY: Partial<Record<ResourceKind, number>> = {};
 
 export default function HUD() {
   const paused = useGameStore((s) => s.paused);
@@ -46,7 +47,9 @@ export default function HUD() {
   const homePending = useGameStore((s) => s.homePending);
   const hasHome = useGameStore((s) => Boolean(s.world?.home));
   const player = useGameStore((s) => s.world?.life?.player ?? null);
-  const inventory = useGameStore((s) => s.world?.life?.inventory ?? {});
+  const inventory = useGameStore(
+    (s) => s.world?.life?.inventory ?? EMPTY_INVENTORY,
+  );
   const gameOver = useGameStore((s) => s.world?.life?.gameOver ?? false);
   const gameOverReason = useGameStore((s) => s.world?.life?.gameOverReason ?? null);
   const lastLegacy = useGameStore((s) => {

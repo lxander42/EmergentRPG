@@ -8,10 +8,12 @@ import ShapeBadge from "@/components/panels/ShapeBadge";
 import type { Legacy } from "@/lib/sim/legacy";
 import type { GameOverReason } from "@/lib/sim/world";
 
+const NO_LEGACIES: readonly Legacy[] = [];
+
 export default function PastLivesPanel() {
   const open = useGameStore((s) => s.pastLivesOpen);
   const close = useGameStore((s) => s.closePastLives);
-  const legacies = useGameStore((s) => s.world?.legacies ?? []);
+  const legacies = useGameStore((s) => s.world?.legacies ?? NO_LEGACIES);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   if (!open) return null;
