@@ -144,14 +144,13 @@ function describeResult(recipe: Recipe): string[] {
     out.push(`uses ${meta.durability}`);
     return out;
   }
-  const meta = TOOLS[recipe.result.id];
-  if (recipe.result.id === "basket") {
-    return ["+20 inventory cap"];
+  if (recipe.result.kind === "tool") {
+    const meta = TOOLS[recipe.result.id];
+    if (recipe.result.id === "basket") return ["+20 inventory cap"];
+    if (recipe.result.id === "torch") return ["+3 sight (Phase 6)"];
+    return [`uses ${meta.durability}`];
   }
-  if (recipe.result.id === "torch") {
-    return ["+3 sight (Phase 6)"];
-  }
-  return [`uses ${meta.durability}`];
+  return ["places nearby"];
 }
 
 function RecipePip({

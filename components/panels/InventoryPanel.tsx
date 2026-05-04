@@ -5,7 +5,7 @@ import { useGameStore } from "@/lib/state/game-store";
 import { RESOURCES, type ResourceKind } from "@/content/resources";
 import { WEAPONS } from "@/content/weapons";
 import { TOOLS } from "@/lib/sim/tools";
-import { RECIPES } from "@/content/recipes";
+import { RECIPES, type Recipe } from "@/content/recipes";
 import { affordable } from "@/lib/sim/weapons";
 import { inventoryCapFromBaskets, inventoryTotal } from "@/lib/sim/inventory";
 import { basketCount } from "@/lib/sim/tools";
@@ -180,13 +180,11 @@ export default function InventoryPanel() {
           </h3>
           <ul className="mt-3 flex flex-col gap-2">
             {handRecipes.map((recipe) => {
-              const meta = WEAPONS[
-                recipe.result.kind === "weapon" ? recipe.result.id : "stick"
-              ];
               const can =
                 Boolean(player) &&
                 !world.gameOver &&
                 affordable(inventory, recipe);
+              const stats = describeHandResult(recipe);
               return (
                 <li key={recipe.id}>
                   <button
@@ -204,10 +202,10 @@ export default function InventoryPanel() {
                         {recipe.name}
                       </span>
                       <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
-                        <span>+{meta.attack} atk</span>
-                        <span>reach {meta.reach}</span>
-                        {meta.ranged && <span>ranged</span>}
-                        <span>· uses {meta.durability}</span>
+                        {stats.map((s) => (
+                          <span key={s}>{s}</span>
+                        ))}
+                        {recipe.time > 0 && <span>· {recipe.time} ticks</span>}
                       </span>
                       <span className="mt-1 flex flex-wrap gap-1.5">
                         {(Object.entries(recipe.inputs) as Array<[
@@ -235,13 +233,27 @@ export default function InventoryPanel() {
             More at the workbench
           </h3>
           <p className="mt-2 text-sm text-[var(--color-fg-muted)]">
-            Tap the workbench at home to craft tools (axe, pickaxe, basket,
-            torch) and advanced weapons (sword, bow).
+            Place a workbench, then tap it to craft tools (axe, pickaxe,
+            basket, torch) and advanced weapons (sword, bow).
           </p>
         </section>
       </div>
     </aside>
   );
+}
+
+function describeHandResult(recipe: Recipe): string[] {
+  if (recipe.result.kind === "weapon") {
+    const meta = WEAPONS[recipe.result.id];
+    const out = [`+${meta.attack} atk`, `reach ${meta.reach}`];
+    if (meta.ranged) out.push("ranged");
+    out.push(`uses ${meta.durability}`);
+    return out;
+  }
+  if (recipe.result.kind === "structure") {
+    return ["places nearby", "tap to craft tools"];
+  }
+  return [];
 }
 
 function RecipePip({

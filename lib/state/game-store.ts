@@ -16,11 +16,13 @@ import { bus } from "@/lib/render/bus";
 import type { WorldEvent } from "@/lib/sim/events";
 import { gainPlayerRep } from "@/lib/sim/faction";
 import {
+  findAdjacentPassable,
   findWorkbenchTile,
   globalToLocal,
   isLocalObstacle,
   localToGlobal,
   obstacleKindAt,
+  placeObstacle,
   regionCenterGlobal,
   regionKey,
   resourceAtLocal,
@@ -482,12 +484,24 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!current?.player || current.gameOver) return false;
     const recipe = RECIPES_BY_ID[recipeId];
     if (!recipe) return false;
+    const here = globalToLocal(current.player.gx, current.player.gy);
+    const interior = current.biomeInteriors[regionKey(here.rx, here.ry)];
     if (recipe.station === "workbench") {
-      const here = globalToLocal(current.player.gx, current.player.gy);
-      const interior = current.biomeInteriors[regionKey(here.rx, here.ry)];
       if (!interior) return false;
       const wb = findWorkbenchTile(interior);
       if (!wb || chebyshev(here.lx, here.ly, wb.lx, wb.ly) > 1) return false;
+    }
+    // Structures must place into the world before we spend inputs.
+    let placedInteriors: Record<string, import("@/lib/sim/biome-interior").BiomeInterior> | null = null;
+    if (recipe.result.kind === "structure") {
+      if (!interior) return false;
+      const slot = findAdjacentPassable(interior, here.lx, here.ly, 2);
+      if (!slot) return false;
+      const nextInterior = placeObstacle(interior, slot.lx, slot.ly, recipe.result.id);
+      placedInteriors = {
+        ...current.biomeInteriors,
+        [regionKey(here.rx, here.ry)]: nextInterior,
+      };
     }
     if (!affordable(current.inventory, recipe)) return false;
     const nextInventory = spendRecipe(current.inventory, recipe);
@@ -496,7 +510,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (recipe.result.kind === "weapon") {
       const w = makeWeapon(recipe.result.id);
       player = { ...player, weapons: [...player.weapons, w] };
-    } else {
+    } else if (recipe.result.kind === "tool") {
       const t = makeTool(recipe.result.id);
       player = { ...player, tools: [...player.tools, t] };
     }
@@ -505,6 +519,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         ...current,
         inventory: nextInventory,
         player,
+        biomeInteriors: placedInteriors ?? current.biomeInteriors,
         ticks: current.ticks + recipe.time,
       },
     });

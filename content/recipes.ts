@@ -4,9 +4,12 @@ import type { ToolKind } from "@/lib/sim/tools";
 
 export type RecipeStation = "hand" | "workbench";
 
+export type StructureKind = "workbench";
+
 export type RecipeResult =
   | { kind: "weapon"; id: WeaponKind }
-  | { kind: "tool"; id: ToolKind };
+  | { kind: "tool"; id: ToolKind }
+  | { kind: "structure"; id: StructureKind };
 
 export type Recipe = {
   id: string;
@@ -40,6 +43,14 @@ export const RECIPES: Recipe[] = [
     result: { kind: "weapon", id: "sling" },
     inputs: { reed: 2, stone: 1 },
     time: 0,
+    station: "hand",
+  },
+  {
+    id: "workbench",
+    name: "Workbench",
+    result: { kind: "structure", id: "workbench" },
+    inputs: { wood: 4, stone: 2 },
+    time: 5,
     station: "hand",
   },
   {
