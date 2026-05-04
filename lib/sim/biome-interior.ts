@@ -1,5 +1,5 @@
 import { biomeAt, type Biome } from "@/lib/sim/biome";
-import { createRng } from "@/lib/sim/rng";
+import { createRng, type Rng } from "@/lib/sim/rng";
 import {
   BIOME_RESOURCES,
   RESOURCE_DENSITY,
@@ -9,6 +9,8 @@ import {
 export const INTERIOR_W = 20;
 export const INTERIOR_H = 20;
 export const OBSTACLE_DENSITY = 0.10;
+
+export type ObstacleKind = "tree" | "rock" | "cactus" | "bush" | "workbench";
 
 export type InteriorResource = {
   id: string;
@@ -23,6 +25,7 @@ export type LootPile = {
   ly: number;
   items: Partial<Record<ResourceKind, number>>;
   weapons?: import("@/lib/sim/weapons").WeaponInstance[];
+  tools?: import("@/lib/sim/tools").ToolInstance[];
   // Optional flag: this pile was dropped by the player on death. Lets the
   // render layer show it differently and the encounter feed reference it.
   fromDeath?: boolean;
@@ -32,7 +35,7 @@ export type BiomeInterior = {
   rx: number;
   ry: number;
   biome: Biome;
-  obstacles: boolean[];
+  obstacles: (ObstacleKind | null)[];
   resources: InteriorResource[];
   loot: LootPile[];
 };
@@ -65,6 +68,21 @@ export function regionCenterGlobal(rx: number, ry: number): { gx: number; gy: nu
   return localToGlobal(rx, ry, Math.floor(INTERIOR_W / 2), Math.floor(INTERIOR_H / 2));
 }
 
+export function defaultObstacleKindForBiome(biome: Biome): ObstacleKind | null {
+  switch (biome) {
+    case "forest":
+      return "tree";
+    case "stone":
+      return "rock";
+    case "sand":
+      return "cactus";
+    case "grass":
+      return "bush";
+    case "water":
+      return null;
+  }
+}
+
 // Each region's interior derives from a per-region rng so the generator is
 // reproducible and decoupled from the world's master rng -- the order in
 // which the player visits regions can't desync the rest of the sim.
@@ -78,20 +96,86 @@ export function generateInterior(worldSeed: number, rx: number, ry: number): Bio
       rx,
       ry,
       biome,
-      obstacles: new Array<boolean>(INTERIOR_W * INTERIOR_H).fill(true),
+      obstacles: new Array<ObstacleKind | null>(INTERIOR_W * INTERIOR_H).fill("rock"),
       resources: [],
       loot: [],
     };
   }
 
-  const obstacles = scatterObstacles(rng);
+  const obstacles = scatterObstacles(rng, biome);
   const resources = scatterResources(rng, biome, obstacles);
   return { rx, ry, biome, obstacles, resources, loot: [] };
 }
 
 export function isLocalObstacle(interior: BiomeInterior, lx: number, ly: number): boolean {
   if (lx < 0 || ly < 0 || lx >= INTERIOR_W || ly >= INTERIOR_H) return true;
-  return !!interior.obstacles[ly * INTERIOR_W + lx];
+  return interior.obstacles[ly * INTERIOR_W + lx] != null;
+}
+
+export function obstacleKindAt(
+  interior: BiomeInterior,
+  lx: number,
+  ly: number,
+): ObstacleKind | null {
+  if (lx < 0 || ly < 0 || lx >= INTERIOR_W || ly >= INTERIOR_H) return null;
+  return interior.obstacles[ly * INTERIOR_W + lx] ?? null;
+}
+
+export function clearObstacle(
+  interior: BiomeInterior,
+  lx: number,
+  ly: number,
+): BiomeInterior {
+  if (lx < 0 || ly < 0 || lx >= INTERIOR_W || ly >= INTERIOR_H) return interior;
+  const idx = ly * INTERIOR_W + lx;
+  if (interior.obstacles[idx] == null) return interior;
+  const next = interior.obstacles.slice();
+  next[idx] = null;
+  return { ...interior, obstacles: next };
+}
+
+// Place a workbench on the interior at a passable tile near `near`. Picks
+// from candidates within radius 3 using `rng`, so the choice is deterministic
+// for a given (worldSeed, regionKey, spawn). Returns the original interior
+// when no candidate exists (extremely rare given 10% density).
+export function placeWorkbench(
+  interior: BiomeInterior,
+  near: { lx: number; ly: number },
+  rng: Rng,
+): BiomeInterior {
+  const candidates: Array<{ idx: number; lx: number; ly: number }> = [];
+  for (let r = 1; r <= 3 && candidates.length === 0; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+        const lx = near.lx + dx;
+        const ly = near.ly + dy;
+        if (lx < 0 || ly < 0 || lx >= INTERIOR_W || ly >= INTERIOR_H) continue;
+        const idx = ly * INTERIOR_W + lx;
+        if (interior.obstacles[idx] != null) continue;
+        if (interior.resources.some((res) => res.lx === lx && res.ly === ly)) continue;
+        candidates.push({ idx, lx, ly });
+      }
+    }
+  }
+  if (candidates.length === 0) return interior;
+  const pick = candidates[rng.int(0, candidates.length)]!;
+  const next = interior.obstacles.slice();
+  next[pick.idx] = "workbench";
+  return { ...interior, obstacles: next };
+}
+
+export function findWorkbenchTile(
+  interior: BiomeInterior,
+): { lx: number; ly: number } | null {
+  for (let i = 0; i < interior.obstacles.length; i++) {
+    if (interior.obstacles[i] === "workbench") {
+      const lx = i % INTERIOR_W;
+      const ly = Math.floor(i / INTERIOR_W);
+      return { lx, ly };
+    }
+  }
+  return null;
 }
 
 export function resourceAtLocal(
@@ -153,7 +237,7 @@ export function findPassableTile(
   return null;
 }
 
-function mixSeed(worldSeed: number, rx: number, ry: number): number {
+export function mixSeed(worldSeed: number, rx: number, ry: number): number {
   let h = worldSeed >>> 0;
   h = Math.imul(h ^ rx, 0x9e3779b1);
   h = Math.imul(h ^ ry, 0x85ebca77);
@@ -161,10 +245,12 @@ function mixSeed(worldSeed: number, rx: number, ry: number): number {
   return h >>> 0;
 }
 
-function scatterObstacles(rng: ReturnType<typeof createRng>): boolean[] {
+function scatterObstacles(rng: Rng, biome: Biome): (ObstacleKind | null)[] {
   const cells = INTERIOR_W * INTERIOR_H;
   const target = Math.floor(cells * OBSTACLE_DENSITY);
-  const obstacles = new Array<boolean>(cells).fill(false);
+  const obstacles = new Array<ObstacleKind | null>(cells).fill(null);
+  const kind = defaultObstacleKindForBiome(biome);
+  if (!kind) return obstacles;
   let placed = 0;
   let attempts = 0;
   while (placed < target && attempts < cells * 4) {
@@ -173,16 +259,16 @@ function scatterObstacles(rng: ReturnType<typeof createRng>): boolean[] {
     const ly = rng.int(0, INTERIOR_H);
     const idx = ly * INTERIOR_W + lx;
     if (obstacles[idx]) continue;
-    obstacles[idx] = true;
+    obstacles[idx] = kind;
     placed++;
   }
   return obstacles;
 }
 
 function scatterResources(
-  rng: ReturnType<typeof createRng>,
+  rng: Rng,
   biome: Biome,
-  obstacles: boolean[],
+  obstacles: (ObstacleKind | null)[],
 ): InteriorResource[] {
   const lists = BIOME_RESOURCES[biome];
   const density = RESOURCE_DENSITY[biome];

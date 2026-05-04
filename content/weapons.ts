@@ -1,6 +1,4 @@
-import type { ResourceKind } from "@/content/resources";
-
-export type WeaponKind = "stick" | "club" | "sling";
+export type WeaponKind = "stick" | "club" | "sling" | "sword" | "bow";
 
 export type WeaponMeta = {
   label: string;
@@ -8,7 +6,6 @@ export type WeaponMeta = {
   reach: number;
   durability: number;
   ranged: boolean;
-  recipe: Partial<Record<ResourceKind, number>>;
   swatch: string;
 };
 
@@ -19,7 +16,6 @@ export const WEAPONS: Record<WeaponKind, WeaponMeta> = {
     reach: 1,
     durability: 8,
     ranged: false,
-    recipe: { wood: 1 },
     swatch: "#8a6a4a",
   },
   club: {
@@ -28,7 +24,6 @@ export const WEAPONS: Record<WeaponKind, WeaponMeta> = {
     reach: 1,
     durability: 12,
     ranged: false,
-    recipe: { wood: 2, stone: 1 },
     swatch: "#7a5a3a",
   },
   sling: {
@@ -37,9 +32,24 @@ export const WEAPONS: Record<WeaponKind, WeaponMeta> = {
     reach: 4,
     durability: 6,
     ranged: true,
-    recipe: { reed: 2, stone: 1 },
     swatch: "#a8b878",
+  },
+  sword: {
+    label: "Sword",
+    attack: 3,
+    reach: 1,
+    durability: 30,
+    ranged: false,
+    swatch: "#9aa4b6",
+  },
+  bow: {
+    label: "Bow",
+    attack: 2,
+    reach: 5,
+    durability: 25,
+    ranged: true,
+    swatch: "#b48c5e",
   },
 };
 
-export const WEAPON_KINDS: WeaponKind[] = ["stick", "club", "sling"];
+export const WEAPON_KINDS: WeaponKind[] = ["stick", "club", "sling", "sword", "bow"];

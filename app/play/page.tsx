@@ -6,8 +6,10 @@ import { Suspense, useEffect } from "react";
 import HUD from "@/components/hud/HUD";
 import NpcPanel from "@/components/panels/NpcPanel";
 import NpcContextMenu from "@/components/NpcContextMenu";
+import ObstacleContextMenu from "@/components/ObstacleContextMenu";
 import RegionPanel from "@/components/panels/RegionPanel";
 import InventoryPanel from "@/components/panels/InventoryPanel";
+import WorkbenchPanel from "@/components/panels/WorkbenchPanel";
 import TutorialModal from "@/components/TutorialModal";
 import RecenterButton from "@/components/RecenterButton";
 import EncounterToast from "@/components/EncounterToast";
@@ -51,8 +53,10 @@ function PlayInner() {
       <FactionLegend />
       <NpcPanel />
       <NpcContextMenu />
+      <ObstacleContextMenu />
       <RegionPanel />
       <InventoryPanel />
+      <WorkbenchPanel />
       <EncounterToast />
       <EncounterFeed />
       <TutorialModal />

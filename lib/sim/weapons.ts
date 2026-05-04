@@ -1,30 +1,27 @@
 import type { Inventory } from "@/lib/sim/inventory";
 import { WEAPONS, type WeaponKind } from "@/content/weapons";
+import type { Recipe } from "@/content/recipes";
+import type { ResourceKind } from "@/content/resources";
 
 export type WeaponInstance = {
   kind: WeaponKind;
   usesLeft: number;
 };
 
-export function affordable(inventory: Inventory, kind: WeaponKind): boolean {
-  const recipe = WEAPONS[kind].recipe;
-  for (const k of Object.keys(recipe) as Array<keyof typeof recipe>) {
-    const need = recipe[k] ?? 0;
+export function affordable(inventory: Inventory, recipe: Recipe): boolean {
+  for (const k of Object.keys(recipe.inputs) as ResourceKind[]) {
+    const need = recipe.inputs[k] ?? 0;
     const have = inventory[k] ?? 0;
     if (have < need) return false;
   }
   return true;
 }
 
-export function spendRecipe(
-  inventory: Inventory,
-  kind: WeaponKind,
-): Inventory | null {
-  if (!affordable(inventory, kind)) return null;
-  const recipe = WEAPONS[kind].recipe;
+export function spendRecipe(inventory: Inventory, recipe: Recipe): Inventory | null {
+  if (!affordable(inventory, recipe)) return null;
   const next: Inventory = { ...inventory };
-  for (const k of Object.keys(recipe) as Array<keyof typeof recipe>) {
-    const need = recipe[k] ?? 0;
+  for (const k of Object.keys(recipe.inputs) as ResourceKind[]) {
+    const need = recipe.inputs[k] ?? 0;
     const have = next[k] ?? 0;
     next[k] = have - need;
   }

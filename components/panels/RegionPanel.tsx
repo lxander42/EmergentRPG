@@ -5,8 +5,8 @@ import { useGameStore, WALK_MAX_RADIUS } from "@/lib/state/game-store";
 import { biomeAt } from "@/lib/sim/biome";
 import { BIOMES } from "@/content/biomes";
 import { FACTIONS } from "@/content/factions";
-import { BIOME_RESOURCES, RESOURCES } from "@/content/resources";
-import { globalToLocal, regionCenterGlobal } from "@/lib/sim/biome-interior";
+import { BIOME_RESOURCES, RESOURCES, type ResourceKind } from "@/content/resources";
+import { globalToLocal, regionCenterGlobal, regionKey } from "@/lib/sim/biome-interior";
 
 export default function RegionPanel() {
   const region = useGameStore((s) => s.selectedRegion);
@@ -107,6 +107,8 @@ export default function RegionPanel() {
             ))}
           </p>
         )}
+
+        <ResourcesHere world={world} rx={region.rx} ry={region.ry} />
 
         {canClaim && (
           <button
@@ -211,4 +213,43 @@ function factionHex(color: number): string {
 
 function factionLabel(id: string): string {
   return FACTIONS.find((f) => f.id === id)?.name ?? id;
+}
+
+function ResourcesHere({
+  world,
+  rx,
+  ry,
+}: {
+  world: { biomeInteriors: Record<string, import("@/lib/sim/biome-interior").BiomeInterior> };
+  rx: number;
+  ry: number;
+}) {
+  const interior = world.biomeInteriors[regionKey(rx, ry)];
+  if (!interior) return null;
+  const counts: Partial<Record<ResourceKind, number>> = {};
+  for (const r of interior.resources) {
+    counts[r.kind] = (counts[r.kind] ?? 0) + 1;
+  }
+  const entries = (Object.entries(counts) as Array<[ResourceKind, number]>).filter(
+    ([, n]) => n > 0,
+  );
+  if (entries.length === 0) return null;
+  return (
+    <p className="mt-3 flex flex-wrap items-center gap-2 font-mono text-[11px] uppercase tracking-wider text-[var(--color-fg-muted)]">
+      Resources here
+      {entries.map(([kind, n]) => (
+        <span key={kind} className="inline-flex items-center gap-1.5 normal-case">
+          <span
+            aria-hidden
+            className="h-2.5 w-2.5 rounded-full border border-[var(--color-border-strong)]"
+            style={{ background: RESOURCES[kind].swatch }}
+          />
+          <span className="text-[var(--color-fg)]">
+            {RESOURCES[kind].label}{" "}
+            <span className="tabular-nums text-[var(--color-fg-muted)]">×{n}</span>
+          </span>
+        </span>
+      ))}
+    </p>
+  );
 }
