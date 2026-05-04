@@ -641,10 +641,13 @@ export class BiomeScene extends Phaser.Scene {
       6,
     );
     this.playerLayer.clear();
+    const player = useGameStore.getState().world?.life?.player;
+    const factionColor =
+      FACTIONS.find((f) => f.id === player?.factionOfOriginId)?.color ?? COLORS.player;
     drawFactionShape(
       this.playerLayer,
       "square",
-      COLORS.player,
+      factionColor,
       this.playerCx,
       this.playerCy,
       PLAYER_SIZE,

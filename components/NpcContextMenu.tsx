@@ -131,23 +131,26 @@ export default function NpcContextMenu() {
           selectNpc(ctx.id);
           close();
         }}
-        className="tactile inline-flex items-center gap-2 rounded-xl px-2 py-2 text-left text-sm text-[var(--color-fg)] hover:bg-[var(--color-surface-warm)]"
+        className="tactile inline-flex items-center gap-2 rounded-xl bg-[var(--color-surface-warm)] px-2 py-2 text-left text-sm text-[var(--color-fg)] hover:bg-[var(--color-border)]"
       >
         <Eye size={14} weight="duotone" className="text-[var(--color-fg-muted)]" />
         Examine
       </button>
-      {stance !== "Friendly" && (
-        <button
-          onClick={() => {
-            attackNpc(ctx.id);
-            close();
-          }}
-          className="tactile inline-flex items-center gap-2 rounded-xl px-2 py-2 text-left text-sm text-[var(--color-accent)] hover:bg-[var(--color-surface-warm)]"
-        >
-          <Sword size={14} weight="fill" />
-          Attack
-        </button>
-      )}
+      <button
+        onClick={() => {
+          attackNpc(ctx.id);
+          close();
+        }}
+        className="tactile mt-1 inline-flex items-center gap-2 rounded-xl bg-[rgba(217,104,70,0.12)] px-2 py-2 text-left text-sm font-medium text-[var(--color-accent)] hover:bg-[rgba(217,104,70,0.2)]"
+      >
+        <Sword size={14} weight="fill" />
+        Attack
+        {stance === "Friendly" && (
+          <span className="ml-auto font-mono text-[9px] uppercase tracking-wider text-[var(--color-fg-muted)]">
+            friendly
+          </span>
+        )}
+      </button>
     </div>
   );
 }

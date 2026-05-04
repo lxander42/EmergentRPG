@@ -579,7 +579,9 @@ export class WorldScene extends Phaser.Scene {
       playerSize,
       5,
     );
-    drawFactionShape(this.playerHere, "square", COLORS.player, cx, cy, playerSize, {
+    const factionColor =
+      FACTIONS.find((f) => f.id === player.factionOfOriginId)?.color ?? COLORS.player;
+    drawFactionShape(this.playerHere, "square", factionColor, cx, cy, playerSize, {
       stroke: 2,
       strokeColor: COLORS.outline,
     });

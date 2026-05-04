@@ -201,6 +201,10 @@ export default function HUD() {
 
       {player && (
         <div className="pointer-events-none absolute inset-x-2 top-16 z-10 flex flex-wrap items-center justify-end gap-2">
+          <IdentityStrip
+            name={player.name}
+            factionOfOriginId={player.factionOfOriginId}
+          />
           <HealthStrip health={player.health} max={player.healthMax} inCombat={inCombat} />
           <EnergyStrip energy={player.energy} max={player.energyMax} />
           <InventoryStrip
@@ -377,6 +381,34 @@ function DebugStrip() {
         ))}
       </div>
     </aside>
+  );
+}
+
+function IdentityStrip({
+  name,
+  factionOfOriginId,
+}: {
+  name: string;
+  factionOfOriginId: string;
+}) {
+  const faction = FACTIONS.find((f) => f.id === factionOfOriginId);
+  const color = faction
+    ? "#" + faction.color.toString(16).padStart(6, "0")
+    : "#cccccc";
+  return (
+    <div className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] py-1 pl-1.5 pr-3 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]">
+      <span
+        aria-hidden
+        className="grid h-7 w-7 place-items-center rounded-md border border-[var(--color-border-strong)]"
+        style={{ background: color }}
+      />
+      <span className="flex flex-col leading-tight">
+        <span className="text-xs font-medium text-[var(--color-fg)]">{name}</span>
+        <span className="font-mono text-[9px] uppercase tracking-wider text-[var(--color-fg-muted)]">
+          {faction?.name ?? factionOfOriginId}
+        </span>
+      </span>
+    </div>
   );
 }
 
