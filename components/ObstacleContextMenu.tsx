@@ -88,9 +88,11 @@ export default function ObstacleContextMenu() {
   }, [ctx, drag]);
 
   if (!ctx || !player || !pos) return null;
-  const { rx, ry, lx, ly, kind } = ctx;
+  const { rx, ry, lx, ly, kind, remembered } = ctx;
   const label = OBSTACLE_LABEL[kind];
-  const blurb = OBSTACLE_BLURB[kind];
+  const blurb = remembered
+    ? "Out of sight. You remember it being here."
+    : OBSTACLE_BLURB[kind];
 
   const actions: ActionDef[] = [
     {
@@ -100,7 +102,7 @@ export default function ObstacleContextMenu() {
       onClick: () => close(),
     },
   ];
-  if (kind === "tree") {
+  if (!remembered && kind === "tree") {
     const have = hasTool(player.tools, "axe");
     actions.push({
       id: "chop",
@@ -114,7 +116,7 @@ export default function ObstacleContextMenu() {
         interact(rx, ry, lx, ly, "harvest");
       },
     });
-  } else if (kind === "rock") {
+  } else if (!remembered && kind === "rock") {
     const have = hasTool(player.tools, "pickaxe");
     actions.push({
       id: "mine",
@@ -128,7 +130,7 @@ export default function ObstacleContextMenu() {
         interact(rx, ry, lx, ly, "harvest");
       },
     });
-  } else if (kind === "workbench") {
+  } else if (!remembered && kind === "workbench") {
     actions.push({
       id: "craft",
       label: "Craft",

@@ -61,6 +61,7 @@ export type ObstacleContextMenuState = {
   kind: ObstacleKind;
   x: number;
   y: number;
+  remembered: boolean;
 };
 
 type GameStore = {
@@ -132,6 +133,7 @@ type GameStore = {
     kind: ObstacleKind,
     x: number,
     y: number,
+    remembered?: boolean,
   ) => void;
   closeObstacleContextMenu: () => void;
   eatFood: (kind: import("@/content/resources").ResourceKind) => void;
@@ -605,9 +607,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }),
   closeNpcContextMenu: () => set({ npcContextMenu: null }),
 
-  openObstacleContextMenu: (rx, ry, lx, ly, kind, x, y) =>
+  openObstacleContextMenu: (rx, ry, lx, ly, kind, x, y, remembered = false) =>
     set({
-      obstacleContextMenu: { rx, ry, lx, ly, kind, x, y },
+      obstacleContextMenu: { rx, ry, lx, ly, kind, x, y, remembered },
       npcContextMenu: null,
       selectedNpcId: null,
       selectedRegion: null,

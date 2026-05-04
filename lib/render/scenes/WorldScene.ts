@@ -5,7 +5,8 @@ import { biomeAt } from "@/lib/sim/biome";
 import { MAP_W, MAP_H } from "@/lib/sim/world";
 import { FACTIONS } from "@/content/factions";
 import { drawFactionShape } from "@/lib/render/shapes";
-import { globalToLocal } from "@/lib/sim/biome-interior";
+import { globalToLocal, regionKey } from "@/lib/sim/biome-interior";
+import { bitmapAnyDiscovered } from "@/lib/sim/fog";
 import type { Npc } from "@/lib/sim/npc";
 
 const REGION = 64;
@@ -30,6 +31,8 @@ const COLORS = {
   shadow: 0x2c2820,
   selection: 0xd96846,
   player: 0xd96846,
+  // matches --color-grid in globals.css.
+  grid: 0xc4baa6,
 };
 
 // Tracks where each NPC was last drawn so a single global pointerup
@@ -47,6 +50,7 @@ export class WorldScene extends Phaser.Scene {
   private tileLayer!: Phaser.GameObjects.Graphics;
   private factionRingLayer!: Phaser.GameObjects.Graphics;
   private telegraphLayer!: Phaser.GameObjects.Graphics;
+  private fogOverlay!: Phaser.GameObjects.Graphics;
   private selectionRing!: Phaser.GameObjects.Graphics;
   private homeMarker!: Phaser.GameObjects.Graphics;
   private playerHere!: Phaser.GameObjects.Graphics;
@@ -85,6 +89,7 @@ export class WorldScene extends Phaser.Scene {
     this.factionRingLayer = this.add.graphics();
     this.telegraphLayer = this.add.graphics();
     this.npcLayer = this.add.graphics();
+    this.fogOverlay = this.add.graphics();
     this.homeMarker = this.add.graphics();
     this.homeMarker.setVisible(false);
     this.playerHere = this.add.graphics();
@@ -154,8 +159,8 @@ export class WorldScene extends Phaser.Scene {
     if (world.ticks !== this.lastDrawnTick) {
       const debug = useGameStore.getState().debugMode;
       if (debug) {
-        this.renderNpcs(world.npcs);
-        this.renderTelegraphs(world.npcs);
+        this.renderNpcs(world.npcs, world.discoveredTiles, world.home != null);
+        this.renderTelegraphs(world.npcs, world.discoveredTiles, world.home != null);
       } else {
         this.npcLayer.clear();
         this.telegraphLayer.clear();
@@ -163,15 +168,39 @@ export class WorldScene extends Phaser.Scene {
       }
       const showFactions = useGameStore.getState().mapShowFactions;
       if (showFactions) {
-        this.renderFactionRings(world.regionControl, world.home);
+        this.renderFactionRings(
+          world.regionControl,
+          world.home,
+          world.discoveredTiles,
+          world.home != null,
+        );
       } else {
         this.factionRingLayer.clear();
       }
+      this.renderFogOverlay(world.discoveredTiles, world.home != null);
       this.lastDrawnTick = world.ticks;
     }
     this.renderHomeMarker();
     this.renderPlayerHere();
     this.renderSelection();
+  }
+
+  private renderFogOverlay(
+    discoveredTiles: Record<string, Uint8Array>,
+    fogActive: boolean,
+  ) {
+    this.fogOverlay.clear();
+    if (!fogActive) return;
+    for (let ry = 0; ry < MAP_H; ry++) {
+      for (let rx = 0; rx < MAP_W; rx++) {
+        const bitmap = discoveredTiles[regionKey(rx, ry)];
+        if (bitmap && bitmapAnyDiscovered(bitmap)) continue;
+        const px = rx * REGION + PADDING;
+        const py = ry * REGION + PADDING;
+        this.fogOverlay.fillStyle(COLORS.grid, 1);
+        this.fogOverlay.fillRoundedRect(px, py, INNER, INNER, RADIUS);
+      }
+    }
   }
 
   private drawTiles() {
@@ -202,6 +231,8 @@ export class WorldScene extends Phaser.Scene {
   private renderFactionRings(
     regionControl: Record<string, string>,
     home: { rx: number; ry: number } | null,
+    discoveredTiles: Record<string, Uint8Array>,
+    fogActive: boolean,
   ) {
     this.factionRingLayer.clear();
     // Group regions by faction so each faction renders once. Skip the home
@@ -214,6 +245,10 @@ export class WorldScene extends Phaser.Scene {
       const ry = Number(sy);
       if (!Number.isFinite(rx) || !Number.isFinite(ry)) continue;
       if (home && home.rx === rx && home.ry === ry) continue;
+      if (fogActive) {
+        const bitmap = discoveredTiles[regionKey(rx, ry)];
+        if (!bitmap || !bitmapAnyDiscovered(bitmap)) continue;
+      }
       const arr = owned.get(factionId) ?? [];
       arr.push({ rx, ry });
       owned.set(factionId, arr);
@@ -317,10 +352,18 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
-  private renderTelegraphs(npcs: Npc[]) {
+  private renderTelegraphs(
+    npcs: Npc[],
+    discoveredTiles: Record<string, Uint8Array>,
+    fogActive: boolean,
+  ) {
     this.telegraphLayer.clear();
     for (const n of npcs) {
       if (!n.intent) continue;
+      if (fogActive) {
+        const bitmap = discoveredTiles[regionKey(n.rx, n.ry)];
+        if (!bitmap || !bitmapAnyDiscovered(bitmap)) continue;
+      }
       const fromX = n.rx * REGION + REGION / 2;
       const fromY = n.ry * REGION + REGION / 2;
       const toX = n.intent.rx * REGION + REGION / 2;
@@ -364,9 +407,17 @@ export class WorldScene extends Phaser.Scene {
   // Hit targets are stored as plain objects in npcHits[] -- no per-NPC
   // game object, so 200 NPCs cost ~200 number triples instead of 200 Phaser
   // Rectangles + transforms.
-  private renderNpcs(npcs: Npc[]) {
+  private renderNpcs(
+    npcs: Npc[],
+    discoveredTiles: Record<string, Uint8Array>,
+    fogActive: boolean,
+  ) {
     const buckets = new Map<string, Npc[]>();
     for (const npc of npcs) {
+      if (fogActive) {
+        const bitmap = discoveredTiles[regionKey(npc.rx, npc.ry)];
+        if (!bitmap || !bitmapAnyDiscovered(bitmap)) continue;
+      }
       const key = `${npc.rx},${npc.ry}`;
       const list = buckets.get(key);
       if (list) list.push(npc);

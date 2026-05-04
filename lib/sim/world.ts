@@ -27,10 +27,15 @@ import {
   type Legacy,
 } from "@/lib/sim/legacy";
 import { FACTIONS } from "@/content/factions";
+import {
+  countDiscoveredRegions,
+  effectivePerception,
+  markPerceptionDiscovered,
+} from "@/lib/sim/fog";
 
 export { biomeAt, isPassable, type Biome } from "@/lib/sim/biome";
 
-export const WORLD_VERSION = 10;
+export const WORLD_VERSION = 11;
 export const MAP_W = 32;
 export const MAP_H = 32;
 export const NPC_COUNT = 200;
@@ -73,7 +78,7 @@ export type LifeState = {
   inventory: Inventory;
   bornAtTick: number;
   kills: number;
-  discoveredThisLife: Record<string, true>;
+  discoveredThisLife: Record<string, Uint8Array>;
   recentPickups: PickupNotice[];
   recentProjectiles: ProjectileFx[];
   gameOver: boolean;
@@ -94,9 +99,9 @@ export type World = {
   regionPresence: Record<string, Partial<Record<string, number>>>;
   // regionKey -> factionId of the faction currently controlling this region
   regionControl: Record<string, string>;
-  // Set as the player visits regions. Phase 4 reads this for fog-of-war
-  // on the world map; for Phase 1 it's just bookkeeping.
-  discoveredRegions: Record<string, true>;
+  // Per-region 20x20 tile bitmaps marking tiles ever within perception of
+  // the player. Drives fog-of-war on both the biome and world maps.
+  discoveredTiles: Record<string, Uint8Array>;
   // factionId -> per-player reputation. Drives hostile/friendly encounters.
   // Halved on rebirth so past misdeeds linger but don't doom the new life.
   playerReputation: Record<string, number>;
@@ -128,7 +133,7 @@ export function createWorld(seed = Date.now() & 0xffffffff): World {
     biomeInteriors: {},
     regionPresence: {},
     regionControl: {},
-    discoveredRegions: {},
+    discoveredTiles: {},
     playerReputation: {},
     factionRelations: {},
     recentFactionAttacks: {},
@@ -198,14 +203,29 @@ export function claimHome(world: World, rx: number, ry: number): World | null {
     factionOfOriginId: pickFactionOfOrigin(rng),
   };
   const life = makeLife(spawn, identity, seeded.ticks);
-  const homeKey = regionKey(rx, ry);
-  const discoveredRegions = { ...seeded.discoveredRegions, [homeKey]: true as const };
+  const perception = effectivePerception(life.player);
+  const discoveredTiles = markPerceptionDiscovered(
+    seeded.discoveredTiles,
+    spawn.gx,
+    spawn.gy,
+    perception,
+    MAP_W,
+    MAP_H,
+  );
+  const discoveredThisLife = markPerceptionDiscovered(
+    {},
+    spawn.gx,
+    spawn.gy,
+    perception,
+    MAP_W,
+    MAP_H,
+  );
   return {
     ...seeded,
     rngState: rng.state(),
     home: { rx, ry },
-    discoveredRegions,
-    life: { ...life, discoveredThisLife: { [homeKey]: true as const } },
+    discoveredTiles,
+    life: { ...life, discoveredThisLife },
   };
 }
 
@@ -250,13 +270,29 @@ export function beginNewLife(world: World): World {
   const center = regionCenterGlobal(spawnRegion.rx, spawnRegion.ry);
   const spawn = nudgeToOpen(seeded, center.gx, center.gy);
   const life = makeLife(spawn, identity, seeded.ticks);
-  const spawnKey = regionKey(spawnRegion.rx, spawnRegion.ry);
+  const perception = effectivePerception(life.player);
+  const discoveredTiles = markPerceptionDiscovered(
+    seeded.discoveredTiles,
+    spawn.gx,
+    spawn.gy,
+    perception,
+    MAP_W,
+    MAP_H,
+  );
+  const discoveredThisLife = markPerceptionDiscovered(
+    {},
+    spawn.gx,
+    spawn.gy,
+    perception,
+    MAP_W,
+    MAP_H,
+  );
   return {
     ...seeded,
     rngState: rng.state(),
     playerReputation,
-    discoveredRegions: { ...seeded.discoveredRegions, [spawnKey]: true as const },
-    life: { ...life, discoveredThisLife: { [spawnKey]: true as const } },
+    discoveredTiles,
+    life: { ...life, discoveredThisLife },
   };
 }
 
@@ -368,7 +404,7 @@ export function tickWorld(world: World): {
   const combatDeathEvents: WorldEvent[] = [];
   let gameOver = false;
   let gameOverReason: GameOverReason | null = null;
-  let discoveredRegions = world.discoveredRegions;
+  let discoveredTiles = world.discoveredTiles;
   let discoveredThisLife = life?.discoveredThisLife ?? {};
   let kills = life?.kills ?? 0;
   let workbenchOpened = false;
@@ -455,13 +491,23 @@ export function tickWorld(world: World): {
     }
 
     const cur = globalToLocal(player.gx, player.gy);
-    const key = regionKey(cur.rx, cur.ry);
-    if (!discoveredRegions[key]) {
-      discoveredRegions = { ...discoveredRegions, [key]: true as const };
-    }
-    if (!discoveredThisLife[key]) {
-      discoveredThisLife = { ...discoveredThisLife, [key]: true as const };
-    }
+    const perception = effectivePerception(player);
+    discoveredTiles = markPerceptionDiscovered(
+      discoveredTiles,
+      player.gx,
+      player.gy,
+      perception,
+      MAP_W,
+      MAP_H,
+    );
+    discoveredThisLife = markPerceptionDiscovered(
+      discoveredThisLife,
+      player.gx,
+      player.gy,
+      perception,
+      MAP_W,
+      MAP_H,
+    );
     interiors = ensureNeighbors(interiors, world.seed, cur.rx, cur.ry);
   }
 
@@ -562,7 +608,7 @@ export function tickWorld(world: World): {
           bornAtTick: life.bornAtTick,
           endedAtTick: ticks,
           ticksAlive: Math.max(0, ticks - life.bornAtTick),
-          regionsDiscovered: Object.keys(discoveredThisLife).length,
+          regionsDiscovered: countDiscoveredRegions(discoveredThisLife),
           kills,
           cause,
         },
@@ -590,7 +636,7 @@ export function tickWorld(world: World): {
     biomeInteriors: interiors,
     regionPresence,
     regionControl,
-    discoveredRegions,
+    discoveredTiles,
     factions,
     factionRelations,
     playerReputation,

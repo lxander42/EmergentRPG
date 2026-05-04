@@ -6,6 +6,8 @@ import {
   INTERIOR_H,
   obstacleKindAt,
   regionKey,
+  resourceAtLocal,
+  isLocalObstacle,
   type BiomeInterior,
   type ObstacleKind,
 } from "@/lib/sim/biome-interior";
@@ -16,6 +18,8 @@ import { FACTIONS } from "@/content/factions";
 import { drawFactionShape } from "@/lib/render/shapes";
 import { bus } from "@/lib/render/bus";
 import type { Npc } from "@/lib/sim/npc";
+import { effectivePerception, isBitmapTileDiscovered } from "@/lib/sim/fog";
+import type { Player } from "@/lib/sim/player";
 
 const CELL = 36;
 const PLAYER_SIZE = 22;
@@ -59,9 +63,19 @@ type VisitorView = {
 
 type VisitorHit = { id: string; x: number; y: number; half: number };
 
+type FogContext = {
+  px: number;
+  py: number;
+  perception: number;
+  r2: number;
+  discoveredTiles: Record<string, Uint8Array>;
+  simplified: boolean;
+};
+
 export class BiomeScene extends Phaser.Scene {
   private tileLayer!: Phaser.GameObjects.Graphics;
   private resourceLayer!: Phaser.GameObjects.Graphics;
+  private fogLayer!: Phaser.GameObjects.Graphics;
   private routeLayer!: Phaser.GameObjects.Graphics;
   private playerLayer!: Phaser.GameObjects.Graphics;
   private playerShadow!: Phaser.GameObjects.Graphics;
@@ -96,6 +110,8 @@ export class BiomeScene extends Phaser.Scene {
   private readonly tickStepMs = 250;
   private dpr = 1;
   private tileColorCache = new Map<string, number>();
+  private longPressTimer: Phaser.Time.TimerEvent | null = null;
+  private peekText: Phaser.GameObjects.Text | null = null;
 
   constructor() {
     super("Biome");
@@ -106,6 +122,7 @@ export class BiomeScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor(COLORS.bg);
     this.tileLayer = this.add.graphics();
     this.resourceLayer = this.add.graphics();
+    this.fogLayer = this.add.graphics();
     this.routeLayer = this.add.graphics();
     this.selectionRing = this.add.graphics();
     this.selectionRing.setVisible(false);
@@ -155,6 +172,11 @@ export class BiomeScene extends Phaser.Scene {
     this.visitorViews.clear();
     this.visitorHits = [];
     this.tileColorCache.clear();
+    this.cancelLongPress();
+    if (this.peekText) {
+      this.peekText.destroy();
+      this.peekText = null;
+    }
   }
 
   update(_time: number, delta: number) {
@@ -205,16 +227,48 @@ export class BiomeScene extends Phaser.Scene {
       this.cameras.main.centerOn(this.playerCx, this.playerCy);
     }
 
-    this.drawTiles(world);
-    this.drawResources(world);
-    this.drawLoot(world);
+    const fog = this.computeFog(player, world);
+    this.drawTiles(world, fog);
+    this.drawResources(world, fog);
+    this.drawLoot(world, fog);
+    this.drawFog(fog);
     this.drawRoute(player);
     this.drawPlayer();
-    this.drawVisitors(world.npcs, world);
+    this.drawVisitors(world.npcs, world, fog);
     this.detectHits(world.npcs, player.health);
     this.spawnPickupTexts(world.life.recentPickups);
     this.drawProjectiles(world.life.recentProjectiles, world.ticks);
     this.drawSelection();
+  }
+
+  private computeFog(
+    player: Player,
+    world: { discoveredTiles: Record<string, Uint8Array> },
+  ): FogContext {
+    const perception = effectivePerception(player);
+    return {
+      px: player.gx,
+      py: player.gy,
+      perception,
+      r2: perception * perception,
+      discoveredTiles: world.discoveredTiles,
+      simplified: this.cameras.main.zoom < 0.7 * this.dpr,
+    };
+  }
+
+  private tileVisibility(
+    fog: FogContext,
+    gx: number,
+    gy: number,
+    bitmap: Uint8Array | undefined,
+    lx: number,
+    ly: number,
+  ): "visible" | "discovered" | "unknown" {
+    const dx = gx - fog.px;
+    const dy = gy - fog.py;
+    if (dx * dx + dy * dy <= fog.r2) return "visible";
+    if (bitmap && isBitmapTileDiscovered(bitmap, lx, ly)) return "discovered";
+    return "unknown";
   }
 
   private drawProjectiles(
@@ -287,7 +341,10 @@ export class BiomeScene extends Phaser.Scene {
     }
   }
 
-  private drawLoot(world: { biomeInteriors: Record<string, BiomeInterior> }) {
+  private drawLoot(
+    world: { biomeInteriors: Record<string, BiomeInterior> },
+    fog: FogContext,
+  ) {
     const v = this.viewport();
     const rxMin = Math.floor(v.gxMin / INTERIOR_W);
     const rxMax = Math.floor(v.gxMax / INTERIOR_W);
@@ -298,8 +355,13 @@ export class BiomeScene extends Phaser.Scene {
         const interior = world.biomeInteriors[regionKey(rx, ry)];
         if (!interior) continue;
         for (const pile of interior.loot) {
-          const cx = (rx * INTERIOR_W + pile.lx) * CELL + CELL / 2;
-          const cy = (ry * INTERIOR_H + pile.ly) * CELL + CELL / 2;
+          const gx = rx * INTERIOR_W + pile.lx;
+          const gy = ry * INTERIOR_H + pile.ly;
+          const dx = gx - fog.px;
+          const dy = gy - fog.py;
+          if (dx * dx + dy * dy > fog.r2) continue;
+          const cx = gx * CELL + CELL / 2;
+          const cy = gy * CELL + CELL / 2;
           this.resourceLayer.fillStyle(COLORS.shadow, 0.18);
           this.resourceLayer.fillEllipse(cx, cy + 6, 12, 3);
           this.resourceLayer.fillStyle(0xc0a878, 0.95);
@@ -377,12 +439,21 @@ export class BiomeScene extends Phaser.Scene {
     };
   }
 
-  private drawTiles(world: { biomeInteriors: Record<string, BiomeInterior> }) {
+  private drawTiles(
+    world: {
+      biomeInteriors: Record<string, BiomeInterior>;
+      discoveredTiles: Record<string, Uint8Array>;
+    },
+    fog: FogContext,
+  ) {
     this.tileLayer.clear();
     const v = this.viewport();
     for (let gy = v.gyMin; gy <= v.gyMax; gy++) {
       for (let gx = v.gxMin; gx <= v.gxMax; gx++) {
         const { rx, ry, lx, ly } = globalToLocal(gx, gy);
+        const bitmap = world.discoveredTiles[regionKey(rx, ry)];
+        const state = this.tileVisibility(fog, gx, gy, bitmap, lx, ly);
+        if (state === "unknown") continue;
         const interior = world.biomeInteriors[regionKey(rx, ry)];
         const biome = interior ? interior.biome : biomeAt(rx, ry);
         const color = this.cachedTileColor(gx, gy, biome);
@@ -394,6 +465,24 @@ export class BiomeScene extends Phaser.Scene {
           const kind = obstacleKindAt(interior, lx, ly);
           if (kind) this.drawObstacle(kind, gx, gy);
         }
+      }
+    }
+  }
+
+  private drawFog(fog: FogContext) {
+    this.fogLayer.clear();
+    if (fog.simplified) return;
+    const v = this.viewport();
+    this.fogLayer.fillStyle(COLORS.bg, 0.55);
+    for (let gy = v.gyMin; gy <= v.gyMax; gy++) {
+      for (let gx = v.gxMin; gx <= v.gxMax; gx++) {
+        const dx = gx - fog.px;
+        const dy = gy - fog.py;
+        if (dx * dx + dy * dy <= fog.r2) continue;
+        const { rx, ry, lx, ly } = globalToLocal(gx, gy);
+        const bitmap = fog.discoveredTiles[regionKey(rx, ry)];
+        if (!bitmap || !isBitmapTileDiscovered(bitmap, lx, ly)) continue;
+        this.fogLayer.fillRect(gx * CELL, gy * CELL, CELL, CELL);
       }
     }
   }
@@ -472,7 +561,10 @@ export class BiomeScene extends Phaser.Scene {
     }
   }
 
-  private drawResources(world: { biomeInteriors: Record<string, BiomeInterior> }) {
+  private drawResources(
+    world: { biomeInteriors: Record<string, BiomeInterior> },
+    fog: FogContext,
+  ) {
     this.resourceLayer.clear();
     const v = this.viewport();
     const rxMin = Math.floor(v.gxMin / INTERIOR_W);
@@ -484,8 +576,13 @@ export class BiomeScene extends Phaser.Scene {
         const interior = world.biomeInteriors[regionKey(rx, ry)];
         if (!interior) continue;
         for (const r of interior.resources) {
-          const cx = (rx * INTERIOR_W + r.lx) * CELL + CELL / 2;
-          const cy = (ry * INTERIOR_H + r.ly) * CELL + CELL / 2;
+          const gx = rx * INTERIOR_W + r.lx;
+          const gy = ry * INTERIOR_H + r.ly;
+          const dx = gx - fog.px;
+          const dy = gy - fog.py;
+          if (dx * dx + dy * dy > fog.r2) continue;
+          const cx = gx * CELL + CELL / 2;
+          const cy = gy * CELL + CELL / 2;
           this.drawResourceIcon(r.kind, cx, cy);
         }
       }
@@ -655,7 +752,7 @@ export class BiomeScene extends Phaser.Scene {
     );
   }
 
-  private drawVisitors(npcs: Npc[], world: { ticks: number }) {
+  private drawVisitors(npcs: Npc[], world: { ticks: number }, fog: FogContext) {
     const player = useGameStore.getState().world?.life?.player;
     if (!player) return;
     const here = globalToLocal(player.gx, player.gy);
@@ -665,16 +762,23 @@ export class BiomeScene extends Phaser.Scene {
     const bucket = Math.floor(world.ticks / VISIT_BUCKET_TICKS);
 
     for (const npc of visitors) {
-      seen.add(npc.id);
       let target: { x: number; y: number };
+      let tgx: number;
+      let tgy: number;
       if (npc.interior) {
-        const gx = here.rx * INTERIOR_W + npc.interior.lx;
-        const gy = here.ry * INTERIOR_H + npc.interior.ly;
-        target = tileCenter(gx, gy);
+        tgx = here.rx * INTERIOR_W + npc.interior.lx;
+        tgy = here.ry * INTERIOR_H + npc.interior.ly;
+        target = tileCenter(tgx, tgy);
       } else {
         const slot = visitorSlot(npc.id, bucket, here.rx, here.ry, player.gx, player.gy);
-        target = tileCenter(slot.gx, slot.gy);
+        tgx = slot.gx;
+        tgy = slot.gy;
+        target = tileCenter(tgx, tgy);
       }
+      const dx = tgx - fog.px;
+      const dy = tgy - fog.py;
+      if (dx * dx + dy * dy > fog.r2) continue;
+      seen.add(npc.id);
 
       let view = this.visitorViews.get(npc.id);
       if (!view) {
@@ -779,6 +883,7 @@ export class BiomeScene extends Phaser.Scene {
 
   private onPointerDown(pointer: Phaser.Input.Pointer) {
     if (this.gameOver()) return;
+    this.cancelLongPress();
     if (this.input.pointer1.isDown && this.input.pointer2.isDown) {
       const dist = Phaser.Math.Distance.Between(
         this.input.pointer1.x,
@@ -794,6 +899,13 @@ export class BiomeScene extends Phaser.Scene {
     this.dragMoved = false;
     this.pointerDownAt = this.time.now;
     this.pointerDownPos = { x: pointer.x, y: pointer.y };
+    const startX = pointer.x;
+    const startY = pointer.y;
+    this.longPressTimer = this.time.delayedCall(500, () => {
+      this.longPressTimer = null;
+      if (this.dragMoved) return;
+      this.showTilePeek(startX, startY);
+    });
   }
 
   private onPointerMove(pointer: Phaser.Input.Pointer) {
@@ -817,12 +929,79 @@ export class BiomeScene extends Phaser.Scene {
       const dy = pointer.y - this.dragStart.y;
       if (Math.abs(dx) + Math.abs(dy) > PAN_THRESHOLD_PX) {
         this.dragMoved = true;
+        this.cancelLongPress();
         this.setCameraPanned(true);
       }
       this.cameras.main.scrollX -= dx / this.cameras.main.zoom;
       this.cameras.main.scrollY -= dy / this.cameras.main.zoom;
       this.dragStart = { x: pointer.x, y: pointer.y };
     }
+  }
+
+  private cancelLongPress() {
+    if (this.longPressTimer) {
+      this.longPressTimer.remove(false);
+      this.longPressTimer = null;
+    }
+  }
+
+  private showTilePeek(screenX: number, screenY: number) {
+    const store = useGameStore.getState();
+    const world = store.world;
+    if (!world?.life) return;
+    const player = world.life.player;
+    const wp = this.cameras.main.getWorldPoint(screenX, screenY);
+    const gx = Math.floor(wp.x / CELL);
+    const gy = Math.floor(wp.y / CELL);
+    const dx = gx - player.gx;
+    const dy = gy - player.gy;
+    const perception = effectivePerception(player);
+    if (dx * dx + dy * dy > perception * perception) return;
+    const { rx, ry, lx, ly } = globalToLocal(gx, gy);
+    const interior = world.biomeInteriors[regionKey(rx, ry)];
+    if (!interior) return;
+    if (isLocalObstacle(interior, lx, ly)) return;
+
+    let label: string | null = null;
+    const npc = world.npcs.find((n) => {
+      if (n.rx !== rx || n.ry !== ry) return false;
+      if (n.interior) return n.interior.lx === lx && n.interior.ly === ly;
+      return false;
+    });
+    if (npc) {
+      const faction = FACTIONS.find((f) => f.id === npc.factionId);
+      label = faction ? `${npc.name} of ${faction.name}` : npc.name;
+    } else {
+      const resource = resourceAtLocal(interior, lx, ly);
+      if (resource) label = RESOURCES[resource.kind].label;
+    }
+    if (!label) return;
+
+    if (this.peekText) {
+      this.peekText.destroy();
+      this.peekText = null;
+    }
+    const center = tileCenter(gx, gy);
+    const text = this.add.text(center.x, center.y - 18, label, {
+      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+      fontSize: "11px",
+      color: "#2c2820",
+      backgroundColor: "#fbf6ed",
+      padding: { x: 4, y: 2 },
+    });
+    text.setOrigin(0.5, 1);
+    text.setDepth(12);
+    this.peekText = text;
+    this.tweens.add({
+      targets: text,
+      alpha: { from: 1, to: 0 },
+      duration: 1500,
+      ease: "Cubic.easeOut",
+      onComplete: () => {
+        text.destroy();
+        if (this.peekText === text) this.peekText = null;
+      },
+    });
   }
 
   private onPointerUp(pointer: Phaser.Input.Pointer) {
@@ -851,11 +1030,23 @@ export class BiomeScene extends Phaser.Scene {
         const gx = Math.floor(world.x / CELL);
         const gy = Math.floor(world.y / CELL);
         const { rx, ry, lx, ly } = globalToLocal(gx, gy);
+        const player = store.world?.life?.player;
+        const discoveredTiles = store.world?.discoveredTiles ?? {};
+        const bitmap = discoveredTiles[regionKey(rx, ry)];
+        const dxp = player ? gx - player.gx : 0;
+        const dyp = player ? gy - player.gy : 0;
+        const perception = player ? effectivePerception(player) : 0;
+        const visible = player ? dxp * dxp + dyp * dyp <= perception * perception : false;
+        const discovered = bitmap ? isBitmapTileDiscovered(bitmap, lx, ly) : false;
         const interior = store.world?.biomeInteriors[regionKey(rx, ry)];
         const kind = interior ? obstacleKindAt(interior, lx, ly) : null;
         store.closeNpcContextMenu();
-        if (kind) {
-          store.openObstacleContextMenu(rx, ry, lx, ly, kind, pointer.x, pointer.y);
+        if (visible && kind) {
+          store.openObstacleContextMenu(rx, ry, lx, ly, kind, pointer.x, pointer.y, false);
+        } else if (!visible && discovered && kind) {
+          store.openObstacleContextMenu(rx, ry, lx, ly, kind, pointer.x, pointer.y, true);
+        } else if (!visible && !discovered) {
+          store.closeObstacleContextMenu();
         } else {
           store.closeObstacleContextMenu();
           store.walkPlayerTo(gx, gy);
@@ -863,6 +1054,7 @@ export class BiomeScene extends Phaser.Scene {
       }
     }
 
+    this.cancelLongPress();
     this.dragStart = null;
     this.dragMoved = false;
     this.pinchInitial = null;
