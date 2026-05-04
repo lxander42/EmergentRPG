@@ -1,4 +1,6 @@
 import type { WeaponInstance } from "@/lib/sim/weapons";
+import type { ToolInstance } from "@/lib/sim/tools";
+import type { ObstacleKind } from "@/lib/sim/biome-interior";
 
 export type PlayerStats = {
   speed: number;
@@ -10,7 +12,9 @@ export type PlayerStats = {
 
 export type PendingAction =
   | { kind: "collect"; resourceId: string }
-  | { kind: "attack"; npcId: string };
+  | { kind: "attack"; npcId: string }
+  | { kind: "harvest"; rx: number; ry: number; lx: number; ly: number; obstacle: ObstacleKind }
+  | { kind: "workbench"; rx: number; ry: number; lx: number; ly: number };
 
 export type Player = {
   gx: number;
@@ -23,6 +27,7 @@ export type Player = {
   starveAccum: number;
   stats: PlayerStats;
   weapons: WeaponInstance[];
+  tools: ToolInstance[];
   combatCooldown: number;
   route: Array<{ gx: number; gy: number }> | null;
   stepCooldown: number;
@@ -60,6 +65,7 @@ export function createPlayer(spawn: { gx: number; gy: number }): Player {
       reach: BASE_REACH,
     },
     weapons: [],
+    tools: [],
     combatCooldown: 0,
     route: null,
     stepCooldown: 0,

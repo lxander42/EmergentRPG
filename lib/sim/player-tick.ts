@@ -15,14 +15,27 @@ import {
   regionKey,
   removeResource,
   resourceAtLocal,
+  obstacleKindAt,
+  clearObstacle,
   type BiomeInterior,
+  type ObstacleKind,
 } from "@/lib/sim/biome-interior";
-import type { Inventory } from "@/lib/sim/inventory";
+import {
+  addToInventory,
+  inventoryCapFromBaskets,
+  type Inventory,
+} from "@/lib/sim/inventory";
 import type { ResourceKind } from "@/content/resources";
 import type { Npc } from "@/lib/sim/npc";
 import { applyRepPenalty, resolvePlayerAttack, chebyshev } from "@/lib/sim/combat";
 import { pickWeaponForRange, weaponReach } from "@/lib/sim/weapons";
 import { bfs } from "@/lib/sim/path";
+import {
+  basketCount,
+  consumeToolUse,
+  hasTool,
+  type ToolKind,
+} from "@/lib/sim/tools";
 import type { Rng } from "@/lib/sim/rng";
 
 export type PickupNotice = {
@@ -56,6 +69,7 @@ export type PlayerTickOutput = {
   pickups: PickupNotice[];
   projectiles: ProjectileNotice[];
   death: boolean;
+  workbenchOpened: boolean;
 };
 
 export function tickPlayer(input: PlayerTickInput): PlayerTickOutput {
@@ -64,6 +78,7 @@ export function tickPlayer(input: PlayerTickInput): PlayerTickOutput {
   const ticks = input.ticks;
   const pickups: PickupNotice[] = [];
   const projectiles: ProjectileNotice[] = [];
+  let workbenchOpened = false;
 
   if (player.combatCooldown > 0) {
     player = { ...player, combatCooldown: player.combatCooldown - 1 };
@@ -152,6 +167,22 @@ export function tickPlayer(input: PlayerTickInput): PlayerTickOutput {
       interiors = result.interiors;
       inventory = result.inventory;
       if (result.pickup) pickups.push(result.pickup);
+    } else if (action.kind === "harvest") {
+      const result = tryHarvest(player, interiors, inventory, action, rng);
+      player = result.player;
+      interiors = result.interiors;
+      inventory = result.inventory;
+      if (result.pickup) pickups.push(result.pickup);
+    } else if (action.kind === "workbench") {
+      const here = globalToLocal(player.gx, player.gy);
+      if (
+        here.rx === action.rx &&
+        here.ry === action.ry &&
+        chebyshev(here.lx, here.ly, action.lx, action.ly) <= 1
+      ) {
+        workbenchOpened = true;
+      }
+      player = { ...player, pendingAction: null };
     } else if (action.kind === "attack") {
       const targetIdx = npcs.findIndex((n) => n.id === action.npcId);
       if (targetIdx >= 0) {
@@ -220,6 +251,7 @@ export function tickPlayer(input: PlayerTickInput): PlayerTickOutput {
     pickups,
     projectiles,
     death: player.health <= 0,
+    workbenchOpened,
   };
 }
 
@@ -265,7 +297,7 @@ function chasePlan(
   }
 
   // BFS over the interior obstacles, treating other NPC tiles as blocked.
-  const occupied = interior.obstacles.slice();
+  const occupied = obstacleBoolGrid(interior);
   // Block other NPC tiles so we don't try to walk through them.
   // (We don't have full npcs here; the route walker treats live obstacle
   // collisions as a hard stop separately.)
@@ -318,18 +350,81 @@ function tryCollect(
     return { player, interiors, inventory, pickup: null };
   }
 
+  const cap = inventoryCapFromBaskets(basketCount(player.tools));
+  const added = addToInventory(inventory, resource.kind, 1, cap);
+  if (added.added <= 0) {
+    // Inventory full — leave the resource on the ground.
+    return { player, interiors, inventory, pickup: null };
+  }
   const updatedInterior = removeResource(interior, resource.id);
   const updatedInteriors = { ...interiors, [regionKey(rx, ry)]: updatedInterior };
-  const updatedInventory: Inventory = {
-    ...inventory,
-    [resource.kind]: (inventory[resource.kind] ?? 0) + 1,
-  };
 
   return {
     player,
     interiors: updatedInteriors,
-    inventory: updatedInventory,
-    pickup: { kind: resource.kind, amount: 1 },
+    inventory: added.inv,
+    pickup: { kind: resource.kind, amount: added.added },
+  };
+}
+
+function tryHarvest(
+  player: Player,
+  interiors: Record<string, BiomeInterior>,
+  inventory: Inventory,
+  action: Extract<PendingAction, { kind: "harvest" }>,
+  rng: Rng,
+): {
+  player: Player;
+  interiors: Record<string, BiomeInterior>;
+  inventory: Inventory;
+  pickup: PickupNotice | null;
+} {
+  let nextPlayer: Player = { ...player, pendingAction: null };
+  const here = globalToLocal(player.gx, player.gy);
+  if (here.rx !== action.rx || here.ry !== action.ry) {
+    return { player: nextPlayer, interiors, inventory, pickup: null };
+  }
+  if (chebyshev(here.lx, here.ly, action.lx, action.ly) > 1) {
+    return { player: nextPlayer, interiors, inventory, pickup: null };
+  }
+  const k = regionKey(action.rx, action.ry);
+  const interior = interiors[k];
+  if (!interior) return { player: nextPlayer, interiors, inventory, pickup: null };
+  const stillThere = obstacleKindAt(interior, action.lx, action.ly);
+  if (stillThere !== action.obstacle) {
+    return { player: nextPlayer, interiors, inventory, pickup: null };
+  }
+
+  let toolKind: ToolKind | null = null;
+  let drop: ResourceKind | null = null;
+  if (action.obstacle === "tree") {
+    toolKind = "axe";
+    drop = "wood";
+  } else if (action.obstacle === "rock") {
+    toolKind = "pickaxe";
+    drop = interior.biome === "stone" && rng.chance(0.25) ? "ore" : "stone";
+  } else {
+    // Cactus, bush, workbench: nothing to harvest.
+    return { player: nextPlayer, interiors, inventory, pickup: null };
+  }
+  if (!hasTool(nextPlayer.tools, toolKind)) {
+    return { player: nextPlayer, interiors, inventory, pickup: null };
+  }
+
+  const cap = inventoryCapFromBaskets(basketCount(nextPlayer.tools));
+  const added = addToInventory(inventory, drop, 1, cap);
+  if (added.added <= 0) {
+    return { player: nextPlayer, interiors, inventory, pickup: null };
+  }
+  nextPlayer = { ...nextPlayer, tools: consumeToolUse(nextPlayer.tools, toolKind) };
+  const updatedInterior = clearObstacle(interior, action.lx, action.ly);
+  const updatedInteriors = { ...interiors, [k]: updatedInterior };
+
+  return {
+    player: nextPlayer,
+    interiors: updatedInteriors,
+    inventory: added.inv,
+    pickup: { kind: drop, amount: added.added },
   };
 }
 
@@ -349,17 +444,22 @@ function pickupLoot(
   if (!interior) return { player, interiors, inventory, pickups: [] };
   const pile = lootAtLocal(interior, lx, ly);
   if (!pile) return { player, interiors, inventory, pickups: [] };
-  const nextInventory: Inventory = { ...inventory };
+  let nextInventory: Inventory = inventory;
   const pickups: PickupNotice[] = [];
+  let nextPlayer = player;
+  if (pile.tools && pile.tools.length > 0) {
+    nextPlayer = { ...nextPlayer, tools: [...nextPlayer.tools, ...pile.tools] };
+  }
+  const cap = inventoryCapFromBaskets(basketCount(nextPlayer.tools));
   for (const key of Object.keys(pile.items) as ResourceKind[]) {
     const amt = pile.items[key] ?? 0;
     if (amt <= 0) continue;
-    nextInventory[key] = (nextInventory[key] ?? 0) + amt;
-    pickups.push({ kind: key, amount: amt });
+    const result = addToInventory(nextInventory, key, amt, cap);
+    nextInventory = result.inv;
+    if (result.added > 0) pickups.push({ kind: key, amount: result.added });
   }
-  let nextPlayer = player;
   if (pile.weapons && pile.weapons.length > 0) {
-    nextPlayer = { ...player, weapons: [...player.weapons, ...pile.weapons] };
+    nextPlayer = { ...nextPlayer, weapons: [...nextPlayer.weapons, ...pile.weapons] };
   }
   return {
     player: nextPlayer,
@@ -379,3 +479,15 @@ function isStepBlocked(
   if (!interior) return false;
   return isLocalObstacle(interior, lx, ly);
 }
+
+// Convert the new typed obstacle array into a boolean[] for the legacy bfs()
+// helper which expects a binary occupancy grid.
+function obstacleBoolGrid(interior: BiomeInterior): boolean[] {
+  const out = new Array<boolean>(interior.obstacles.length);
+  for (let i = 0; i < interior.obstacles.length; i++) {
+    out[i] = interior.obstacles[i] != null;
+  }
+  return out;
+}
+// Re-export ObstacleKind so combat.ts can avoid an extra import path.
+export type { ObstacleKind };

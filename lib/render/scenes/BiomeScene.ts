@@ -4,9 +4,10 @@ import {
   globalToLocal,
   INTERIOR_W,
   INTERIOR_H,
-  isLocalObstacle,
+  obstacleKindAt,
   regionKey,
   type BiomeInterior,
+  type ObstacleKind,
 } from "@/lib/sim/biome-interior";
 import { biomeAt, blendNoise, type Biome } from "@/lib/sim/biome";
 import { BIOMES } from "@/content/biomes";
@@ -42,6 +43,8 @@ const COLORS = {
   rockShade: 0x67625a,
   bush: 0x86a06d,
   cactus: 0x7e9b6a,
+  workbench: 0xd96846,
+  workbenchLeg: 0x7a3d28,
 };
 
 type VisitorView = {
@@ -387,8 +390,9 @@ export class BiomeScene extends Phaser.Scene {
         const py = gy * CELL;
         this.tileLayer.fillStyle(color, 1);
         this.tileLayer.fillRect(px, py, CELL, CELL);
-        if (interior && biome !== "water" && isLocalObstacle(interior, lx, ly)) {
-          this.drawObstacle(biome, gx, gy);
+        if (interior && biome !== "water") {
+          const kind = obstacleKindAt(interior, lx, ly);
+          if (kind) this.drawObstacle(kind, gx, gy);
         }
       }
     }
@@ -403,12 +407,12 @@ export class BiomeScene extends Phaser.Scene {
     return color;
   }
 
-  private drawObstacle(biome: Biome, gx: number, gy: number) {
+  private drawObstacle(kind: ObstacleKind, gx: number, gy: number) {
     const cx = gx * CELL + CELL / 2;
     const cy = gy * CELL + CELL / 2;
-    switch (biome) {
-      case "forest":
-        // Tree: small brown trunk + green canopy triangle.
+    switch (kind) {
+      case "tree":
+        // Small brown trunk + green canopy triangle.
         this.tileLayer.fillStyle(COLORS.forestTrunk, 1);
         this.tileLayer.fillRect(cx - 2, cy + 4, 4, 8);
         this.tileLayer.fillStyle(COLORS.forestTree, 1);
@@ -416,8 +420,8 @@ export class BiomeScene extends Phaser.Scene {
         this.tileLayer.fillStyle(COLORS.shadow, 0.18);
         this.tileLayer.fillEllipse(cx, cy + 13, 18, 4);
         break;
-      case "stone": {
-        // Rock: irregular pentagon with a darker shade slice.
+      case "rock": {
+        // Irregular pentagon with a darker shade slice.
         this.tileLayer.fillStyle(COLORS.rock, 1);
         fillPolygon(this.tileLayer, [
           [cx - 11, cy + 6],
@@ -435,8 +439,8 @@ export class BiomeScene extends Phaser.Scene {
         ]);
         break;
       }
-      case "sand":
-        // Cactus: vertical bar with one offshoot.
+      case "cactus":
+        // Vertical bar with one offshoot.
         this.tileLayer.fillStyle(COLORS.cactus, 1);
         this.tileLayer.fillRoundedRect(cx - 3, cy - 12, 6, 24, 2);
         this.tileLayer.fillRoundedRect(cx + 3, cy - 4, 7, 5, 2);
@@ -444,8 +448,8 @@ export class BiomeScene extends Phaser.Scene {
         this.tileLayer.fillStyle(COLORS.shadow, 0.18);
         this.tileLayer.fillEllipse(cx + 1, cy + 13, 14, 4);
         break;
-      case "grass":
-        // Bush: 3 overlapping circles.
+      case "bush":
+        // 3 overlapping circles.
         this.tileLayer.fillStyle(COLORS.shadow, 0.18);
         this.tileLayer.fillEllipse(cx, cy + 9, 16, 4);
         this.tileLayer.fillStyle(COLORS.bush, 1);
@@ -453,7 +457,17 @@ export class BiomeScene extends Phaser.Scene {
         this.tileLayer.fillCircle(cx + 5, cy + 1, 6);
         this.tileLayer.fillCircle(cx, cy - 4, 7);
         break;
-      case "water":
+      case "workbench":
+        // Coral-accent rounded bench top with two stubby legs.
+        this.tileLayer.fillStyle(COLORS.shadow, 0.18);
+        this.tileLayer.fillEllipse(cx, cy + 11, 20, 4);
+        this.tileLayer.fillStyle(COLORS.workbenchLeg, 1);
+        this.tileLayer.fillRect(cx - 8, cy + 4, 3, 6);
+        this.tileLayer.fillRect(cx + 5, cy + 4, 3, 6);
+        this.tileLayer.fillStyle(COLORS.workbench, 1);
+        this.tileLayer.fillRoundedRect(cx - 11, cy - 5, 22, 10, 2);
+        this.tileLayer.fillStyle(COLORS.workbenchLeg, 1);
+        this.tileLayer.fillRect(cx - 9, cy - 1, 18, 1.5);
         break;
     }
   }
@@ -827,13 +841,22 @@ export class BiomeScene extends Phaser.Scene {
     if (!this.dragMoved && dt < 350 && moved < 10) {
       const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
       const tappedVisitor = this.hitVisitorAt(world.x, world.y);
+      const store = useGameStore.getState();
       if (tappedVisitor) {
-        useGameStore.getState().openNpcContextMenu(tappedVisitor, pointer.x, pointer.y);
+        store.openNpcContextMenu(tappedVisitor, pointer.x, pointer.y);
       } else {
         const gx = Math.floor(world.x / CELL);
         const gy = Math.floor(world.y / CELL);
-        useGameStore.getState().closeNpcContextMenu();
-        useGameStore.getState().walkPlayerTo(gx, gy);
+        const { rx, ry, lx, ly } = globalToLocal(gx, gy);
+        const interior = store.world?.biomeInteriors[regionKey(rx, ry)];
+        const kind = interior ? obstacleKindAt(interior, lx, ly) : null;
+        store.closeNpcContextMenu();
+        if (kind) {
+          store.openObstacleContextMenu(rx, ry, lx, ly, kind, pointer.x, pointer.y);
+        } else {
+          store.closeObstacleContextMenu();
+          store.walkPlayerTo(gx, gy);
+        }
       }
     }
 

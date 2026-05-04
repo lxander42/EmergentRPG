@@ -291,7 +291,7 @@ function stepTowardTarget(
   const interiorPos = npc.interior!;
 
   // Build occupancy grid for BFS + random-walk obstacle checks.
-  const occupied: boolean[] = interior.obstacles.slice();
+  const occupied: boolean[] = interior.obstacles.map((o) => o != null);
   occupied[here.ly * INTERIOR_W + here.lx] = true;
   for (const j of inHere) {
     if (j === selfIdx) continue;

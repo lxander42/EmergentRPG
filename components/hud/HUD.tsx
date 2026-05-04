@@ -18,6 +18,16 @@ import { RESOURCES, type ResourceKind } from "@/content/resources";
 import { globalToLocal } from "@/lib/sim/biome-interior";
 import type { GameOverReason } from "@/lib/sim/world";
 import { findFaction } from "@/lib/sim/faction";
+import {
+  inventoryCapFromBaskets,
+  inventoryTotal,
+} from "@/lib/sim/inventory";
+import {
+  basketCount,
+  TOOLS,
+  type ToolInstance,
+  type ToolKind,
+} from "@/lib/sim/tools";
 
 const SPEEDS = [1, 2, 4] as const;
 
@@ -164,7 +174,11 @@ export default function HUD() {
         <div className="pointer-events-none absolute inset-x-2 top-16 z-10 flex flex-wrap items-center justify-end gap-2">
           <HealthStrip health={player.health} max={player.healthMax} inCombat={inCombat} />
           <EnergyStrip energy={player.energy} max={player.energyMax} />
-          <InventoryStrip inventory={inventory} onOpen={openInventory} />
+          <InventoryStrip
+            inventory={inventory}
+            tools={player.tools}
+            onOpen={openInventory}
+          />
         </div>
       )}
 
@@ -361,38 +375,138 @@ function EnergyStrip({ energy, max }: { energy: number; max: number }) {
 
 function InventoryStrip({
   inventory,
+  tools,
   onOpen,
 }: {
   inventory: Partial<Record<ResourceKind, number>>;
+  tools: ToolInstance[];
   onOpen: () => void;
 }) {
   const entries = (Object.entries(inventory) as Array<[ResourceKind, number]>).filter(
     ([, n]) => n > 0,
   );
+  const cap = inventoryCapFromBaskets(basketCount(tools));
+  const total = inventoryTotal(inventory);
+  const grouped = groupTools(tools);
   return (
     <button
       onClick={onOpen}
       aria-label="Open inventory"
-      className="tactile pointer-events-auto inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
+      className="tactile pointer-events-auto inline-flex flex-col items-stretch gap-1 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
     >
-      {entries.length === 0 ? (
-        <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
-          Inventory
+      <span className="inline-flex items-center gap-2">
+        <span className="font-mono text-[10px] uppercase tracking-wider tabular-nums text-[var(--color-fg-muted)]">
+          {total}/{cap}
         </span>
-      ) : (
-        entries.map(([kind, count]) => (
-          <span key={kind} className="inline-flex items-center gap-1">
-            <span
-              aria-hidden
-              className="h-2.5 w-2.5 rounded-full border border-[var(--color-border-strong)]"
-              style={{ background: RESOURCES[kind].swatch }}
-            />
-            <span className="font-mono text-[10px] tabular-nums text-[var(--color-fg)]">
-              {count}
-            </span>
+        {entries.length === 0 ? (
+          <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
+            empty
           </span>
-        ))
+        ) : (
+          entries.map(([kind, count]) => (
+            <span key={kind} className="inline-flex items-center gap-1">
+              <span
+                aria-hidden
+                className="h-2.5 w-2.5 rounded-full border border-[var(--color-border-strong)]"
+                style={{ background: RESOURCES[kind].swatch }}
+              />
+              <span className="font-mono text-[10px] tabular-nums text-[var(--color-fg)]">
+                {count}
+              </span>
+            </span>
+          ))
+        )}
+      </span>
+      {grouped.length > 0 && (
+        <span className="inline-flex items-center gap-1.5 border-t border-[var(--color-border)] pt-1">
+          {grouped.map((g) => (
+            <ToolBadge key={g.kind} kind={g.kind} count={g.count} fraction={g.fraction} />
+          ))}
+        </span>
       )}
     </button>
+  );
+}
+
+type ToolGroup = { kind: ToolKind; count: number; fraction: number };
+
+function groupTools(tools: ToolInstance[]): ToolGroup[] {
+  const map = new Map<ToolKind, { count: number; minFraction: number }>();
+  for (const t of tools) {
+    const meta = TOOLS[t.kind];
+    const fraction = meta.durability > 0 ? Math.max(0, t.usesLeft) / meta.durability : 1;
+    const cur = map.get(t.kind);
+    if (cur) {
+      cur.count += 1;
+      if (fraction < cur.minFraction) cur.minFraction = fraction;
+    } else {
+      map.set(t.kind, { count: 1, minFraction: fraction });
+    }
+  }
+  const out: ToolGroup[] = [];
+  for (const [kind, v] of map) {
+    out.push({ kind, count: v.count, fraction: v.minFraction });
+  }
+  return out;
+}
+
+function ToolBadge({
+  kind,
+  count,
+  fraction,
+}: {
+  kind: ToolKind;
+  count: number;
+  fraction: number;
+}) {
+  const meta = TOOLS[kind];
+  const f = Math.max(0, Math.min(1, fraction));
+  const r = 8;
+  const c = 2 * Math.PI * r;
+  const dash = c * f;
+  const showRing = meta.durability < 999;
+  return (
+    <span
+      aria-label={`${meta.label} ×${count}`}
+      className="relative inline-flex h-5 w-5 items-center justify-center"
+    >
+      {showRing && (
+        <svg
+          viewBox="0 0 20 20"
+          className="absolute inset-0"
+          aria-hidden
+        >
+          <circle
+            cx="10"
+            cy="10"
+            r={r}
+            fill="none"
+            stroke="var(--color-border)"
+            strokeWidth="1.5"
+          />
+          <circle
+            cx="10"
+            cy="10"
+            r={r}
+            fill="none"
+            stroke="var(--color-accent)"
+            strokeWidth="1.5"
+            strokeDasharray={`${dash} ${c}`}
+            strokeLinecap="round"
+            transform="rotate(-90 10 10)"
+          />
+        </svg>
+      )}
+      <span
+        aria-hidden
+        className="relative h-3 w-3 rounded-sm border border-[var(--color-border-strong)]"
+        style={{ background: meta.swatch }}
+      />
+      {count > 1 && (
+        <span className="absolute -bottom-1 -right-1 inline-flex min-w-3 items-center justify-center rounded-full bg-[var(--color-fg)] px-1 font-mono text-[8px] font-medium leading-none text-[var(--color-bg)]">
+          ×{count}
+        </span>
+      )}
+    </span>
   );
 }

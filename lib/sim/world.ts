@@ -10,6 +10,8 @@ import {
   generateInterior,
   globalToLocal,
   isLocalObstacle,
+  mixSeed,
+  placeWorkbench,
   regionCenterGlobal,
   regionKey,
   type BiomeInterior,
@@ -23,7 +25,7 @@ import { tickCombat } from "@/lib/sim/combat";
 
 export { biomeAt, isPassable, type Biome } from "@/lib/sim/biome";
 
-export const WORLD_VERSION = 8;
+export const WORLD_VERSION = 9;
 export const MAP_W = 32;
 export const MAP_H = 32;
 export const NPC_COUNT = 200;
@@ -151,22 +153,38 @@ export function claimHome(world: World, rx: number, ry: number): World | null {
 
   const seeded = ensureInteriorsForRegion(world, rx, ry);
   const center = regionCenterGlobal(rx, ry);
-  const interior = seeded.biomeInteriors[regionKey(rx, ry)];
-  if (!interior) return null;
+  const baseInterior = seeded.biomeInteriors[regionKey(rx, ry)];
+  if (!baseInterior) return null;
 
   const spawn = nudgeToOpen(seeded, center.gx, center.gy);
   const player = createPlayer(spawn);
+  const spawnLocal = globalToLocal(spawn.gx, spawn.gy);
+  const wbRng = createRng((mixSeed(seeded.seed, rx, ry) ^ 0x111) >>> 0);
+  const interiorWithBench = placeWorkbench(
+    baseInterior,
+    { lx: spawnLocal.lx, ly: spawnLocal.ly },
+    wbRng,
+  );
+  const biomeInteriors = {
+    ...seeded.biomeInteriors,
+    [regionKey(rx, ry)]: interiorWithBench,
+  };
   const discoveredRegions = { ...seeded.discoveredRegions, [regionKey(rx, ry)]: true as const };
   return {
     ...seeded,
+    biomeInteriors,
     player,
     home: { rx, ry },
     discoveredRegions,
   };
 }
 
-export function tickWorld(world: World): { world: World; event: WorldEvent | null } {
-  if (world.gameOver) return { world, event: null };
+export function tickWorld(world: World): {
+  world: World;
+  event: WorldEvent | null;
+  workbenchOpened: boolean;
+} {
+  if (world.gameOver) return { world, event: null, workbenchOpened: false };
 
   const rng = createRng(world.rngState);
   const playerRegion = world.player ? globalToLocal(world.player.gx, world.player.gy) : null;
@@ -197,6 +215,7 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
   let gameOver: boolean = world.gameOver;
   let gameOverReason: GameOverReason | null = world.gameOverReason;
   let discoveredRegions = world.discoveredRegions;
+  let workbenchOpened = false;
 
   if (player) {
     const stepped = tickPlayer({
@@ -214,6 +233,7 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
     const npcsBefore = npcs;
     npcs = stepped.npcs;
     playerReputation = stepped.playerReputation;
+    if (stepped.workbenchOpened) workbenchOpened = true;
     // Stamp the player's faction-attack ledger when an NPC took damage from
     // the player this tick (detected by health drop on a still-living NPC).
     for (const before of npcsBefore) {
@@ -271,6 +291,7 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
       player = {
         ...player,
         weapons: [],
+        tools: [],
         route: null,
         pendingAction: null,
         stepCooldown: 0,
@@ -320,6 +341,7 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
       player = {
         ...player,
         weapons: [],
+        tools: [],
         route: null,
         pendingAction: null,
         stepCooldown: 0,
@@ -394,7 +416,7 @@ export function tickWorld(world: World): { world: World; event: WorldEvent | nul
       next.rngState = rng.state();
     }
   }
-  return { world: next, event };
+  return { world: next, event, workbenchOpened };
 }
 
 function updatePresence(
@@ -486,13 +508,15 @@ function dropDeathLoot(
     if (v > 0) items[key] = v;
   }
   const weapons = player.weapons.length > 0 ? [...player.weapons] : undefined;
-  if (Object.keys(items).length === 0 && !weapons) return { interiors };
+  const tools = player.tools.length > 0 ? [...player.tools] : undefined;
+  if (Object.keys(items).length === 0 && !weapons && !tools) return { interiors };
   const pile = {
     id: `grave-${ticks}-${rx}-${ry}-${lx}-${ly}`,
     lx,
     ly,
     items,
     weapons,
+    tools,
     fromDeath: true,
   };
   const next = { ...interior, loot: [...interior.loot, pile] };

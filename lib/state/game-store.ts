@@ -16,15 +16,20 @@ import { bus } from "@/lib/render/bus";
 import type { WorldEvent } from "@/lib/sim/events";
 import { gainPlayerRep } from "@/lib/sim/faction";
 import {
+  findWorkbenchTile,
   globalToLocal,
   isLocalObstacle,
+  localToGlobal,
+  obstacleKindAt,
   regionCenterGlobal,
   regionKey,
   resourceAtLocal,
   INTERIOR_W,
   INTERIOR_H,
+  type ObstacleKind,
 } from "@/lib/sim/biome-interior";
 import { bfsPredicate } from "@/lib/sim/path";
+import { chebyshev } from "@/lib/sim/combat";
 import type { PendingAction, Player } from "@/lib/sim/player";
 import { createPlayer } from "@/lib/sim/player";
 import { setPendingAttack } from "@/lib/sim/player-tick";
@@ -33,7 +38,8 @@ import {
   makeWeapon,
   spendRecipe,
 } from "@/lib/sim/weapons";
-import type { WeaponKind } from "@/content/weapons";
+import { makeTool } from "@/lib/sim/tools";
+import { RECIPES_BY_ID } from "@/content/recipes";
 import { RESOURCES, type ResourceKind } from "@/content/resources";
 import { EAT_ENERGY_PER_FOOD, EAT_HEALTH_PER_FOOD } from "@/lib/sim/player";
 
@@ -44,6 +50,15 @@ export type SelectedRegion = { rx: number; ry: number };
 export type View = "world" | "biome";
 
 export type NpcContextMenu = { id: string; x: number; y: number };
+export type ObstacleContextMenuState = {
+  rx: number;
+  ry: number;
+  lx: number;
+  ly: number;
+  kind: ObstacleKind;
+  x: number;
+  y: number;
+};
 
 type GameStore = {
   world: World | null;
@@ -55,11 +70,13 @@ type GameStore = {
   view: View;
   homePending: boolean;
   inventoryOpen: boolean;
+  workbenchOpen: boolean;
   tutorialOpen: boolean;
   debugMode: boolean;
   debugMinimized: boolean;
   mapShowFactions: boolean;
   npcContextMenu: NpcContextMenu | null;
+  obstacleContextMenu: ObstacleContextMenuState | null;
 
   startNew: () => void;
   loadFromDisk: (slot: string) => Promise<void>;
@@ -75,16 +92,25 @@ type GameStore = {
   setView: (v: View) => void;
   walkPlayerTo: (gx: number, gy: number) => void;
   travelToRegion: (rx: number, ry: number) => void;
+  interactWithObstacle: (
+    rx: number,
+    ry: number,
+    lx: number,
+    ly: number,
+    action: "harvest" | "workbench",
+  ) => void;
   resetAfterDeath: () => void;
 
   acceptEncounter: () => void;
   dismissEncounter: () => void;
 
-  craft: (kind: WeaponKind) => boolean;
+  craftRecipe: (recipeId: string) => boolean;
   attackNpc: (id: string) => void;
 
   openInventory: () => void;
   closeInventory: () => void;
+  openWorkbench: () => void;
+  closeWorkbench: () => void;
   openTutorial: () => void;
   closeTutorial: () => void;
   toggleDebug: () => void;
@@ -92,6 +118,16 @@ type GameStore = {
   toggleMapFactions: () => void;
   openNpcContextMenu: (id: string, x: number, y: number) => void;
   closeNpcContextMenu: () => void;
+  openObstacleContextMenu: (
+    rx: number,
+    ry: number,
+    lx: number,
+    ly: number,
+    kind: ObstacleKind,
+    x: number,
+    y: number,
+  ) => void;
+  closeObstacleContextMenu: () => void;
   eatFood: (kind: import("@/content/resources").ResourceKind) => void;
   teleportToRegion: (rx: number, ry: number) => void;
   inspectBiome: (rx: number, ry: number) => void;
@@ -107,11 +143,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
   view: "world",
   homePending: false,
   inventoryOpen: false,
+  workbenchOpen: false,
   tutorialOpen: false,
   debugMode: false,
   debugMinimized: false,
   mapShowFactions: true,
   npcContextMenu: null,
+  obstacleContextMenu: null,
 
   startNew: () => {
     set({
@@ -123,7 +161,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
       view: "world",
       homePending: true,
       inventoryOpen: false,
+      workbenchOpen: false,
       tutorialOpen: true,
+      npcContextMenu: null,
+      obstacleContextMenu: null,
     });
   },
 
@@ -149,12 +190,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
   tick: () => {
     const current = get().world;
     if (!current) return;
-    const { world, event } = tickWorld(current);
+    const { world, event, workbenchOpened } = tickWorld(current);
     const patch: Partial<GameStore> = {
       world,
       lastEvent: event ?? get().lastEvent,
     };
     if (world.gameOver && !current.gameOver) patch.paused = true;
+    if (workbenchOpened) {
+      patch.workbenchOpen = true;
+      patch.selectedNpcId = null;
+      patch.selectedRegion = null;
+      patch.inventoryOpen = false;
+      patch.npcContextMenu = null;
+      patch.obstacleContextMenu = null;
+    }
     set(patch);
     if (world.ticks % AUTOSAVE_EVERY_TICKS === 0) {
       void saveWorld("default", world);
@@ -165,11 +214,21 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setSpeed: (s) => set({ speed: s }),
 
   selectNpc: (id) => {
-    set({ selectedNpcId: id, selectedRegion: id ? null : get().selectedRegion });
+    set({
+      selectedNpcId: id,
+      selectedRegion: id ? null : get().selectedRegion,
+      obstacleContextMenu: id ? null : get().obstacleContextMenu,
+      workbenchOpen: id ? false : get().workbenchOpen,
+    });
     if (!id) bus.emit("npc:deselected");
   },
   selectRegion: (region) => {
-    set({ selectedRegion: region, selectedNpcId: region ? null : get().selectedNpcId });
+    set({
+      selectedRegion: region,
+      selectedNpcId: region ? null : get().selectedNpcId,
+      obstacleContextMenu: region ? null : get().obstacleContextMenu,
+      workbenchOpen: region ? false : get().workbenchOpen,
+    });
     if (region) bus.emit("npc:deselected");
   },
 
@@ -184,13 +243,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
       view: "biome",
       selectedNpcId: null,
       selectedRegion: null,
+      obstacleContextMenu: null,
     });
     void saveWorld("default", next);
   },
 
   setView: (v) => {
     if (v === get().view) return;
-    set({ view: v, selectedNpcId: null, selectedRegion: null });
+    set({
+      view: v,
+      selectedNpcId: null,
+      selectedRegion: null,
+      obstacleContextMenu: null,
+      workbenchOpen: false,
+    });
     bus.emit("npc:deselected");
   },
 
@@ -199,9 +265,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!current || !current.player) return;
     if (current.gameOver) return;
 
-    // Make sure source + target regions (and a small buffer around the
-    // target) are generated before BFS reads obstacles. Without this,
-    // unvisited tiles look passable, which would break "feels like a wall".
     const startingPlayer: Player = current.player;
     let world = current;
     const src = globalToLocal(startingPlayer.gx, startingPlayer.gy);
@@ -261,19 +324,90 @@ export const useGameStore = create<GameStore>((set, get) => ({
       view: "biome",
       selectedNpcId: null,
       selectedRegion: null,
+      obstacleContextMenu: null,
+      workbenchOpen: false,
     });
     bus.emit("npc:deselected");
     const center = regionCenterGlobal(rx, ry);
     get().walkPlayerTo(center.gx, center.gy);
   },
 
+  interactWithObstacle: (rx, ry, lx, ly, action) => {
+    const current = get().world;
+    if (!current?.player || current.gameOver) return;
+    let world = ensureInteriorsForRegion(current, rx, ry);
+    const interior = world.biomeInteriors[regionKey(rx, ry)];
+    if (!interior) return;
+    const obstacle = obstacleKindAt(interior, lx, ly);
+    if (!obstacle) {
+      set({ obstacleContextMenu: null });
+      return;
+    }
+
+    const startingPlayer = world.player!;
+    const isObstacle = (tgx: number, tgy: number): boolean => {
+      const loc = globalToLocal(tgx, tgy);
+      if (loc.rx < 0 || loc.ry < 0 || loc.rx >= MAP_W || loc.ry >= MAP_H) return true;
+      if (loc.lx < 0 || loc.ly < 0 || loc.lx >= INTERIOR_W || loc.ly >= INTERIOR_H) return true;
+      const i2 = world.biomeInteriors[regionKey(loc.rx, loc.ry)];
+      if (!i2) {
+        const w2 = ensureInteriorsForRegion(world, loc.rx, loc.ry);
+        if (w2 !== world) world = w2;
+        const fresh = world.biomeInteriors[regionKey(loc.rx, loc.ry)];
+        if (!fresh) return true;
+        return isLocalObstacle(fresh, loc.lx, loc.ly);
+      }
+      return isLocalObstacle(i2, loc.lx, loc.ly);
+    };
+
+    let bestPath: Array<{ gx: number; gy: number }> | null = null;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const tlx = lx + dx;
+        const tly = ly + dy;
+        if (tlx < 0 || tly < 0 || tlx >= INTERIOR_W || tly >= INTERIOR_H) continue;
+        if (isLocalObstacle(interior, tlx, tly)) continue;
+        const tg = localToGlobal(rx, ry, tlx, tly);
+        const path = bfsPredicate(
+          isObstacle,
+          startingPlayer.gx,
+          startingPlayer.gy,
+          tg.gx,
+          tg.gy,
+          WALK_MAX_RADIUS,
+        );
+        if (!path) continue;
+        if (!bestPath || path.length < bestPath.length) bestPath = path;
+      }
+    }
+
+    if (!bestPath) {
+      set({ obstacleContextMenu: null });
+      return;
+    }
+
+    const pendingAction: PendingAction =
+      action === "harvest"
+        ? { kind: "harvest", rx, ry, lx, ly, obstacle }
+        : { kind: "workbench", rx, ry, lx, ly };
+
+    const player: Player = {
+      ...startingPlayer,
+      route: bestPath.length === 0 ? null : bestPath,
+      stepCooldown: bestPath.length === 0 ? 0 : Math.max(1, startingPlayer.stats.speed),
+      pendingAction,
+    };
+    set({
+      world: { ...world, player },
+      obstacleContextMenu: null,
+      npcContextMenu: null,
+    });
+  },
+
   resetAfterDeath: () => {
     const current = get().world;
     if (!current) return;
-    // Respawn into the same world: keep NPCs, factions, regions, faction
-    // relations, and any death loot we just dropped. Only the player and
-    // the run-specific UI flags reset. If the player never settled a home
-    // we can't respawn — fall back to a fresh world (treat it like a new game).
     if (!current.home) {
       set({
         world: createWorld(),
@@ -284,8 +418,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
         view: "world",
         homePending: true,
         inventoryOpen: false,
+        workbenchOpen: false,
         tutorialOpen: false,
         npcContextMenu: null,
+        obstacleContextMenu: null,
       });
       return;
     }
@@ -311,8 +447,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
       view: "biome",
       homePending: false,
       inventoryOpen: false,
+      workbenchOpen: false,
       tutorialOpen: false,
       npcContextMenu: null,
+      obstacleContextMenu: null,
     });
   },
 
@@ -339,18 +477,37 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   dismissEncounter: () => set({ lastEvent: null }),
 
-  craft: (kind) => {
+  craftRecipe: (recipeId) => {
     const current = get().world;
-    if (!current?.player) return false;
-    if (!affordable(current.inventory, kind)) return false;
-    const nextInventory = spendRecipe(current.inventory, kind);
+    if (!current?.player || current.gameOver) return false;
+    const recipe = RECIPES_BY_ID[recipeId];
+    if (!recipe) return false;
+    if (recipe.station === "workbench") {
+      const here = globalToLocal(current.player.gx, current.player.gy);
+      const interior = current.biomeInteriors[regionKey(here.rx, here.ry)];
+      if (!interior) return false;
+      const wb = findWorkbenchTile(interior);
+      if (!wb || chebyshev(here.lx, here.ly, wb.lx, wb.ly) > 1) return false;
+    }
+    if (!affordable(current.inventory, recipe)) return false;
+    const nextInventory = spendRecipe(current.inventory, recipe);
     if (!nextInventory) return false;
-    const weapon = makeWeapon(kind);
-    const player: Player = {
-      ...current.player,
-      weapons: [...current.player.weapons, weapon],
-    };
-    set({ world: { ...current, inventory: nextInventory, player } });
+    let player: Player = current.player;
+    if (recipe.result.kind === "weapon") {
+      const w = makeWeapon(recipe.result.id);
+      player = { ...player, weapons: [...player.weapons, w] };
+    } else {
+      const t = makeTool(recipe.result.id);
+      player = { ...player, tools: [...player.tools, t] };
+    }
+    set({
+      world: {
+        ...current,
+        inventory: nextInventory,
+        player,
+        ticks: current.ticks + recipe.time,
+      },
+    });
     return true;
   },
 
@@ -364,10 +521,23 @@ export const useGameStore = create<GameStore>((set, get) => ({
   openInventory: () =>
     set({
       inventoryOpen: true,
+      workbenchOpen: false,
       selectedNpcId: null,
       selectedRegion: null,
+      obstacleContextMenu: null,
+      npcContextMenu: null,
     }),
   closeInventory: () => set({ inventoryOpen: false }),
+  openWorkbench: () =>
+    set({
+      workbenchOpen: true,
+      inventoryOpen: false,
+      selectedNpcId: null,
+      selectedRegion: null,
+      obstacleContextMenu: null,
+      npcContextMenu: null,
+    }),
+  closeWorkbench: () => set({ workbenchOpen: false }),
   openTutorial: () => set({ tutorialOpen: true }),
   closeTutorial: () => set({ tutorialOpen: false }),
   toggleDebug: () => set({ debugMode: !get().debugMode }),
@@ -377,10 +547,23 @@ export const useGameStore = create<GameStore>((set, get) => ({
   openNpcContextMenu: (id, x, y) =>
     set({
       npcContextMenu: { id, x, y },
+      obstacleContextMenu: null,
       selectedNpcId: null,
       selectedRegion: null,
+      workbenchOpen: false,
     }),
   closeNpcContextMenu: () => set({ npcContextMenu: null }),
+
+  openObstacleContextMenu: (rx, ry, lx, ly, kind, x, y) =>
+    set({
+      obstacleContextMenu: { rx, ry, lx, ly, kind, x, y },
+      npcContextMenu: null,
+      selectedNpcId: null,
+      selectedRegion: null,
+      inventoryOpen: false,
+      workbenchOpen: false,
+    }),
+  closeObstacleContextMenu: () => set({ obstacleContextMenu: null }),
 
   eatFood: (kind: ResourceKind) => {
     const current = get().world;
@@ -418,6 +601,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       view: "biome",
       selectedNpcId: null,
       selectedRegion: null,
+      obstacleContextMenu: null,
+      workbenchOpen: false,
     });
     bus.emit("npc:deselected");
   },
