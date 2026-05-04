@@ -55,6 +55,20 @@ Inspired by Spore and D&D:
 - The world remembers your actions
 - Factions, cities, and conflicts persist beyond a single character
 
+## What's playable today
+
+The game is in early but functional shape. The current loop on the `main` branch:
+
+- **A 32 × 32 region world** of biomes (grass / forest / sand / stone / water), held by three competing factions whose territory accretes over time as their NPCs occupy it. 200 autonomous NPCs roam the map with faction-flavoured goals (wander / gather / patrol / raid / trade).
+- **Settle, forage, survive.** Tap a passable region to claim home. Tap food and material dots in the biome to gather them; walking drains energy, and zero energy starts starvation. Open the inventory pill to **Eat** food on demand for `+energy +health`.
+- **Craft and fight.** Stick / club / sling craft from foraged materials. Tap an NPC to open a small floating context menu (Examine / Attack); the player auto-chases until they're in reach, then trades blows. Sling fires at up to 4 tiles with a dotted projectile.
+- **Faction relations matter.** Per-player reputation drives encounter sentiment. Attacking an NPC tanks rep with their faction; once you're hostile, members within ~3 regions converge on you. Friendlies of an aggrieved faction drift away. Off-screen, rival-faction NPCs fight each other — kills shift faction power and inter-faction relations over time.
+- **Death is a setback, not a reset.** Inventory + carried weapons drop as a `fromDeath` loot pile at the death tile; you respawn at home with no gear, and the rest of the world (NPCs, factions, biomes, relations) keeps running. Walk back to recover what you lost.
+- **Mini Motorways aesthetic.** Warm cream background, square region grid, soft pastels, single muted-coral accent. Faction territory renders as a semi-transparent diagonal cross-hatch that visually merges across adjacent same-faction regions.
+- **Debug mode.** A bug toggle in the top pill exposes a stats overlay (NPC count, ticks, per-faction power and player rep), shows region-level NPC tokens + telegraphs on the world map, surfaces Teleport / Inspect biome on RegionPanel, and shows an EncounterFeed of recent combat deaths. Off by default.
+
+Bigger features intentionally not built yet: a workbench / tool-gated crafting graph, sword / bow / armour, status effects, group combat, dialogue trees, multiplayer, cloud sync. See [`CLAUDE.md`](./CLAUDE.md) for the contributor-facing scope list.
+
 ## Inspirations
 
 - **Skyrim** – Open world, factions, reputation, story depth
@@ -86,18 +100,24 @@ EmergentRPG is built as a mobile-first web app, designed to be developed from a 
 ├── app/                    # Next.js App Router
 │   ├── layout.tsx          # Root layout, viewport + PWA meta
 │   ├── page.tsx            # Landing (New Game / Continue)
-│   └── play/page.tsx       # Game shell (Phaser + HUD + panels)
-├── components/             # React UI (HUD, panels, Phaser wrapper)
+│   └── play/page.tsx       # Game shell (Phaser + HUD + panels + tutorial)
+├── components/             # React UI: HUD, slide-up panels, NPC context
+│                           # menu, encounter toast/feed, tutorial modal
 ├── lib/
 │   ├── sim/                # Deterministic world simulation
-│   ├── render/             # Phaser scenes + React↔Phaser event bus
+│   │                       # world / npc / goal / combat / weapons / player /
+│   │                       # player-tick / faction / events / biome /
+│   │                       # biome-interior / path / rng
+│   ├── render/             # Phaser scenes (WorldScene + BiomeScene) + bus
 │   ├── state/              # Zustand store
 │   └── save/               # Dexie schema (IndexedDB)
-├── content/                # Data-driven content (factions, traits)
+├── content/                # Data-driven content
+│                           # factions / traits / biomes / resources / weapons
 ├── public/
 │   ├── manifest.webmanifest
 │   └── icons/              # Placeholder PWA icons
 ├── .claude/                # SessionStart hook + permissions
+├── CLAUDE.md               # Contributor / agent orientation
 ├── CONTRIBUTING.md
 └── README.md
 ```
