@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import {
   Bug,
   Eye,
@@ -86,21 +87,13 @@ export default function HUD() {
   return (
     <>
       <header className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between p-3">
-        <div className="flex flex-col items-start gap-2">
-          <Link
-            href="/"
-            aria-label="Back to menu"
-            className="tactile pointer-events-auto inline-flex h-10 w-10 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
-          >
-            <House size={18} weight="duotone" className="text-[var(--color-fg)]" />
-          </Link>
-          {player && (
-            <IdentityStrip
-              name={player.name}
-              factionOfOriginId={player.factionOfOriginId}
-            />
-          )}
-        </div>
+        <Link
+          href="/"
+          aria-label="Back to menu"
+          className="tactile pointer-events-auto inline-flex h-10 w-10 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
+        >
+          <House size={18} weight="duotone" className="text-[var(--color-fg)]" />
+        </Link>
 
         <div className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] py-1 pl-3.5 pr-1.5 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]">
           <span className="select-none font-mono text-xs tabular-nums text-[var(--color-fg-muted)]">
@@ -205,6 +198,13 @@ export default function HUD() {
             Tap a region to claim your home base
           </div>
         </div>
+      )}
+
+      {player && (
+        <IdentityBadge
+          name={player.name}
+          factionOfOriginId={player.factionOfOriginId}
+        />
       )}
 
       {player && (
@@ -388,31 +388,40 @@ function DebugStrip() {
   );
 }
 
-function IdentityStrip({
+function IdentityBadge({
   name,
   factionOfOriginId,
 }: {
   name: string;
   factionOfOriginId: string;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const faction = FACTIONS.find((f) => f.id === factionOfOriginId);
   const color = faction
     ? "#" + faction.color.toString(16).padStart(6, "0")
     : "#cccccc";
+  const factionName = faction?.name ?? factionOfOriginId;
   return (
-    <div
-      className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] py-1 pl-1.5 pr-2.5 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
-      title={faction?.name ?? factionOfOriginId}
+    <button
+      onClick={() => setExpanded((v) => !v)}
+      aria-label={`You are ${name} of ${factionName}`}
+      title={`${name} · ${factionName}`}
+      className="tactile pointer-events-auto absolute left-2 top-32 z-20 inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] py-1 pl-1 pr-1 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
     >
       <span
         aria-hidden
-        className="h-4 w-4 shrink-0 rounded-sm border border-[var(--color-border-strong)]"
+        className="h-6 w-6 shrink-0 rounded-md border border-[var(--color-border-strong)]"
         style={{ background: color }}
       />
-      <span className="text-xs font-medium leading-none text-[var(--color-fg)]">
-        {name}
-      </span>
-    </div>
+      {expanded && (
+        <span className="flex flex-col items-start pr-2 leading-tight">
+          <span className="text-xs font-medium text-[var(--color-fg)]">{name}</span>
+          <span className="font-mono text-[9px] uppercase tracking-wider text-[var(--color-fg-muted)]">
+            {factionName}
+          </span>
+        </span>
+      )}
+    </button>
   );
 }
 

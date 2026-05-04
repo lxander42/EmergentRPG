@@ -587,6 +587,7 @@ export class WorldScene extends Phaser.Scene {
     });
     this.playerHere.setVisible(true);
 
+    this.playerLabel.setText(player.name);
     this.playerLabel.setPosition(cx, cy + playerSize / 2 + 2);
     this.playerLabel.setVisible(true);
   }
