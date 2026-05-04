@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import {
   Bug,
   Eye,
@@ -12,12 +13,16 @@ import {
   MapTrifold,
   Lightning,
   Heart,
+  Skull,
 } from "@phosphor-icons/react/dist/ssr";
 import { useGameStore } from "@/lib/state/game-store";
 import { RESOURCES, type ResourceKind } from "@/content/resources";
 import { globalToLocal } from "@/lib/sim/biome-interior";
 import type { GameOverReason } from "@/lib/sim/world";
+import type { Legacy } from "@/lib/sim/legacy";
+import { FACTIONS } from "@/content/factions";
 import { findFaction } from "@/lib/sim/faction";
+import ShapeBadge from "@/components/panels/ShapeBadge";
 import {
   inventoryCapFromBaskets,
   inventoryTotal,
@@ -30,6 +35,7 @@ import {
 } from "@/lib/sim/tools";
 
 const SPEEDS = [1, 2, 4] as const;
+const EMPTY_INVENTORY: Partial<Record<ResourceKind, number>> = {};
 
 export default function HUD() {
   const paused = useGameStore((s) => s.paused);
@@ -41,14 +47,23 @@ export default function HUD() {
   const setView = useGameStore((s) => s.setView);
   const homePending = useGameStore((s) => s.homePending);
   const hasHome = useGameStore((s) => Boolean(s.world?.home));
-  const player = useGameStore((s) => s.world?.player ?? null);
-  const inventory = useGameStore((s) => s.world?.inventory ?? {});
-  const gameOver = useGameStore((s) => s.world?.gameOver ?? false);
-  const gameOverReason = useGameStore((s) => s.world?.gameOverReason ?? null);
+  const player = useGameStore((s) => s.world?.life?.player ?? null);
+  const inventory = useGameStore(
+    (s) => s.world?.life?.inventory ?? EMPTY_INVENTORY,
+  );
+  const gameOver = useGameStore((s) => s.world?.life?.gameOver ?? false);
+  const gameOverReason = useGameStore((s) => s.world?.life?.gameOverReason ?? null);
+  const lastLegacy = useGameStore((s) => {
+    const legacies = s.world?.legacies;
+    if (!legacies || legacies.length === 0) return null;
+    return legacies[legacies.length - 1] ?? null;
+  });
+  const legacyCount = useGameStore((s) => s.world?.legacies.length ?? 0);
   const inCombat = useGameStore((s) => {
     const w = s.world;
-    if (!w?.player) return false;
-    const here = globalToLocal(w.player.gx, w.player.gy);
+    const p = w?.life?.player;
+    if (!w || !p) return false;
+    const here = globalToLocal(p.gx, p.gy);
     for (const n of w.npcs) {
       if (n.rx !== here.rx || n.ry !== here.ry) continue;
       if ((w.playerReputation[n.factionId] ?? 0) < 0) return true;
@@ -57,11 +72,13 @@ export default function HUD() {
   });
   const killerFactionName = useGameStore((s) => {
     const w = s.world;
-    if (!w || !w.gameOverReason || w.gameOverReason === "starved") return null;
-    return findFaction(w.factions, w.gameOverReason.factionId)?.name ?? null;
+    const reason = w?.life?.gameOverReason;
+    if (!w || !reason || reason === "starved") return null;
+    return findFaction(w.factions, reason.factionId)?.name ?? null;
   });
   const resetAfterDeath = useGameStore((s) => s.resetAfterDeath);
   const openInventory = useGameStore((s) => s.openInventory);
+  const openPastLives = useGameStore((s) => s.openPastLives);
   const debugMode = useGameStore((s) => s.debugMode);
   const toggleDebug = useGameStore((s) => s.toggleDebug);
   const mapShowFactions = useGameStore((s) => s.mapShowFactions);
@@ -146,6 +163,19 @@ export default function HUD() {
             </>
           )}
 
+          {legacyCount > 0 && (
+            <>
+              <span className="mx-1 h-4 w-px bg-[var(--color-border)]" aria-hidden />
+              <button
+                aria-label="Past lives"
+                onClick={openPastLives}
+                className="tactile inline-flex h-8 w-8 items-center justify-center rounded-full text-[var(--color-fg)] hover:bg-[var(--color-surface-warm)]"
+              >
+                <Skull size={16} weight="duotone" />
+              </button>
+            </>
+          )}
+
           <span className="mx-1 h-4 w-px bg-[var(--color-border)]" aria-hidden />
           <button
             aria-label={debugMode ? "Hide debug overlay" : "Show debug overlay"}
@@ -168,6 +198,13 @@ export default function HUD() {
             Tap a region to claim your home base
           </div>
         </div>
+      )}
+
+      {player && (
+        <IdentityBadge
+          name={player.name}
+          factionOfOriginId={player.factionOfOriginId}
+        />
       )}
 
       {player && (
@@ -194,16 +231,67 @@ export default function HUD() {
             <p className="mt-3 text-sm leading-relaxed text-[var(--color-fg-muted)] max-w-[34ch] mx-auto">
               {gameOverBody(gameOverReason, killerFactionName)}
             </p>
+            {lastLegacy && <LegacyStats legacy={lastLegacy} />}
             <button
               onClick={resetAfterDeath}
               className="tactile mt-5 inline-flex items-center justify-center rounded-2xl bg-[var(--color-accent)] px-4 py-3 text-sm font-medium text-[var(--color-bg)] shadow-[0_8px_24px_-12px_rgba(217,104,70,0.5)]"
             >
               Begin a new life
             </button>
+            {legacyCount > 0 && (
+              <button
+                onClick={openPastLives}
+                className="tactile mt-2 inline-flex items-center justify-center gap-1.5 rounded-2xl px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-warm)] hover:text-[var(--color-fg)]"
+              >
+                <Skull size={12} weight="duotone" />
+                View past lives
+              </button>
+            )}
           </div>
         </div>
       )}
     </>
+  );
+}
+
+function LegacyStats({ legacy }: { legacy: Legacy }) {
+  const faction = FACTIONS.find((f) => f.id === legacy.factionOfOriginId);
+  const factionHex = faction
+    ? "#" + faction.color.toString(16).padStart(6, "0")
+    : "#cccccc";
+  const shape = faction?.shape ?? "diamond";
+  return (
+    <div className="mt-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-warm)] px-4 py-3 text-left">
+      <div className="flex items-center gap-2">
+        <ShapeBadge shape={shape} color={factionHex} />
+        <div>
+          <p className="text-sm font-medium text-[var(--color-fg)]">{legacy.name}</p>
+          <p className="font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
+            of {faction?.name ?? legacy.factionOfOriginId}
+          </p>
+        </div>
+      </div>
+      <dl className="mt-3 grid grid-cols-3 gap-2 font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
+        <div>
+          <dt>Ticks</dt>
+          <dd className="mt-0.5 font-mono text-base tabular-nums text-[var(--color-fg)]">
+            {legacy.ticksAlive}
+          </dd>
+        </div>
+        <div>
+          <dt>Kills</dt>
+          <dd className="mt-0.5 font-mono text-base tabular-nums text-[var(--color-fg)]">
+            {legacy.kills}
+          </dd>
+        </div>
+        <div>
+          <dt>Regions</dt>
+          <dd className="mt-0.5 font-mono text-base tabular-nums text-[var(--color-fg)]">
+            {legacy.regionsDiscovered}
+          </dd>
+        </div>
+      </dl>
+    </div>
   );
 }
 
@@ -230,7 +318,7 @@ function DebugStrip() {
   const minimized = useGameStore((s) => s.debugMinimized);
   const toggleMinimized = useGameStore((s) => s.toggleDebugMinimized);
   if (!world) return null;
-  const player = world.player;
+  const player = world.life?.player ?? null;
   const here = player ? globalToLocal(player.gx, player.gy) : null;
   const inRegion = here
     ? world.npcs.filter((n) => n.rx === here.rx && n.ry === here.ry).length
@@ -297,6 +385,43 @@ function DebugStrip() {
         ))}
       </div>
     </aside>
+  );
+}
+
+function IdentityBadge({
+  name,
+  factionOfOriginId,
+}: {
+  name: string;
+  factionOfOriginId: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const faction = FACTIONS.find((f) => f.id === factionOfOriginId);
+  const color = faction
+    ? "#" + faction.color.toString(16).padStart(6, "0")
+    : "#cccccc";
+  const factionName = faction?.name ?? factionOfOriginId;
+  return (
+    <button
+      onClick={() => setExpanded((v) => !v)}
+      aria-label={`You are ${name} of ${factionName}`}
+      title={`${name} · ${factionName}`}
+      className="tactile pointer-events-auto absolute left-2 top-32 z-20 inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] py-1 pl-1 pr-1 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
+    >
+      <span
+        aria-hidden
+        className="h-6 w-6 shrink-0 rounded-md border border-[var(--color-border-strong)]"
+        style={{ background: color }}
+      />
+      {expanded && (
+        <span className="flex flex-col items-start pr-2 leading-tight">
+          <span className="text-xs font-medium text-[var(--color-fg)]">{name}</span>
+          <span className="font-mono text-[9px] uppercase tracking-wider text-[var(--color-fg-muted)]">
+            {factionName}
+          </span>
+        </span>
+      )}
+    </button>
   );
 }
 

@@ -3,9 +3,12 @@
 import { CaretRight, Newspaper, X } from "@phosphor-icons/react/dist/ssr";
 import { useState } from "react";
 import { useGameStore } from "@/lib/state/game-store";
+import type { WorldEvent } from "@/lib/sim/events";
+
+const NO_EVENTS: readonly WorldEvent[] = [];
 
 export default function EncounterFeed() {
-  const events = useGameStore((s) => s.world?.recentEvents ?? []);
+  const events = useGameStore((s) => s.world?.recentEvents ?? NO_EVENTS);
   const debugMode = useGameStore((s) => s.debugMode);
   const [open, setOpen] = useState(false);
 

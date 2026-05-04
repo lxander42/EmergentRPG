@@ -7,7 +7,7 @@ import { bus } from "@/lib/render/bus";
 
 export default function RecenterButton() {
   const view = useGameStore((s) => s.view);
-  const gameOver = useGameStore((s) => s.world?.gameOver ?? false);
+  const gameOver = useGameStore((s) => s.world?.life?.gameOver ?? false);
   const [panned, setPanned] = useState(false);
 
   useEffect(() => {

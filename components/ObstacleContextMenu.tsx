@@ -41,7 +41,7 @@ export default function ObstacleContextMenu() {
   const ctx = useGameStore((s) => s.obstacleContextMenu);
   const close = useGameStore((s) => s.closeObstacleContextMenu);
   const interact = useGameStore((s) => s.interactWithObstacle);
-  const player = useGameStore((s) => s.world?.player ?? null);
+  const player = useGameStore((s) => s.world?.life?.player ?? null);
 
   const ref = useRef<HTMLDivElement | null>(null);
   const dragOffset = useRef<{ dx: number; dy: number } | null>(null);

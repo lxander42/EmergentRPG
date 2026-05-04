@@ -33,14 +33,15 @@ export default function RegionPanel() {
   const controllerId = world.regionControl[`${region.rx},${region.ry}`];
   const controller = controllerId ? FACTIONS.find((f) => f.id === controllerId) : undefined;
 
-  const player = world.player;
+  const player = world.life?.player ?? null;
+  const gameOver = world.life?.gameOver ?? false;
   const playerRegion = player ? globalToLocal(player.gx, player.gy) : null;
   const isCurrentRegion =
     playerRegion ? playerRegion.rx === region.rx && playerRegion.ry === region.ry : false;
   const center = regionCenterGlobal(region.rx, region.ry);
   const distance = player ? Math.abs(center.gx - player.gx) + Math.abs(center.gy - player.gy) : 0;
   const reachable = player && meta.passable && distance <= WALK_MAX_RADIUS && !isCurrentRegion;
-  const showTravel = Boolean(player) && meta.passable && !isCurrentRegion && !world.gameOver;
+  const showTravel = Boolean(player) && meta.passable && !isCurrentRegion && !gameOver;
 
   return (
     <aside
@@ -131,7 +132,7 @@ export default function RegionPanel() {
           </button>
         )}
 
-        {debug && Boolean(player) && !isCurrentRegion && meta.passable && !world.gameOver && (
+        {debug && Boolean(player) && !isCurrentRegion && meta.passable && !gameOver && (
           <div className="mt-3 flex flex-wrap gap-2">
             <button
               onClick={() => teleportToRegion(region.rx, region.ry)}

@@ -24,7 +24,7 @@ export default function NpcPanel() {
     <NpcPanelInner
       npc={npc}
       npcs={world.npcs}
-      player={world.player}
+      player={world.life?.player ?? null}
       playerRep={world.playerReputation[npc.factionId] ?? 0}
       onAttack={() => attackNpc(npc.id)}
     />
@@ -135,13 +135,13 @@ function NpcPanelInner({
           )}
         </dl>
 
-        {sentiment !== "friendly" && player && (
+        {player && (
           <button
             onClick={onAttack}
             className="tactile mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[var(--color-accent)] px-4 py-3 text-sm font-medium text-[var(--color-bg)] shadow-[0_8px_24px_-12px_rgba(217,104,70,0.5)]"
           >
             <Sword size={16} weight="fill" />
-            Attack
+            {sentiment === "friendly" ? "Attack (friendly)" : "Attack"}
           </button>
         )}
       </div>

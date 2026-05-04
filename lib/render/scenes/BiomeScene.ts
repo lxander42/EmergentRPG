@@ -124,7 +124,7 @@ export class BiomeScene extends Phaser.Scene {
     this.visitorHits = [];
     bus.emit("biome:panned", { panned: false });
 
-    const player = useGameStore.getState().world?.player;
+    const player = useGameStore.getState().world?.life?.player;
     if (player) {
       this.playerGx = player.gx;
       this.playerGy = player.gy;
@@ -163,7 +163,7 @@ export class BiomeScene extends Phaser.Scene {
       this.scene.start("World");
       return;
     }
-    if (!store.paused && !store.world?.gameOver) {
+    if (!store.paused && !store.world?.life?.gameOver) {
       this.accumulator += delta * store.speed;
       while (this.accumulator >= this.tickStepMs) {
         this.accumulator -= this.tickStepMs;
@@ -175,8 +175,8 @@ export class BiomeScene extends Phaser.Scene {
 
   private renderFrame() {
     const world = useGameStore.getState().world;
-    if (!world || !world.player) return;
-    const player = world.player;
+    if (!world || !world.life) return;
+    const player = world.life.player;
     const now = this.time.now;
 
     if (player.gx !== this.playerGx || player.gy !== this.playerGy) {
@@ -211,9 +211,9 @@ export class BiomeScene extends Phaser.Scene {
     this.drawRoute(player);
     this.drawPlayer();
     this.drawVisitors(world.npcs, world);
-    this.detectHits(world.npcs, world.player.health);
-    this.spawnPickupTexts(world.recentPickups);
-    this.drawProjectiles(world.recentProjectiles, world.ticks);
+    this.detectHits(world.npcs, player.health);
+    this.spawnPickupTexts(world.life.recentPickups);
+    this.drawProjectiles(world.life.recentProjectiles, world.ticks);
     this.drawSelection();
   }
 
@@ -641,10 +641,13 @@ export class BiomeScene extends Phaser.Scene {
       6,
     );
     this.playerLayer.clear();
+    const player = useGameStore.getState().world?.life?.player;
+    const factionColor =
+      FACTIONS.find((f) => f.id === player?.factionOfOriginId)?.color ?? COLORS.player;
     drawFactionShape(
       this.playerLayer,
       "square",
-      COLORS.player,
+      factionColor,
       this.playerCx,
       this.playerCy,
       PLAYER_SIZE,
@@ -653,7 +656,7 @@ export class BiomeScene extends Phaser.Scene {
   }
 
   private drawVisitors(npcs: Npc[], world: { ticks: number }) {
-    const player = useGameStore.getState().world?.player;
+    const player = useGameStore.getState().world?.life?.player;
     if (!player) return;
     const here = globalToLocal(player.gx, player.gy);
     const visitors = npcs.filter((n) => n.rx === here.rx && n.ry === here.ry);
@@ -747,7 +750,7 @@ export class BiomeScene extends Phaser.Scene {
   }
 
   private gameOver(): boolean {
-    return useGameStore.getState().world?.gameOver ?? false;
+    return useGameStore.getState().world?.life?.gameOver ?? false;
   }
 
   private setCameraPanned(panned: boolean) {

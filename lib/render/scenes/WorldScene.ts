@@ -139,7 +139,7 @@ export class WorldScene extends Phaser.Scene {
       this.scene.start("Biome");
       return;
     }
-    if (!store.paused && !store.world?.gameOver) {
+    if (!store.paused && !store.world?.life?.gameOver) {
       this.accumulator += delta * store.speed;
       while (this.accumulator >= this.tickStepMs) {
         this.accumulator -= this.tickStepMs;
@@ -486,7 +486,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private renderPlayerHere() {
-    const player = useGameStore.getState().world?.player;
+    const player = useGameStore.getState().world?.life?.player;
     this.playerHere.clear();
     if (!player) {
       this.playerHere.setVisible(false);
@@ -579,12 +579,15 @@ export class WorldScene extends Phaser.Scene {
       playerSize,
       5,
     );
-    drawFactionShape(this.playerHere, "square", COLORS.player, cx, cy, playerSize, {
+    const factionColor =
+      FACTIONS.find((f) => f.id === player.factionOfOriginId)?.color ?? COLORS.player;
+    drawFactionShape(this.playerHere, "square", factionColor, cx, cy, playerSize, {
       stroke: 2,
       strokeColor: COLORS.outline,
     });
     this.playerHere.setVisible(true);
 
+    this.playerLabel.setText(player.name);
     this.playerLabel.setPosition(cx, cy + playerSize / 2 + 2);
     this.playerLabel.setVisible(true);
   }
@@ -621,7 +624,7 @@ export class WorldScene extends Phaser.Scene {
   };
 
   private gameOver(): boolean {
-    return useGameStore.getState().world?.gameOver ?? false;
+    return useGameStore.getState().world?.life?.gameOver ?? false;
   }
 
   private onPointerDown(pointer: Phaser.Input.Pointer) {

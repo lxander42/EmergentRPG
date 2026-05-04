@@ -10,6 +10,7 @@ import ObstacleContextMenu from "@/components/ObstacleContextMenu";
 import RegionPanel from "@/components/panels/RegionPanel";
 import InventoryPanel from "@/components/panels/InventoryPanel";
 import WorkbenchPanel from "@/components/panels/WorkbenchPanel";
+import PastLivesPanel from "@/components/PastLivesPanel";
 import TutorialModal from "@/components/TutorialModal";
 import RecenterButton from "@/components/RecenterButton";
 import EncounterToast from "@/components/EncounterToast";
@@ -57,6 +58,7 @@ function PlayInner() {
       <RegionPanel />
       <InventoryPanel />
       <WorkbenchPanel />
+      <PastLivesPanel />
       <EncounterToast />
       <EncounterFeed />
       <TutorialModal />
