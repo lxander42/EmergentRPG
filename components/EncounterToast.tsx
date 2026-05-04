@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { Check, Sword, X } from "@phosphor-icons/react/dist/ssr";
+import { Check, X } from "@phosphor-icons/react/dist/ssr";
 import { useGameStore } from "@/lib/state/game-store";
 import { FACTIONS } from "@/content/factions";
 import { RESOURCES } from "@/content/resources";
@@ -13,8 +13,6 @@ export default function EncounterToast() {
   const event = useGameStore((s) => s.lastEvent);
   const accept = useGameStore((s) => s.acceptEncounter);
   const dismiss = useGameStore((s) => s.dismissEncounter);
-  const view = useGameStore((s) => s.view);
-  const setView = useGameStore((s) => s.setView);
 
   const encounter = event?.encounter ?? null;
 
@@ -79,26 +77,12 @@ export default function EncounterToast() {
               </button>
             </>
           ) : (
-            <>
-              <button
-                onClick={dismiss}
-                className="tactile inline-flex h-10 items-center gap-1.5 rounded-full border border-[var(--color-border)] px-3 text-sm text-[var(--color-fg)] hover:bg-[var(--color-surface-warm)]"
-              >
-                Stand down
-              </button>
-              {view === "world" && (
-                <button
-                  onClick={() => {
-                    setView("biome");
-                    dismiss();
-                  }}
-                  className="tactile inline-flex h-10 items-center gap-1.5 rounded-full bg-[var(--color-accent)] px-3.5 text-sm font-medium text-[var(--color-bg)] shadow-[0_8px_24px_-12px_rgba(217,104,70,0.5)]"
-                >
-                  <Sword size={14} weight="fill" />
-                  Stand and fight
-                </button>
-              )}
-            </>
+            <button
+              onClick={dismiss}
+              className="tactile inline-flex h-10 items-center gap-1.5 rounded-full border border-[var(--color-border)] px-3 text-sm text-[var(--color-fg)] hover:bg-[var(--color-surface-warm)]"
+            >
+              Stand down
+            </button>
           )}
         </div>
       </aside>
