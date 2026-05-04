@@ -19,8 +19,9 @@ export default function InventoryPanel() {
 
   if (!open || !world) return null;
 
-  const inventory = world.inventory;
-  const player = world.player;
+  const inventory = world.life?.inventory ?? {};
+  const player = world.life?.player ?? null;
+  const gameOver = world.life?.gameOver ?? false;
   const entries = (Object.entries(inventory) as Array<[ResourceKind, number]>).filter(
     ([, n]) => n > 0,
   );
@@ -98,7 +99,7 @@ export default function InventoryPanel() {
                     {meta.food && (
                       <button
                         onClick={() => eatFood(kind)}
-                        disabled={!player || world.gameOver}
+                        disabled={!player || gameOver}
                         className="tactile inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg)] disabled:opacity-50"
                       >
                         <ForkKnife size={12} weight="fill" className="text-[var(--color-accent)]" />
@@ -182,7 +183,7 @@ export default function InventoryPanel() {
             {handRecipes.map((recipe) => {
               const can =
                 Boolean(player) &&
-                !world.gameOver &&
+                !gameOver &&
                 affordable(inventory, recipe);
               const stats = describeHandResult(recipe);
               return (

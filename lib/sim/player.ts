@@ -25,6 +25,8 @@ export type PendingAction =
     };
 
 export type Player = {
+  name: string;
+  factionOfOriginId: string;
   gx: number;
   gy: number;
   energy: number;
@@ -55,8 +57,13 @@ export const STARVE_TICKS_PER_DAMAGE = 80;
 export const EAT_ENERGY_PER_FOOD = 3;
 export const EAT_HEALTH_PER_FOOD = 1;
 
-export function createPlayer(spawn: { gx: number; gy: number }): Player {
+export function createPlayer(
+  spawn: { gx: number; gy: number },
+  identity: { name: string; factionOfOriginId: string },
+): Player {
   return {
+    name: identity.name,
+    factionOfOriginId: identity.factionOfOriginId,
     gx: spawn.gx,
     gy: spawn.gy,
     energy: ENERGY_MAX,

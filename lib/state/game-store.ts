@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import {
+  beginNewLife,
   claimHome as claimHomeWorld,
   createWorld,
   ensureInteriorsForRegion,
@@ -9,6 +10,7 @@ import {
   WORLD_VERSION,
   MAP_W,
   MAP_H,
+  type LifeState,
   type World,
 } from "@/lib/sim/world";
 import { loadWorld, saveWorld } from "@/lib/save/db";
@@ -33,7 +35,6 @@ import {
 import { bfsPredicate } from "@/lib/sim/path";
 import { chebyshev } from "@/lib/sim/combat";
 import type { PendingAction, Player } from "@/lib/sim/player";
-import { createPlayer } from "@/lib/sim/player";
 import { setPendingAttack } from "@/lib/sim/player-tick";
 import {
   affordable,
@@ -73,6 +74,7 @@ type GameStore = {
   homePending: boolean;
   inventoryOpen: boolean;
   workbenchOpen: boolean;
+  pastLivesOpen: boolean;
   tutorialOpen: boolean;
   debugMode: boolean;
   debugMinimized: boolean;
@@ -113,6 +115,8 @@ type GameStore = {
   closeInventory: () => void;
   openWorkbench: () => void;
   closeWorkbench: () => void;
+  openPastLives: () => void;
+  closePastLives: () => void;
   openTutorial: () => void;
   closeTutorial: () => void;
   toggleDebug: () => void;
@@ -135,6 +139,15 @@ type GameStore = {
   inspectBiome: (rx: number, ry: number) => void;
 };
 
+function withLife(world: World, life: LifeState): World {
+  return { ...world, life };
+}
+
+function withPlayer(world: World, player: Player): World | null {
+  if (!world.life) return null;
+  return withLife(world, { ...world.life, player });
+}
+
 export const useGameStore = create<GameStore>((set, get) => ({
   world: null,
   paused: false,
@@ -146,6 +159,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   homePending: false,
   inventoryOpen: false,
   workbenchOpen: false,
+  pastLivesOpen: false,
   tutorialOpen: false,
   debugMode: false,
   debugMinimized: false,
@@ -164,6 +178,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       homePending: true,
       inventoryOpen: false,
       workbenchOpen: false,
+      pastLivesOpen: false,
       tutorialOpen: true,
       npcContextMenu: null,
       obstacleContextMenu: null,
@@ -197,12 +212,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
       world,
       lastEvent: event ?? get().lastEvent,
     };
-    if (world.gameOver && !current.gameOver) patch.paused = true;
+    const wasOver = current.life?.gameOver ?? false;
+    const isOver = world.life?.gameOver ?? false;
+    if (isOver && !wasOver) patch.paused = true;
     if (workbenchOpened) {
       patch.workbenchOpen = true;
       patch.selectedNpcId = null;
       patch.selectedRegion = null;
       patch.inventoryOpen = false;
+      patch.pastLivesOpen = false;
       patch.npcContextMenu = null;
       patch.obstacleContextMenu = null;
     }
@@ -221,6 +239,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       selectedRegion: id ? null : get().selectedRegion,
       obstacleContextMenu: id ? null : get().obstacleContextMenu,
       workbenchOpen: id ? false : get().workbenchOpen,
+      pastLivesOpen: id ? false : get().pastLivesOpen,
     });
     if (!id) bus.emit("npc:deselected");
   },
@@ -230,6 +249,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       selectedNpcId: region ? null : get().selectedNpcId,
       obstacleContextMenu: region ? null : get().obstacleContextMenu,
       workbenchOpen: region ? false : get().workbenchOpen,
+      pastLivesOpen: region ? false : get().pastLivesOpen,
     });
     if (region) bus.emit("npc:deselected");
   },
@@ -264,10 +284,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   walkPlayerTo: (gx, gy) => {
     const current = get().world;
-    if (!current || !current.player) return;
-    if (current.gameOver) return;
+    if (!current?.life || current.life.gameOver) return;
 
-    const startingPlayer: Player = current.player;
+    const startingPlayer: Player = current.life.player;
     let world = current;
     const src = globalToLocal(startingPlayer.gx, startingPlayer.gy);
     const dst = globalToLocal(gx, gy);
@@ -316,12 +335,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
         }
       : { ...startingPlayer, pendingAction: null };
 
-    set({ world: { ...world, player } });
+    const next = withPlayer(world, player);
+    if (next) set({ world: next });
   },
 
   travelToRegion: (rx, ry) => {
     const w = get().world;
-    if (!w?.player || w.gameOver) return;
+    if (!w?.life || w.life.gameOver) return;
     set({
       view: "biome",
       selectedNpcId: null,
@@ -336,7 +356,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   interactWithObstacle: (rx, ry, lx, ly, action) => {
     const current = get().world;
-    if (!current?.player || current.gameOver) return;
+    if (!current?.life || current.life.gameOver) return;
     let world = ensureInteriorsForRegion(current, rx, ry);
     const interior = world.biomeInteriors[regionKey(rx, ry)];
     if (!interior) return;
@@ -346,7 +366,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       return;
     }
 
-    const startingPlayer = world.player!;
+    const startingPlayer = world.life!.player;
     const isObstacle = (tgx: number, tgy: number): boolean => {
       const loc = globalToLocal(tgx, tgy);
       if (loc.rx < 0 || loc.ry < 0 || loc.rx >= MAP_W || loc.ry >= MAP_H) return true;
@@ -404,8 +424,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
       stepCooldown: bestPath.length === 0 ? 0 : Math.max(1, startingPlayer.stats.speed),
       pendingAction,
     };
+    const next = withPlayer(world, player);
+    if (!next) return;
     set({
-      world: { ...world, player },
+      world: next,
       obstacleContextMenu: null,
       npcContextMenu: null,
     });
@@ -425,27 +447,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
         homePending: true,
         inventoryOpen: false,
         workbenchOpen: false,
+        pastLivesOpen: false,
         tutorialOpen: false,
         npcContextMenu: null,
         obstacleContextMenu: null,
       });
       return;
     }
-    const center = regionCenterGlobal(current.home.rx, current.home.ry);
-    const seeded = ensureInteriorsForRegion(current, current.home.rx, current.home.ry);
-    const interior = seeded.biomeInteriors[regionKey(current.home.rx, current.home.ry)];
-    const spawn = interior
-      ? nearestPassable(interior, center.gx, center.gy, current.home.rx, current.home.ry)
-      : center;
-    const fresh = createPlayer(spawn);
+    const next = beginNewLife(current);
     set({
-      world: {
-        ...seeded,
-        player: fresh,
-        gameOver: false,
-        gameOverReason: null,
-        recentPickups: [],
-      },
+      world: next,
       selectedNpcId: null,
       selectedRegion: null,
       lastEvent: null,
@@ -454,6 +465,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       homePending: false,
       inventoryOpen: false,
       workbenchOpen: false,
+      pastLivesOpen: false,
       tutorialOpen: false,
       npcContextMenu: null,
       obstacleContextMenu: null,
@@ -463,7 +475,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   acceptEncounter: () => {
     const current = get().world;
     const event = get().lastEvent;
-    if (!current || !event?.encounter) {
+    if (!current?.life || !event?.encounter) {
       set({ lastEvent: null });
       return;
     }
@@ -472,23 +484,31 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set({ lastEvent: null });
       return;
     }
-    let inventory = current.inventory;
+    let inventory = current.life.inventory;
     if (enc.offer) {
       const prev = inventory[enc.offer.kind] ?? 0;
       inventory = { ...inventory, [enc.offer.kind]: prev + enc.offer.amount };
     }
     const playerReputation = gainPlayerRep(current.playerReputation, enc.factionId, 2);
-    set({ world: { ...current, inventory, playerReputation }, lastEvent: null });
+    set({
+      world: {
+        ...current,
+        playerReputation,
+        life: { ...current.life, inventory },
+      },
+      lastEvent: null,
+    });
   },
 
   dismissEncounter: () => set({ lastEvent: null }),
 
   craftRecipe: (recipeId) => {
     const current = get().world;
-    if (!current?.player || current.gameOver) return false;
+    if (!current?.life || current.life.gameOver) return false;
     const recipe = RECIPES_BY_ID[recipeId];
     if (!recipe) return false;
-    const here = globalToLocal(current.player.gx, current.player.gy);
+    const life = current.life;
+    const here = globalToLocal(life.player.gx, life.player.gy);
     const interior = current.biomeInteriors[regionKey(here.rx, here.ry)];
     if (recipe.station === "workbench") {
       if (!interior) return false;
@@ -507,10 +527,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
         [regionKey(here.rx, here.ry)]: nextInterior,
       };
     }
-    if (!affordable(current.inventory, recipe)) return false;
-    const nextInventory = spendRecipe(current.inventory, recipe);
+    if (!affordable(life.inventory, recipe)) return false;
+    const nextInventory = spendRecipe(life.inventory, recipe);
     if (!nextInventory) return false;
-    let player: Player = current.player;
+    let player: Player = life.player;
     if (recipe.result.kind === "weapon") {
       const w = makeWeapon(recipe.result.id);
       player = { ...player, weapons: [...player.weapons, w] };
@@ -521,10 +541,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({
       world: {
         ...current,
-        inventory: nextInventory,
-        player,
         biomeInteriors: placedInteriors ?? current.biomeInteriors,
         ticks: current.ticks + recipe.time,
+        life: { ...life, player, inventory: nextInventory },
       },
     });
     return true;
@@ -532,15 +551,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   attackNpc: (id) => {
     const current = get().world;
-    if (!current?.player || current.gameOver) return;
-    const player = setPendingAttack(current.player, id);
-    set({ world: { ...current, player } });
+    if (!current?.life || current.life.gameOver) return;
+    const player = setPendingAttack(current.life.player, id);
+    set({ world: { ...current, life: { ...current.life, player } } });
   },
 
   openInventory: () =>
     set({
       inventoryOpen: true,
       workbenchOpen: false,
+      pastLivesOpen: false,
       selectedNpcId: null,
       selectedRegion: null,
       obstacleContextMenu: null,
@@ -551,12 +571,24 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({
       workbenchOpen: true,
       inventoryOpen: false,
+      pastLivesOpen: false,
       selectedNpcId: null,
       selectedRegion: null,
       obstacleContextMenu: null,
       npcContextMenu: null,
     }),
   closeWorkbench: () => set({ workbenchOpen: false }),
+  openPastLives: () =>
+    set({
+      pastLivesOpen: true,
+      inventoryOpen: false,
+      workbenchOpen: false,
+      selectedNpcId: null,
+      selectedRegion: null,
+      obstacleContextMenu: null,
+      npcContextMenu: null,
+    }),
+  closePastLives: () => set({ pastLivesOpen: false }),
   openTutorial: () => set({ tutorialOpen: true }),
   closeTutorial: () => set({ tutorialOpen: false }),
   toggleDebug: () => set({ debugMode: !get().debugMode }),
@@ -586,29 +618,31 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   eatFood: (kind: ResourceKind) => {
     const current = get().world;
-    if (!current?.player || current.gameOver) return;
+    if (!current?.life || current.life.gameOver) return;
     if (!RESOURCES[kind].food) return;
-    const have = current.inventory[kind] ?? 0;
+    const life = current.life;
+    const have = life.inventory[kind] ?? 0;
     if (have <= 0) return;
-    const inventory = { ...current.inventory, [kind]: have - 1 };
+    const inventory = { ...life.inventory, [kind]: have - 1 };
     const player: Player = {
-      ...current.player,
-      energy: Math.min(current.player.energyMax, current.player.energy + EAT_ENERGY_PER_FOOD),
-      health: Math.min(current.player.healthMax, current.player.health + EAT_HEALTH_PER_FOOD),
+      ...life.player,
+      energy: Math.min(life.player.energyMax, life.player.energy + EAT_ENERGY_PER_FOOD),
+      health: Math.min(life.player.healthMax, life.player.health + EAT_HEALTH_PER_FOOD),
     };
-    set({ world: { ...current, inventory, player } });
+    set({ world: { ...current, life: { ...life, player, inventory } } });
   },
 
   teleportToRegion: (rx, ry) => {
     const current = get().world;
-    if (!current?.player || current.gameOver) return;
+    if (!current?.life || current.life.gameOver) return;
     const center = regionCenterGlobal(rx, ry);
     const seeded = ensureInteriorsForRegion(current, rx, ry);
     const interior = seeded.biomeInteriors[regionKey(rx, ry)];
     if (!interior) return;
     const target = nearestPassable(interior, center.gx, center.gy, rx, ry);
+    const life = seeded.life!;
     const player: Player = {
-      ...seeded.player!,
+      ...life.player,
       gx: target.gx,
       gy: target.gy,
       route: null,
@@ -616,7 +650,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       pendingAction: null,
     };
     set({
-      world: { ...seeded, player },
+      world: { ...seeded, life: { ...life, player } },
       view: "biome",
       selectedNpcId: null,
       selectedRegion: null,

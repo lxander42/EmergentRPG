@@ -20,11 +20,12 @@ export default function WorkbenchPanel() {
   const world = useGameStore((s) => s.world);
   const craftRecipe = useGameStore((s) => s.craftRecipe);
 
-  if (!open || !world?.player) return null;
+  if (!open || !world?.life) return null;
 
   const recipes = RECIPES.filter((r) => r.station === "workbench");
-  const inventory = world.inventory;
-  const player = world.player;
+  const inventory = world.life.inventory;
+  const player = world.life.player;
+  const gameOver = world.life.gameOver;
   const here = globalToLocal(player.gx, player.gy);
   const interior = world.biomeInteriors[regionKey(here.rx, here.ry)];
   const wb = interior ? findWorkbenchTile(interior) : null;
@@ -71,7 +72,7 @@ export default function WorkbenchPanel() {
               recipe={recipe}
               inventory={inventory}
               adjacent={adjacent}
-              gameOver={world.gameOver}
+              gameOver={gameOver}
               onCraft={() => craftRecipe(recipe.id)}
             />
           ))}

@@ -24,7 +24,7 @@ export default function NpcPanel() {
     <NpcPanelInner
       npc={npc}
       npcs={world.npcs}
-      player={world.player}
+      player={world.life?.player ?? null}
       playerRep={world.playerReputation[npc.factionId] ?? 0}
       onAttack={() => attackNpc(npc.id)}
     />
