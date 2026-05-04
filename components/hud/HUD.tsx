@@ -86,13 +86,21 @@ export default function HUD() {
   return (
     <>
       <header className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between p-3">
-        <Link
-          href="/"
-          aria-label="Back to menu"
-          className="tactile pointer-events-auto inline-flex h-10 w-10 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
-        >
-          <House size={18} weight="duotone" className="text-[var(--color-fg)]" />
-        </Link>
+        <div className="flex flex-col items-start gap-2">
+          <Link
+            href="/"
+            aria-label="Back to menu"
+            className="tactile pointer-events-auto inline-flex h-10 w-10 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
+          >
+            <House size={18} weight="duotone" className="text-[var(--color-fg)]" />
+          </Link>
+          {player && (
+            <IdentityStrip
+              name={player.name}
+              factionOfOriginId={player.factionOfOriginId}
+            />
+          )}
+        </div>
 
         <div className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] py-1 pl-3.5 pr-1.5 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]">
           <span className="select-none font-mono text-xs tabular-nums text-[var(--color-fg-muted)]">
@@ -201,10 +209,6 @@ export default function HUD() {
 
       {player && (
         <div className="pointer-events-none absolute inset-x-2 top-16 z-10 flex flex-wrap items-center justify-end gap-2">
-          <IdentityStrip
-            name={player.name}
-            factionOfOriginId={player.factionOfOriginId}
-          />
           <HealthStrip health={player.health} max={player.healthMax} inCombat={inCombat} />
           <EnergyStrip energy={player.energy} max={player.energyMax} />
           <InventoryStrip
@@ -396,17 +400,17 @@ function IdentityStrip({
     ? "#" + faction.color.toString(16).padStart(6, "0")
     : "#cccccc";
   return (
-    <div className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] py-1 pl-1.5 pr-3 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]">
+    <div
+      className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] py-1 pl-1.5 pr-2.5 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
+      title={faction?.name ?? factionOfOriginId}
+    >
       <span
         aria-hidden
-        className="grid h-7 w-7 place-items-center rounded-md border border-[var(--color-border-strong)]"
+        className="h-4 w-4 shrink-0 rounded-sm border border-[var(--color-border-strong)]"
         style={{ background: color }}
       />
-      <span className="flex flex-col leading-tight">
-        <span className="text-xs font-medium text-[var(--color-fg)]">{name}</span>
-        <span className="font-mono text-[9px] uppercase tracking-wider text-[var(--color-fg-muted)]">
-          {faction?.name ?? factionOfOriginId}
-        </span>
+      <span className="text-xs font-medium leading-none text-[var(--color-fg)]">
+        {name}
       </span>
     </div>
   );
