@@ -7,6 +7,7 @@ import { BIOMES } from "@/content/biomes";
 import { FACTIONS } from "@/content/factions";
 import { BIOME_RESOURCES, RESOURCES, type ResourceKind } from "@/content/resources";
 import { globalToLocal, regionCenterGlobal, regionKey } from "@/lib/sim/biome-interior";
+import { useOutsideClose } from "@/lib/ui/use-outside-close";
 
 export default function RegionPanel() {
   const region = useGameStore((s) => s.selectedRegion);
@@ -17,6 +18,8 @@ export default function RegionPanel() {
   const teleportToRegion = useGameStore((s) => s.teleportToRegion);
   const debug = useGameStore((s) => s.debugMode);
   const inspectBiome = useGameStore((s) => s.inspectBiome);
+
+  const ref = useOutsideClose(Boolean(region), () => select(null));
 
   if (!region || !world) return null;
 
@@ -42,6 +45,7 @@ export default function RegionPanel() {
 
   return (
     <aside
+      ref={ref}
       role="dialog"
       aria-label={`${meta.title} region details`}
       className="pointer-events-auto absolute inset-x-2 bottom-2 z-20 max-h-[60dvh] overflow-y-auto rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[0_20px_48px_-20px_rgba(44,40,32,0.25)]"

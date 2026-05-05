@@ -11,7 +11,6 @@ import {
   Play,
   FastForward,
   MapTrifold,
-  Lightning,
   Heart,
   Skull,
   TreasureChest,
@@ -197,7 +196,6 @@ export default function HUD() {
       {player && (
         <div className="pointer-events-none absolute inset-x-2 top-16 z-10 flex flex-wrap items-center justify-end gap-2">
           <HealthStrip health={player.health} max={player.healthMax} inCombat={inCombat} />
-          <EnergyStrip energy={player.energy} max={player.energyMax} />
           <InventoryStrip
             inventory={inventory}
             tools={player.tools}
@@ -453,33 +451,6 @@ function HealthStrip({
       </div>
       <span className="ml-1 font-mono text-[10px] tabular-nums text-[var(--color-fg-muted)]">
         {health}/{max}
-      </span>
-    </div>
-  );
-}
-
-function EnergyStrip({ energy, max }: { energy: number; max: number }) {
-  return (
-    <div className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]">
-      <Lightning size={14} weight="fill" className="text-[var(--color-accent)]" />
-      <div className="flex items-center gap-[3px]">
-        {Array.from({ length: max }).map((_, i) => (
-          <span
-            key={i}
-            aria-hidden
-            className="h-2.5 w-2 rounded-[2px]"
-            style={{
-              background: i < energy ? "var(--color-accent)" : "var(--color-surface-warm)",
-              border:
-                i < energy
-                  ? "1px solid var(--color-accent)"
-                  : "1px solid var(--color-border)",
-            }}
-          />
-        ))}
-      </div>
-      <span className="ml-1 font-mono text-[10px] tabular-nums text-[var(--color-fg-muted)]">
-        {energy}/{max}
       </span>
     </div>
   );

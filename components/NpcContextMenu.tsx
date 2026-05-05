@@ -71,9 +71,10 @@ export default function NpcContextMenu() {
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (!ref.current) return;
+    if ((e.target as Element).closest("button")) return;
     const rect = ref.current.getBoundingClientRect();
     dragOffset.current = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
-    (e.target as Element).setPointerCapture?.(e.pointerId);
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
   };
   const onPointerMove = (e: React.PointerEvent) => {
     if (!dragOffset.current) return;
@@ -93,7 +94,7 @@ export default function NpcContextMenu() {
   };
   const onPointerUp = (e: React.PointerEvent) => {
     dragOffset.current = null;
-    (e.target as Element).releasePointerCapture?.(e.pointerId);
+    (e.currentTarget as Element).releasePointerCapture?.(e.pointerId);
   };
 
   return (
@@ -101,16 +102,14 @@ export default function NpcContextMenu() {
       ref={ref}
       role="menu"
       aria-label={`${npc.name} actions`}
-      className="pointer-events-auto absolute z-30 flex flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-1.5 shadow-[0_16px_40px_-16px_rgba(44,40,32,0.45)]"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+      className="pointer-events-auto absolute z-30 flex touch-none select-none flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-1.5 shadow-[0_16px_40px_-16px_rgba(44,40,32,0.45)]"
       style={{ left: pos.left, top: pos.top, width: MENU_WIDTH }}
     >
-      <div
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-        className="flex cursor-grab items-center gap-2 px-2 py-1.5 active:cursor-grabbing touch-none select-none"
-      >
+      <div className="flex items-center gap-2 px-2 py-1.5">
         <span
           aria-hidden
           className="h-2 w-2 shrink-0 rounded-sm border border-[var(--color-border-strong)]"
@@ -121,7 +120,7 @@ export default function NpcContextMenu() {
             {npc.name}
           </div>
           <div className="font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
-            {stance} · drag to move
+            {stance}
           </div>
         </div>
       </div>

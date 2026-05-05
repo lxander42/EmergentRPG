@@ -12,6 +12,7 @@ import ShapeBadge from "@/components/panels/ShapeBadge";
 import { globalToLocal } from "@/lib/sim/biome-interior";
 import { pickWeaponForRange, weaponAttackBonus, weaponReach } from "@/lib/sim/weapons";
 import { WEAPONS } from "@/content/weapons";
+import { useOutsideClose } from "@/lib/ui/use-outside-close";
 
 export default function NpcPanel() {
   const selectedId = useGameStore((s) => s.selectedNpcId);
@@ -51,9 +52,11 @@ function NpcPanelInner({
   const sentiment: "hostile" | "wary" | "friendly" =
     playerRep < 0 ? "hostile" : playerRep > 0 ? "friendly" : "wary";
   const matchup = computeMatchup(player, npc);
+  const ref = useOutsideClose(true, () => select(null));
 
   return (
     <aside
+      ref={ref}
       role="dialog"
       aria-label={`${npc.name} details`}
       className="pointer-events-auto absolute inset-x-2 bottom-2 z-20 max-h-[60dvh] overflow-y-auto rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[0_20px_48px_-20px_rgba(44,40,32,0.25)]"

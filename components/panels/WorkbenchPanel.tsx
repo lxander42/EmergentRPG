@@ -13,12 +13,14 @@ import {
   regionKey,
 } from "@/lib/sim/biome-interior";
 import { chebyshev } from "@/lib/sim/combat";
+import { useOutsideClose } from "@/lib/ui/use-outside-close";
 
 export default function WorkbenchPanel() {
   const open = useGameStore((s) => s.workbenchOpen);
   const close = useGameStore((s) => s.closeWorkbench);
   const world = useGameStore((s) => s.world);
   const craftRecipe = useGameStore((s) => s.craftRecipe);
+  const ref = useOutsideClose(open, close);
 
   if (!open || !world?.life) return null;
 
@@ -33,6 +35,7 @@ export default function WorkbenchPanel() {
 
   return (
     <aside
+      ref={ref}
       role="dialog"
       aria-label="Workbench"
       className="pointer-events-auto absolute inset-x-2 bottom-2 z-20 max-h-[68dvh] overflow-y-auto rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[0_20px_48px_-20px_rgba(44,40,32,0.25)]"
