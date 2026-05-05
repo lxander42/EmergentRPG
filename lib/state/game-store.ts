@@ -341,8 +341,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
       workbenchOpen: false,
     });
     bus.emit("npc:deselected");
+    const seeded = ensureInteriorsForRegion(w, rx, ry);
+    if (seeded !== w) set({ world: seeded });
+    const interior = seeded.biomeInteriors[regionKey(rx, ry)];
     const center = regionCenterGlobal(rx, ry);
-    get().walkPlayerTo(center.gx, center.gy);
+    const target = interior
+      ? nearestPassable(interior, center.gx, center.gy, rx, ry)
+      : center;
+    get().walkPlayerTo(target.gx, target.gy);
   },
 
   interactWithObstacle: (rx, ry, lx, ly, action) => {
