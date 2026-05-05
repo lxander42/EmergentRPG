@@ -81,6 +81,7 @@ type GameStore = {
   mapShowFactions: boolean;
   npcContextMenu: NpcContextMenu | null;
   obstacleContextMenu: ObstacleContextMenuState | null;
+  pendingMarker: { rx: number; ry: number } | null;
 
   startNew: () => void;
   loadFromDisk: (slot: string) => Promise<void>;
@@ -138,6 +139,10 @@ type GameStore = {
   teleportToRegion: (rx: number, ry: number) => void;
   inspectBiome: (rx: number, ry: number) => void;
   examineKind: (kind: string) => void;
+  requestMarker: (rx: number, ry: number) => void;
+  cancelMarker: () => void;
+  addMapMarker: (rx: number, ry: number, name: string) => void;
+  removeMapMarker: (id: string) => void;
 };
 
 function withLife(world: World, life: LifeState): World {
@@ -166,6 +171,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   mapShowFactions: true,
   npcContextMenu: null,
   obstacleContextMenu: null,
+  pendingMarker: null,
 
   startNew: () => {
     const fresh = createWorld();
@@ -658,6 +664,33 @@ export const useGameStore = create<GameStore>((set, get) => ({
       world: {
         ...current,
         examinedKinds: { ...current.examinedKinds, [kind]: true as const },
+      },
+    });
+  },
+
+  requestMarker: (rx, ry) => set({ pendingMarker: { rx, ry } }),
+  cancelMarker: () => set({ pendingMarker: null }),
+  addMapMarker: (rx, ry, name) => {
+    const current = get().world;
+    if (!current) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const id = `mk-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    set({
+      world: {
+        ...current,
+        mapMarkers: [...current.mapMarkers, { id, rx, ry, name: trimmed }],
+      },
+      pendingMarker: null,
+    });
+  },
+  removeMapMarker: (id) => {
+    const current = get().world;
+    if (!current) return;
+    set({
+      world: {
+        ...current,
+        mapMarkers: current.mapMarkers.filter((m) => m.id !== id),
       },
     });
   },

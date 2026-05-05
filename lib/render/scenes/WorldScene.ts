@@ -2,7 +2,7 @@ import Phaser from "phaser";
 import { bus } from "@/lib/render/bus";
 import { useGameStore } from "@/lib/state/game-store";
 import { biomeAt } from "@/lib/sim/biome";
-import { MAP_W, MAP_H } from "@/lib/sim/world";
+import { MAP_W, MAP_H, type MapMarker } from "@/lib/sim/world";
 import { FACTIONS } from "@/content/factions";
 import { drawFactionShape } from "@/lib/render/shapes";
 import { globalToLocal, regionKey } from "@/lib/sim/biome-interior";
@@ -56,14 +56,19 @@ export class WorldScene extends Phaser.Scene {
   private playerHere!: Phaser.GameObjects.Graphics;
   private playerLabel!: Phaser.GameObjects.Text;
   private npcLayer!: Phaser.GameObjects.Graphics;
+  private markerLayer!: Phaser.GameObjects.Graphics;
   private overflowText = new Map<string, Phaser.GameObjects.Text>();
+  private markerLabels = new Map<string, Phaser.GameObjects.Text>();
   private npcHits: NpcHitTarget[] = [];
+  private markerHits: Array<{ id: string; x: number; y: number; w: number; h: number }> = [];
 
   private dragStart: { x: number; y: number } | null = null;
   private pinchInitial: { dist: number; zoom: number } | null = null;
   private pointerDownAt = 0;
   private pointerDownPos = { x: 0, y: 0 };
   private dragMoved = false;
+  private longPressTimer: Phaser.Time.TimerEvent | null = null;
+  private longPressFired = false;
 
   private accumulator = 0;
   private readonly tickStepMs = 250;
@@ -90,6 +95,7 @@ export class WorldScene extends Phaser.Scene {
     this.telegraphLayer = this.add.graphics();
     this.npcLayer = this.add.graphics();
     this.fogOverlay = this.add.graphics();
+    this.markerLayer = this.add.graphics();
     this.homeMarker = this.add.graphics();
     this.homeMarker.setVisible(false);
     this.playerHere = this.add.graphics();
@@ -132,6 +138,10 @@ export class WorldScene extends Phaser.Scene {
     this.game.events.off("dprchange", this.onDprChange, this);
     for (const t of this.overflowText.values()) t.destroy();
     this.overflowText.clear();
+    for (const t of this.markerLabels.values()) t.destroy();
+    this.markerLabels.clear();
+    this.markerHits = [];
+    this.cancelLongPress();
     this.npcHits = [];
   }
 
@@ -178,11 +188,69 @@ export class WorldScene extends Phaser.Scene {
         this.factionRingLayer.clear();
       }
       this.renderFogOverlay(world.discoveredTiles, world.home != null);
+      this.renderMarkers(world.mapMarkers);
       this.lastDrawnTick = world.ticks;
     }
     this.renderHomeMarker();
     this.renderPlayerHere();
     this.renderSelection();
+  }
+
+  private renderMarkers(markers: MapMarker[]) {
+    this.markerLayer.clear();
+    const live = new Set<string>();
+    const hits: Array<{ id: string; x: number; y: number; w: number; h: number }> = [];
+    for (const m of markers) {
+      live.add(m.id);
+      const cx = m.rx * REGION + REGION / 2;
+      const cy = m.ry * REGION + REGION / 2;
+      this.markerLayer.fillStyle(COLORS.outline, 0.85);
+      this.markerLayer.fillCircle(cx, cy - 12, 3);
+      this.markerLayer.lineStyle(1.5, COLORS.outline, 0.85);
+      this.markerLayer.beginPath();
+      this.markerLayer.moveTo(cx, cy - 11);
+      this.markerLayer.lineTo(cx, cy - 4);
+      this.markerLayer.strokePath();
+      let label = this.markerLabels.get(m.id);
+      if (!label) {
+        label = this.add.text(0, 0, m.name, {
+          fontFamily: "Outfit, ui-sans-serif, system-ui, sans-serif",
+          fontSize: "11px",
+          fontStyle: "bold",
+          color: "#2c2820",
+          backgroundColor: "#fbf6ed",
+          padding: { x: 4, y: 1 },
+        });
+        label.setOrigin(0.5, 1);
+        this.markerLabels.set(m.id, label);
+      }
+      label.setText(m.name);
+      label.setPosition(cx, cy - 14);
+      const w = label.width;
+      const h = label.height;
+      hits.push({ id: m.id, x: cx, y: cy - 14 - h / 2, w, h });
+    }
+    for (const [id, label] of this.markerLabels) {
+      if (!live.has(id)) {
+        label.destroy();
+        this.markerLabels.delete(id);
+      }
+    }
+    this.markerHits = hits;
+  }
+
+  private hitMarkerAt(wx: number, wy: number): string | null {
+    for (const h of this.markerHits) {
+      if (
+        wx >= h.x - h.w / 2 &&
+        wx <= h.x + h.w / 2 &&
+        wy >= h.y - h.h / 2 &&
+        wy <= h.y + h.h / 2
+      ) {
+        return h.id;
+      }
+    }
+    return null;
   }
 
   private renderFogOverlay(
@@ -680,6 +748,7 @@ export class WorldScene extends Phaser.Scene {
 
   private onPointerDown(pointer: Phaser.Input.Pointer) {
     if (this.gameOver()) return;
+    this.cancelLongPress();
     if (this.input.pointer1.isDown && this.input.pointer2.isDown) {
       const dist = Phaser.Math.Distance.Between(
         this.input.pointer1.x,
@@ -695,6 +764,26 @@ export class WorldScene extends Phaser.Scene {
     this.dragMoved = false;
     this.pointerDownAt = this.time.now;
     this.pointerDownPos = { x: pointer.x, y: pointer.y };
+    this.longPressFired = false;
+    const startX = pointer.x;
+    const startY = pointer.y;
+    this.longPressTimer = this.time.delayedCall(500, () => {
+      this.longPressTimer = null;
+      if (this.dragMoved) return;
+      const wp = this.cameras.main.getWorldPoint(startX, startY);
+      const rx = Math.floor(wp.x / REGION);
+      const ry = Math.floor(wp.y / REGION);
+      if (rx < 0 || ry < 0 || rx >= MAP_W || ry >= MAP_H) return;
+      useGameStore.getState().requestMarker(rx, ry);
+      this.longPressFired = true;
+    });
+  }
+
+  private cancelLongPress() {
+    if (this.longPressTimer) {
+      this.longPressTimer.remove(false);
+      this.longPressTimer = null;
+    }
   }
 
   private onPointerMove(pointer: Phaser.Input.Pointer) {
@@ -714,7 +803,10 @@ export class WorldScene extends Phaser.Scene {
     if (this.dragStart && pointer.isDown) {
       const dx = pointer.x - this.dragStart.x;
       const dy = pointer.y - this.dragStart.y;
-      if (Math.abs(dx) + Math.abs(dy) > 6) this.dragMoved = true;
+      if (Math.abs(dx) + Math.abs(dy) > 6) {
+        this.dragMoved = true;
+        this.cancelLongPress();
+      }
       this.cameras.main.scrollX -= dx / this.cameras.main.zoom;
       this.cameras.main.scrollY -= dy / this.cameras.main.zoom;
       this.dragStart = { x: pointer.x, y: pointer.y };
@@ -723,13 +815,14 @@ export class WorldScene extends Phaser.Scene {
 
   private onPointerUp(pointer: Phaser.Input.Pointer) {
     if (this.gameOver()) {
+      this.cancelLongPress();
       this.dragStart = null;
       this.dragMoved = false;
+      this.longPressFired = false;
       this.pinchInitial = null;
       return;
     }
 
-    const dt = this.time.now - this.pointerDownAt;
     const moved = Phaser.Math.Distance.Between(
       this.pointerDownPos.x,
       this.pointerDownPos.y,
@@ -737,10 +830,13 @@ export class WorldScene extends Phaser.Scene {
       pointer.y,
     );
 
-    if (!this.dragMoved && dt < 350 && moved < 10) {
+    if (!this.dragMoved && !this.longPressFired && moved < 10) {
       const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
       const tappedNpc = this.hitNpcAt(world.x, world.y);
-      if (tappedNpc) {
+      const tappedMarker = this.hitMarkerAt(world.x, world.y);
+      if (tappedMarker) {
+        useGameStore.getState().removeMapMarker(tappedMarker);
+      } else if (tappedNpc) {
         useGameStore.getState().selectNpc(tappedNpc);
         bus.emit("npc:selected", { id: tappedNpc });
       } else {
@@ -755,8 +851,10 @@ export class WorldScene extends Phaser.Scene {
       }
     }
 
+    this.cancelLongPress();
     this.dragStart = null;
     this.dragMoved = false;
+    this.longPressFired = false;
     this.pinchInitial = null;
   }
 

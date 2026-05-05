@@ -17,6 +17,7 @@ import EncounterToast from "@/components/EncounterToast";
 import EncounterFeed from "@/components/EncounterFeed";
 import FactionLegend from "@/components/FactionLegend";
 import HungerLog from "@/components/HungerLog";
+import MarkerNameModal from "@/components/MarkerNameModal";
 import { useGameStore } from "@/lib/state/game-store";
 
 const PhaserGame = dynamic(() => import("@/components/PhaserGame"), {
@@ -63,6 +64,7 @@ function PlayInner() {
       <EncounterToast />
       <EncounterFeed />
       <HungerLog />
+      <MarkerNameModal />
       <TutorialModal />
     </main>
   );

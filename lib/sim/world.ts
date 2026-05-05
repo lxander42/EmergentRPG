@@ -35,7 +35,7 @@ import {
 
 export { biomeAt, isPassable, type Biome } from "@/lib/sim/biome";
 
-export const WORLD_VERSION = 12;
+export const WORLD_VERSION = 13;
 export const MAP_W = 32;
 export const MAP_H = 32;
 export const NPC_COUNT = 200;
@@ -58,6 +58,13 @@ export type PickupNotice = {
   tick: number;
   kind: import("@/content/resources").ResourceKind;
   amount: number;
+};
+
+export type MapMarker = {
+  id: string;
+  rx: number;
+  ry: number;
+  name: string;
 };
 
 export type ProjectileFx = {
@@ -105,6 +112,8 @@ export type World = {
   // Kinds the player has explicitly examined. Drives whether obstacle
   // blurbs and (later) item descriptions are revealed in the UI.
   examinedKinds: Record<string, true>;
+  // Player-placed map markers. Persist across lives.
+  mapMarkers: MapMarker[];
   // factionId -> per-player reputation. Drives hostile/friendly encounters.
   // Halved on rebirth so past misdeeds linger but don't doom the new life.
   playerReputation: Record<string, number>;
@@ -138,6 +147,7 @@ export function createWorld(seed = Date.now() & 0xffffffff): World {
     regionControl: {},
     discoveredTiles: {},
     examinedKinds: {},
+    mapMarkers: [],
     playerReputation: {},
     factionRelations: {},
     recentFactionAttacks: {},
