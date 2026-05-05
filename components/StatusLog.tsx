@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useGameStore } from "@/lib/state/game-store";
+import { globalToLocal } from "@/lib/sim/biome-interior";
 
 const HUNGER_TEXTS: Array<string | null> = [
   null,
@@ -30,21 +31,34 @@ export default function StatusLog() {
     let lastHungerStage = 0;
     let lastEncounterId: string | null = null;
     const unsub = useGameStore.subscribe((state) => {
-      const energy = state.world?.life?.player.energy;
-      if (energy != null) {
-        const stage = hungerStage(energy);
-        if (stage > lastHungerStage) {
-          const text = HUNGER_TEXTS[stage];
-          if (text) state.pushStatus(text);
-        }
-        lastHungerStage = stage;
-      } else {
+      const player = state.world?.life?.player;
+      if (player == null) {
         lastHungerStage = 0;
+      } else {
+        const stage = hungerStage(player.energy);
+        if (stage > lastHungerStage) {
+          lastHungerStage = stage;
+          const text = HUNGER_TEXTS[stage];
+          if (text) {
+            queueMicrotask(() => useGameStore.getState().pushStatus(text));
+          }
+        } else {
+          lastHungerStage = stage;
+        }
       }
       const latestEvent = state.world?.recentEvents[0];
       if (latestEvent && latestEvent.id !== lastEncounterId) {
         lastEncounterId = latestEvent.id;
-        state.pushStatus(latestEvent.context);
+        if (latestEvent.encounter && player) {
+          const npc = state.world!.npcs.find(
+            (n) => n.id === latestEvent.encounter!.npcId,
+          );
+          const here = player ? globalToLocal(player.gx, player.gy) : null;
+          if (npc && here && npc.rx === here.rx && npc.ry === here.ry) {
+            const text = latestEvent.context;
+            queueMicrotask(() => useGameStore.getState().pushStatus(text));
+          }
+        }
       }
     });
     return unsub;
