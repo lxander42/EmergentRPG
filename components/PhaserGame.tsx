@@ -39,6 +39,9 @@ export default function PhaserGame() {
           height: Math.floor(ch * dpr),
         },
         render: {
+          // Keep antialiased Graphics for WorldScene's faction shapes and
+          // hatches; the BiomeScene atlas opts into nearest-neighbour
+          // filtering on a per-texture basis (see registerTileFrames).
           antialias: true,
           roundPixels: false,
           pixelArt: false,

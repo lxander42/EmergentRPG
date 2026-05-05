@@ -3,6 +3,7 @@
 import { ForkKnife, Hammer, Knife, Package, X } from "@phosphor-icons/react/dist/ssr";
 import { useGameStore } from "@/lib/state/game-store";
 import { RESOURCES, type ResourceKind } from "@/content/resources";
+import TileChip from "@/components/panels/TileChip";
 import { WEAPONS } from "@/content/weapons";
 import { TOOLS } from "@/lib/sim/tools";
 import { RECIPES, type Recipe } from "@/content/recipes";
@@ -83,11 +84,7 @@ export default function InventoryPanel() {
                     key={kind}
                     className="flex items-center gap-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-warm)] px-3 py-2"
                   >
-                    <span
-                      aria-hidden
-                      className="h-3 w-3 shrink-0 rounded-full border border-[var(--color-border-strong)]"
-                      style={{ background: meta.swatch }}
-                    />
+                    <TileChip name={meta.frame} size={20} rounded="md" />
                     <span className="flex-1 text-sm text-[var(--color-fg)]">
                       {meta.label}
                       {meta.food && (
@@ -275,11 +272,7 @@ function RecipePip({
       className="inline-flex items-center gap-1 font-mono text-[10px] tabular-nums"
       style={{ color: ok ? "var(--color-fg)" : "var(--color-fg-muted)" }}
     >
-      <span
-        aria-hidden
-        className="h-2 w-2 rounded-full border border-[var(--color-border-strong)]"
-        style={{ background: RESOURCES[kind].swatch }}
-      />
+      <TileChip name={RESOURCES[kind].frame} size={12} rounded="sm" />
       {RESOURCES[kind].label} {have}/{need}
     </span>
   );

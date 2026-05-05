@@ -477,6 +477,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       tutorialOpen: false,
       npcContextMenu: null,
       obstacleContextMenu: null,
+      // Resume auto-follow so the camera centres on the respawned player
+      // instead of holding wherever the previous life died.
+      cameraPanned: false,
     });
     void saveWorld("default", next);
   },

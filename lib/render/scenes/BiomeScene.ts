@@ -12,26 +12,33 @@ import {
   type ObstacleKind,
 } from "@/lib/sim/biome-interior";
 import { hasTool } from "@/lib/sim/tools";
-import { biomeAt, blendNoise, type Biome } from "@/lib/sim/biome";
+import { biomeAt } from "@/lib/sim/biome";
 import { BIOMES } from "@/content/biomes";
 import { RESOURCES, type ResourceKind } from "@/content/resources";
 import { FACTIONS } from "@/content/factions";
-import { drawFactionShape } from "@/lib/render/shapes";
+import { ATLAS_KEY, type TileName } from "@/content/tiles";
+import {
+  blendedBiomeAt,
+  frameKey,
+  pickVariant,
+  registerTileFrames,
+} from "@/lib/render/tiles";
 import type { Npc } from "@/lib/sim/npc";
 import { effectivePerception, isBitmapTileDiscovered } from "@/lib/sim/fog";
 import type { Player } from "@/lib/sim/player";
 
-const CELL = 36;
-const PLAYER_SIZE = 22;
-const NPC_SIZE = 18;
-const RESOURCE_SIZE = 10;
-const BLEND_RADIUS = 1;
-// Padding tiles beyond the camera viewport. Generous so the cream
-// background never shows along an edge if the camera happens to overshoot
-// the tile rect by a frame or two during pan/zoom transitions.
+// 16-px atlas tiles drawn at 32-px logical so 2x integer scale stays crisp
+// under DPR scaling. Origin (0, 0) of every chunk RT lands on a region
+// boundary so chunks tile with zero gap.
+const CELL = 32;
+const PLAYER_SIZE = 24;
+const NPC_SIZE = 22;
 const VIEWPORT_PADDING_TILES = 10;
 const VISIT_BUCKET_TICKS = 24;
 const PAN_THRESHOLD_PX = 6;
+const CHUNK_TILES = INTERIOR_W;
+const CHUNK_PX = CHUNK_TILES * CELL;
+const MAX_CACHED_CHUNKS = 12;
 
 const COLORS = {
   bg: 0xf6f1e8,
@@ -39,26 +46,21 @@ const COLORS = {
   selection: 0xd96846,
   routeDot: 0xd96846,
   shadow: 0x2c2820,
-  // Near-black warm fg colour, matches --color-fg in globals.css.
   outline: 0x2c2820,
-  forestTree: 0x4f6a3e,
-  forestTrunk: 0x6e5238,
-  rock: 0x8a8378,
-  rockShade: 0x67625a,
-  bush: 0x86a06d,
-  cactus: 0x7e9b6a,
-  workbench: 0xd96846,
-  workbenchLeg: 0x7a3d28,
 };
 
+const MATERIAL_ALPHA = 0.7;
+
 type VisitorView = {
-  body: Phaser.GameObjects.Graphics;
+  body: Phaser.GameObjects.Image;
+  shadow: Phaser.GameObjects.Ellipse;
   cx: number;
   cy: number;
   targetCx: number;
   targetCy: number;
   flashUntil: number;
   fading: boolean;
+  tint: number;
 };
 
 type VisitorHit = { id: string; x: number; y: number; half: number };
@@ -69,23 +71,39 @@ type FogContext = {
   perception: number;
   r2: number;
   discoveredTiles: Record<string, Uint8Array>;
-  simplified: boolean;
+};
+
+type ChunkEntry = {
+  // Container-of-Images per region. Each tile is a 16-px atlas frame
+  // displayed at CELL px via setDisplaySize. Cheaper to manage than a
+  // RenderTexture because there's no DynamicTexture command buffer to
+  // reset across scene swaps — Phaser's Canvas renderer just iterates
+  // the container's children each frame.
+  container: Phaser.GameObjects.Container;
+  // Reference-equality tags. Interior mutations follow an immutable pattern
+  // (clearObstacle / removeResource / removeLoot / addLoot return new arrays),
+  // so a single ref check is enough to know whether to repaint.
+  obstacles: (ObstacleKind | null)[] | null;
+  resources: BiomeInterior["resources"] | null;
+  loot: BiomeInterior["loot"] | null;
+  lastUsedTick: number;
 };
 
 export class BiomeScene extends Phaser.Scene {
-  private tileLayer!: Phaser.GameObjects.Graphics;
-  private resourceLayer!: Phaser.GameObjects.Graphics;
+  private chunkLayer!: Phaser.GameObjects.Container;
   private fogLayer!: Phaser.GameObjects.Graphics;
   private routeLayer!: Phaser.GameObjects.Graphics;
-  private playerLayer!: Phaser.GameObjects.Graphics;
-  private playerShadow!: Phaser.GameObjects.Graphics;
+  private playerImage!: Phaser.GameObjects.Image;
+  private playerShadow!: Phaser.GameObjects.Ellipse;
   private selectionRing!: Phaser.GameObjects.Graphics;
+  private projectileLayer!: Phaser.GameObjects.Graphics;
+
+  private chunks = new Map<string, ChunkEntry>();
   private visitorViews = new Map<string, VisitorView>();
   private visitorHits: VisitorHit[] = [];
   private prevNpcHealth = new Map<string, number>();
   private prevPlayerHealth = -1;
   private seenPickupIds = new Set<string>();
-  private projectileLayer!: Phaser.GameObjects.Graphics;
 
   private playerGx = 0;
   private playerGy = 0;
@@ -101,15 +119,9 @@ export class BiomeScene extends Phaser.Scene {
   private pointerDownPos = { x: 0, y: 0 };
   private dragMoved = false;
 
-  // Google-Maps style pan state lives in the Zustand store so it survives
-  // scene restarts (biome <-> world transitions). Once the user drags,
-  // the camera holds its absolute scroll position; the recenter button
-  // (React) flips the flag back to false to restore auto-follow.
-
   private accumulator = 0;
   private readonly tickStepMs = 250;
   private dpr = 1;
-  private tileColorCache = new Map<string, number>();
   private longPressTimer: Phaser.Time.TimerEvent | null = null;
   private longPressFired = false;
 
@@ -118,24 +130,47 @@ export class BiomeScene extends Phaser.Scene {
   }
 
   create() {
+    // Phaser does NOT auto-call user `shutdown()` methods — they have to be
+    // wired to the SHUTDOWN event explicitly, otherwise stale Maps leak into
+    // the next scene activation. Without this listener, the `chunks` Map
+    // would still point at containers destroyed by the global DisplayList
+    // shutdown, and `paintChunk` would silently fail to add child Images.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.shutdown, this);
+
     this.dpr = (this.game.registry.get("dpr") as number) ?? 1;
     this.cameras.main.setBackgroundColor(COLORS.bg);
-    this.tileLayer = this.add.graphics();
-    this.resourceLayer = this.add.graphics();
-    this.fogLayer = this.add.graphics();
+
+    // BootScene normally registers the atlas frames; if the player jumped
+    // straight here (HMR, explicit scene.start) the frames may not be set up
+    // yet. Idempotent — does nothing on subsequent calls.
+    registerTileFrames(this);
+
+    this.chunkLayer = this.add.container(0, 0);
     this.routeLayer = this.add.graphics();
+    this.fogLayer = this.add.graphics();
     this.selectionRing = this.add.graphics();
     this.selectionRing.setVisible(false);
-    this.playerShadow = this.add.graphics();
-    this.playerLayer = this.add.graphics();
+    this.playerShadow = this.add.ellipse(0, 0, PLAYER_SIZE * 0.7, PLAYER_SIZE * 0.18, COLORS.shadow, 0.22);
+    this.playerImage = this.add
+      .image(0, 0, ATLAS_KEY, frameKey("char"))
+      .setOrigin(0.5, 0.85)
+      .setDisplaySize(PLAYER_SIZE, PLAYER_SIZE);
     this.projectileLayer = this.add.graphics();
 
-    // setZoom must precede centerOn -- centerOn uses the current zoom to
-    // derive scrollX/Y, otherwise the camera lands somewhere far off.
+    // Layer ordering: chunks (ground+obstacles+resources+loot) → route →
+    // player shadow/sprite → projectiles → selection → fog (top, occludes
+    // everything outside the perception ring).
+    this.chunkLayer.setDepth(0);
+    this.routeLayer.setDepth(1);
+    this.playerShadow.setDepth(2);
+    this.playerImage.setDepth(3);
+    this.projectileLayer.setDepth(4);
+    this.selectionRing.setDepth(5);
+    this.fogLayer.setDepth(6);
+
     this.cameras.main.setZoom(this.dpr);
     this.accumulator = 0;
     this.playerTransitionStart = 0;
-    this.tileColorCache.clear();
     useGameStore.getState().setCameraPanned(false);
     this.visitorViews.clear();
     this.visitorHits = [];
@@ -164,10 +199,17 @@ export class BiomeScene extends Phaser.Scene {
   shutdown() {
     this.scale.off("resize", this.handleResize, this);
     this.game.events.off("dprchange", this.onDprChange, this);
-    for (const view of this.visitorViews.values()) view.body.destroy();
+    for (const view of this.visitorViews.values()) {
+      view.body.destroy();
+      view.shadow.destroy();
+    }
     this.visitorViews.clear();
     this.visitorHits = [];
-    this.tileColorCache.clear();
+    for (const entry of this.chunks.values()) entry.container.destroy(true);
+    this.chunks.clear();
+    this.prevPlayerHealth = -1;
+    this.prevNpcHealth.clear();
+    this.seenPickupIds.clear();
     this.cancelLongPress();
   }
 
@@ -194,11 +236,19 @@ export class BiomeScene extends Phaser.Scene {
     const now = this.time.now;
 
     if (player.gx !== this.playerGx || player.gy !== this.playerGy) {
-      this.prevPlayerGx = this.playerGx;
-      this.prevPlayerGy = this.playerGy;
+      // Treat large jumps (death respawn, debug teleport) as snaps so the
+      // marker doesn't tween-slide across the whole map for 250 ms — that
+      // animation feels like a glitch on a 30-tile move.
+      const jump = Math.max(
+        Math.abs(player.gx - this.playerGx),
+        Math.abs(player.gy - this.playerGy),
+      );
+      const teleport = jump > 6;
+      this.prevPlayerGx = teleport ? player.gx : this.playerGx;
+      this.prevPlayerGy = teleport ? player.gy : this.playerGy;
       this.playerGx = player.gx;
       this.playerGy = player.gy;
-      this.playerTransitionStart = now;
+      this.playerTransitionStart = teleport ? 0 : now;
     }
 
     const stepMs = Math.max(1, player.stats.speed) * this.tickStepMs;
@@ -213,16 +263,12 @@ export class BiomeScene extends Phaser.Scene {
     this.playerCy = fromCenter.y + (toCenter.y - fromCenter.y) * eased;
     if (t >= 1 && this.playerTransitionStart !== 0) this.playerTransitionStart = 0;
 
-    // Camera is pinned to the player by default; once the user drags it
-    // sticks where they put it until the recenter button is tapped.
     if (!useGameStore.getState().cameraPanned) {
       this.cameras.main.centerOn(this.playerCx, this.playerCy);
     }
 
     const fog = this.computeFog(player, world);
-    this.drawTiles(world, fog);
-    this.drawResources(world, fog);
-    this.drawLoot(world, fog);
+    this.refreshChunks(world);
     this.drawFog(fog);
     this.drawRoute(player);
     this.drawPlayer();
@@ -244,23 +290,186 @@ export class BiomeScene extends Phaser.Scene {
       perception,
       r2: perception * perception,
       discoveredTiles: world.discoveredTiles,
-      simplified: this.cameras.main.zoom < 0.7 * this.dpr,
     };
   }
 
-  private tileVisibility(
-    fog: FogContext,
-    gx: number,
-    gy: number,
-    bitmap: Uint8Array | undefined,
-    lx: number,
-    ly: number,
-  ): "visible" | "discovered" | "unknown" {
-    const dx = gx - fog.px;
-    const dy = gy - fog.py;
-    if (dx * dx + dy * dy <= fog.r2) return "visible";
-    if (bitmap && isBitmapTileDiscovered(bitmap, lx, ly)) return "discovered";
-    return "unknown";
+  private refreshChunks(world: {
+    biomeInteriors: Record<string, BiomeInterior>;
+    ticks: number;
+  }) {
+    const v = this.viewport();
+    const rxMin = Math.floor(v.gxMin / INTERIOR_W);
+    const rxMax = Math.floor(v.gxMax / INTERIOR_W);
+    const ryMin = Math.floor(v.gyMin / INTERIOR_H);
+    const ryMax = Math.floor(v.gyMax / INTERIOR_H);
+
+    const visible = new Set<string>();
+    for (let ry = ryMin; ry <= ryMax; ry++) {
+      for (let rx = rxMin; rx <= rxMax; rx++) {
+        const key = regionKey(rx, ry);
+        visible.add(key);
+        this.ensureChunk(rx, ry, world);
+      }
+    }
+
+    // Keep chunks that are still in view + a small idle cache. Drop the
+    // least-recently-used entries when over budget.
+    if (this.chunks.size > MAX_CACHED_CHUNKS) {
+      const entries = Array.from(this.chunks.entries())
+        .filter(([key]) => !visible.has(key))
+        .sort((a, b) => a[1].lastUsedTick - b[1].lastUsedTick);
+      while (this.chunks.size > MAX_CACHED_CHUNKS && entries.length > 0) {
+        const next = entries.shift()!;
+        next[1].container.destroy(true);
+        this.chunks.delete(next[0]);
+      }
+    }
+  }
+
+  private ensureChunk(
+    rx: number,
+    ry: number,
+    world: { biomeInteriors: Record<string, BiomeInterior>; ticks: number },
+  ) {
+    const key = regionKey(rx, ry);
+    const interior = world.biomeInteriors[key];
+    let entry = this.chunks.get(key);
+    const stale =
+      entry &&
+      (entry.obstacles !== (interior?.obstacles ?? null) ||
+        entry.resources !== (interior?.resources ?? null) ||
+        entry.loot !== (interior?.loot ?? null));
+    if (!entry) {
+      const container = this.add.container(rx * CHUNK_PX, ry * CHUNK_PX);
+      this.chunkLayer.add(container);
+      entry = {
+        container,
+        obstacles: null,
+        resources: null,
+        loot: null,
+        lastUsedTick: world.ticks,
+      };
+      this.chunks.set(key, entry);
+      this.paintChunk(entry, rx, ry, interior);
+    } else if (stale) {
+      this.paintChunk(entry, rx, ry, interior);
+    }
+    entry.lastUsedTick = world.ticks;
+  }
+
+  private paintChunk(
+    entry: ChunkEntry,
+    rx: number,
+    ry: number,
+    interior: BiomeInterior | undefined,
+  ) {
+    const { container } = entry;
+    container.removeAll(true);
+    const baseBiome = interior ? interior.biome : biomeAt(rx, ry);
+
+    // Ground pass — every tile is its own Image child of the chunk
+    // container. Container is positioned at the region's world origin so
+    // tile (lx, ly) lives at child-local (lx * CELL, ly * CELL).
+    //
+    // Within EDGE_BAND tiles of a region boundary the displayed biome may
+    // borrow from the neighbour region (see blendedBiomeAt) — produces a
+    // feathered transition instead of a hard line, with no transition
+    // sprites needed.
+    for (let ly = 0; ly < INTERIOR_H; ly++) {
+      for (let lx = 0; lx < INTERIOR_W; lx++) {
+        const gx = rx * INTERIOR_W + lx;
+        const gy = ry * INTERIOR_H + ly;
+        const here = interior ? baseBiome : biomeAt(gx, gy);
+        const display = blendedBiomeAt(gx, gy, here);
+        const variant = pickVariant(BIOMES[display].variants, gx, gy);
+        const tile = this.add.image(0, 0, ATLAS_KEY, frameKey(variant));
+        tile.setOrigin(0, 0);
+        tile.setPosition(lx * CELL, ly * CELL);
+        tile.setDisplaySize(CELL, CELL);
+        container.add(tile);
+      }
+    }
+
+    if (!interior) {
+      entry.obstacles = null;
+      entry.resources = null;
+      entry.loot = null;
+      return;
+    }
+
+    // Obstacles render on top of ground tiles via container child order.
+    for (let ly = 0; ly < INTERIOR_H; ly++) {
+      for (let lx = 0; lx < INTERIOR_W; lx++) {
+        const kind = obstacleKindAt(interior, lx, ly);
+        if (!kind) continue;
+        const gx = rx * INTERIOR_W + lx;
+        const gy = ry * INTERIOR_H + ly;
+        const frame = obstacleFrame(kind, gx, gy);
+        const sprite = this.add.image(0, 0, ATLAS_KEY, frameKey(frame));
+        sprite.setOrigin(0, 0);
+        sprite.setPosition(lx * CELL, ly * CELL);
+        sprite.setDisplaySize(CELL, CELL);
+        container.add(sprite);
+      }
+    }
+
+    for (const r of interior.resources) {
+      const meta = RESOURCES[r.kind];
+      const sprite = this.add.image(0, 0, ATLAS_KEY, frameKey(meta.frame));
+      sprite.setOrigin(0, 0);
+      sprite.setPosition(r.lx * CELL, r.ly * CELL);
+      sprite.setDisplaySize(CELL, CELL);
+      sprite.setAlpha(meta.food ? 1 : MATERIAL_ALPHA);
+      container.add(sprite);
+    }
+
+    for (const pile of interior.loot) {
+      const sprite = this.add.image(0, 0, ATLAS_KEY, frameKey("loot_pile"));
+      sprite.setOrigin(0, 0);
+      sprite.setPosition(pile.lx * CELL, pile.ly * CELL);
+      sprite.setDisplaySize(CELL, CELL);
+      container.add(sprite);
+    }
+
+    entry.obstacles = interior.obstacles;
+    entry.resources = interior.resources;
+    entry.loot = interior.loot;
+  }
+
+  private drawFog(fog: FogContext) {
+    this.fogLayer.clear();
+    const v = this.viewport();
+    const FADE_BAND = 3;
+    const inner = Math.max(0, fog.perception - FADE_BAND);
+    const inner2 = inner * inner;
+    const outer = fog.perception;
+    const ramp = Math.max(1, outer - inner);
+    for (let gy = v.gyMin; gy <= v.gyMax; gy++) {
+      for (let gx = v.gxMin; gx <= v.gxMax; gx++) {
+        const dx = gx - fog.px;
+        const dy = gy - fog.py;
+        const d2 = dx * dx + dy * dy;
+        let alpha: number;
+        if (d2 <= inner2) {
+          continue;
+        } else if (d2 <= fog.r2) {
+          const d = Math.sqrt(d2);
+          const t = (d - inner) / ramp;
+          alpha = t * 0.55;
+        } else {
+          const { rx, ry, lx, ly } = globalToLocal(gx, gy);
+          const bitmap = fog.discoveredTiles[regionKey(rx, ry)];
+          if (!bitmap || !isBitmapTileDiscovered(bitmap, lx, ly)) {
+            this.fogLayer.fillStyle(COLORS.bg, 1);
+            this.fogLayer.fillRect(gx * CELL, gy * CELL, CELL, CELL);
+            continue;
+          }
+          alpha = 0.55;
+        }
+        this.fogLayer.fillStyle(COLORS.bg, alpha);
+        this.fogLayer.fillRect(gx * CELL, gy * CELL, CELL, CELL);
+      }
+    }
   }
 
   private drawProjectiles(
@@ -327,42 +536,9 @@ export class BiomeScene extends Phaser.Scene {
         onComplete: () => text.destroy(),
       });
     }
-    // Garbage-collect ids that are no longer in the ring buffer.
     if (this.seenPickupIds.size > 64) {
       const live = new Set(pickups.map((p) => p.id));
       for (const id of this.seenPickupIds) if (!live.has(id)) this.seenPickupIds.delete(id);
-    }
-  }
-
-  private drawLoot(
-    world: { biomeInteriors: Record<string, BiomeInterior> },
-    fog: FogContext,
-  ) {
-    const v = this.viewport();
-    const rxMin = Math.floor(v.gxMin / INTERIOR_W);
-    const rxMax = Math.floor(v.gxMax / INTERIOR_W);
-    const ryMin = Math.floor(v.gyMin / INTERIOR_H);
-    const ryMax = Math.floor(v.gyMax / INTERIOR_H);
-    for (let ry = ryMin; ry <= ryMax; ry++) {
-      for (let rx = rxMin; rx <= rxMax; rx++) {
-        const interior = world.biomeInteriors[regionKey(rx, ry)];
-        if (!interior) continue;
-        for (const pile of interior.loot) {
-          const gx = rx * INTERIOR_W + pile.lx;
-          const gy = ry * INTERIOR_H + pile.ly;
-          const dx = gx - fog.px;
-          const dy = gy - fog.py;
-          if (dx * dx + dy * dy > fog.r2) continue;
-          const cx = gx * CELL + CELL / 2;
-          const cy = gy * CELL + CELL / 2;
-          this.resourceLayer.fillStyle(COLORS.shadow, 0.18);
-          this.resourceLayer.fillEllipse(cx, cy + 6, 12, 3);
-          this.resourceLayer.fillStyle(0xc0a878, 0.95);
-          this.resourceLayer.fillRoundedRect(cx - 6, cy - 4, 12, 8, 2);
-          this.resourceLayer.lineStyle(1, COLORS.shadow, 0.5);
-          this.resourceLayer.strokeRoundedRect(cx - 6, cy - 4, 12, 8, 2);
-        }
-      }
     }
   }
 
@@ -410,12 +586,6 @@ export class BiomeScene extends Phaser.Scene {
     });
   }
 
-  // Viewport in tile coords. Anchored on the camera's midpoint
-  // (cam.scrollX + cam.width/2) rather than scroll directly because
-  // Phaser's centerOn sets scroll = target - cam.width/2 in CANVAS px,
-  // not in world units; the actual rendered worldView is centred on
-  // (scroll + cam.width/2). Computing extents from that midpoint gives
-  // a tile rect that's symmetric around the player at every zoom.
   private viewport(): { gxMin: number; gyMin: number; gxMax: number; gyMax: number } {
     const cam = this.cameras.main;
     const midX = cam.scrollX + cam.width * 0.5;
@@ -430,284 +600,6 @@ export class BiomeScene extends Phaser.Scene {
       gxMax: cgx + halfTilesW,
       gyMax: cgy + halfTilesH,
     };
-  }
-
-  private drawTiles(
-    world: {
-      biomeInteriors: Record<string, BiomeInterior>;
-      discoveredTiles: Record<string, Uint8Array>;
-    },
-    fog: FogContext,
-  ) {
-    this.tileLayer.clear();
-    const v = this.viewport();
-    for (let gy = v.gyMin; gy <= v.gyMax; gy++) {
-      for (let gx = v.gxMin; gx <= v.gxMax; gx++) {
-        const { rx, ry, lx, ly } = globalToLocal(gx, gy);
-        const bitmap = world.discoveredTiles[regionKey(rx, ry)];
-        const state = this.tileVisibility(fog, gx, gy, bitmap, lx, ly);
-        if (state === "unknown") continue;
-        const interior = world.biomeInteriors[regionKey(rx, ry)];
-        const biome = interior ? interior.biome : biomeAt(rx, ry);
-        const color = this.cachedTileColor(gx, gy, biome);
-        const px = gx * CELL;
-        const py = gy * CELL;
-        this.tileLayer.fillStyle(color, 1);
-        this.tileLayer.fillRect(px, py, CELL, CELL);
-        if (interior && biome !== "water") {
-          const kind = obstacleKindAt(interior, lx, ly);
-          if (kind) this.drawObstacle(kind, gx, gy);
-        }
-      }
-    }
-  }
-
-  private drawFog(fog: FogContext) {
-    this.fogLayer.clear();
-    if (fog.simplified) return;
-    const v = this.viewport();
-    const FADE_BAND = 3;
-    const inner = Math.max(0, fog.perception - FADE_BAND);
-    const inner2 = inner * inner;
-    const outer = fog.perception;
-    const ramp = Math.max(1, outer - inner);
-    for (let gy = v.gyMin; gy <= v.gyMax; gy++) {
-      for (let gx = v.gxMin; gx <= v.gxMax; gx++) {
-        const dx = gx - fog.px;
-        const dy = gy - fog.py;
-        const d2 = dx * dx + dy * dy;
-        let alpha: number;
-        if (d2 <= inner2) {
-          continue;
-        } else if (d2 <= fog.r2) {
-          const d = Math.sqrt(d2);
-          const t = (d - inner) / ramp;
-          alpha = t * 0.55;
-        } else {
-          const { rx, ry, lx, ly } = globalToLocal(gx, gy);
-          const bitmap = fog.discoveredTiles[regionKey(rx, ry)];
-          if (!bitmap || !isBitmapTileDiscovered(bitmap, lx, ly)) continue;
-          alpha = 0.55;
-        }
-        this.fogLayer.fillStyle(COLORS.bg, alpha);
-        this.fogLayer.fillRect(gx * CELL, gy * CELL, CELL, CELL);
-      }
-    }
-  }
-
-  private cachedTileColor(gx: number, gy: number, biome: Biome): number {
-    const key = `${gx},${gy}`;
-    const cached = this.tileColorCache.get(key);
-    if (cached !== undefined) return cached;
-    const color = computeTileColor(gx, gy, biome);
-    this.tileColorCache.set(key, color);
-    return color;
-  }
-
-  private drawObstacle(kind: ObstacleKind, gx: number, gy: number) {
-    const cx = gx * CELL + CELL / 2;
-    const cy = gy * CELL + CELL / 2;
-    switch (kind) {
-      case "tree":
-        // Small brown trunk + green canopy triangle.
-        this.tileLayer.fillStyle(COLORS.forestTrunk, 1);
-        this.tileLayer.fillRect(cx - 2, cy + 4, 4, 8);
-        this.tileLayer.fillStyle(COLORS.forestTree, 1);
-        this.tileLayer.fillTriangle(cx, cy - 13, cx - 11, cy + 6, cx + 11, cy + 6);
-        this.tileLayer.fillStyle(COLORS.shadow, 0.18);
-        this.tileLayer.fillEllipse(cx, cy + 13, 18, 4);
-        break;
-      case "rock": {
-        // Irregular pentagon with a darker shade slice.
-        this.tileLayer.fillStyle(COLORS.rock, 1);
-        fillPolygon(this.tileLayer, [
-          [cx - 11, cy + 6],
-          [cx - 8, cy - 6],
-          [cx + 2, cy - 11],
-          [cx + 11, cy - 4],
-          [cx + 8, cy + 9],
-        ]);
-        this.tileLayer.fillStyle(COLORS.rockShade, 1);
-        fillPolygon(this.tileLayer, [
-          [cx - 11, cy + 6],
-          [cx - 8, cy - 6],
-          [cx, cy + 4],
-          [cx + 2, cy + 9],
-        ]);
-        break;
-      }
-      case "cactus":
-        // Vertical bar with one offshoot.
-        this.tileLayer.fillStyle(COLORS.cactus, 1);
-        this.tileLayer.fillRoundedRect(cx - 3, cy - 12, 6, 24, 2);
-        this.tileLayer.fillRoundedRect(cx + 3, cy - 4, 7, 5, 2);
-        this.tileLayer.fillRoundedRect(cx + 8, cy - 10, 4, 7, 2);
-        this.tileLayer.fillStyle(COLORS.shadow, 0.18);
-        this.tileLayer.fillEllipse(cx + 1, cy + 13, 14, 4);
-        break;
-      case "bush":
-        // 3 overlapping circles.
-        this.tileLayer.fillStyle(COLORS.shadow, 0.18);
-        this.tileLayer.fillEllipse(cx, cy + 9, 16, 4);
-        this.tileLayer.fillStyle(COLORS.bush, 1);
-        this.tileLayer.fillCircle(cx - 5, cy + 1, 6);
-        this.tileLayer.fillCircle(cx + 5, cy + 1, 6);
-        this.tileLayer.fillCircle(cx, cy - 4, 7);
-        break;
-      case "workbench":
-        // Coral-accent rounded bench top with two stubby legs.
-        this.tileLayer.fillStyle(COLORS.shadow, 0.18);
-        this.tileLayer.fillEllipse(cx, cy + 11, 20, 4);
-        this.tileLayer.fillStyle(COLORS.workbenchLeg, 1);
-        this.tileLayer.fillRect(cx - 8, cy + 4, 3, 6);
-        this.tileLayer.fillRect(cx + 5, cy + 4, 3, 6);
-        this.tileLayer.fillStyle(COLORS.workbench, 1);
-        this.tileLayer.fillRoundedRect(cx - 11, cy - 5, 22, 10, 2);
-        this.tileLayer.fillStyle(COLORS.workbenchLeg, 1);
-        this.tileLayer.fillRect(cx - 9, cy - 1, 18, 1.5);
-        break;
-    }
-  }
-
-  private drawResources(
-    world: { biomeInteriors: Record<string, BiomeInterior> },
-    fog: FogContext,
-  ) {
-    this.resourceLayer.clear();
-    const v = this.viewport();
-    const rxMin = Math.floor(v.gxMin / INTERIOR_W);
-    const rxMax = Math.floor(v.gxMax / INTERIOR_W);
-    const ryMin = Math.floor(v.gyMin / INTERIOR_H);
-    const ryMax = Math.floor(v.gyMax / INTERIOR_H);
-    for (let ry = ryMin; ry <= ryMax; ry++) {
-      for (let rx = rxMin; rx <= rxMax; rx++) {
-        const interior = world.biomeInteriors[regionKey(rx, ry)];
-        if (!interior) continue;
-        for (const r of interior.resources) {
-          const gx = rx * INTERIOR_W + r.lx;
-          const gy = ry * INTERIOR_H + r.ly;
-          const dx = gx - fog.px;
-          const dy = gy - fog.py;
-          if (dx * dx + dy * dy > fog.r2) continue;
-          const cx = gx * CELL + CELL / 2;
-          const cy = gy * CELL + CELL / 2;
-          this.drawResourceIcon(r.kind, cx, cy);
-        }
-      }
-    }
-  }
-
-  private drawResourceIcon(kind: ResourceKind, cx: number, cy: number) {
-    const meta = RESOURCES[kind];
-    const color = hexToInt(meta.swatch);
-    const r = RESOURCE_SIZE / 2;
-
-    this.resourceLayer.fillStyle(COLORS.shadow, 0.18);
-    this.resourceLayer.fillEllipse(cx, cy + r + 1, RESOURCE_SIZE + 2, 3);
-
-    switch (kind) {
-      case "berry": {
-        this.resourceLayer.fillStyle(color, 1);
-        this.resourceLayer.fillCircle(cx - 3, cy + 1, 3);
-        this.resourceLayer.fillCircle(cx + 3, cy + 1, 3);
-        this.resourceLayer.fillCircle(cx, cy - 3, 3);
-        this.resourceLayer.fillStyle(0xffffff, 0.5);
-        this.resourceLayer.fillCircle(cx - 4, cy, 0.8);
-        this.resourceLayer.fillCircle(cx + 2, cy, 0.8);
-        break;
-      }
-      case "herb": {
-        this.resourceLayer.fillStyle(color, 1);
-        this.resourceLayer.fillTriangle(cx, cy + 4, cx - 6, cy - 1, cx - 1, cy - 5);
-        this.resourceLayer.fillTriangle(cx, cy + 4, cx + 6, cy - 1, cx + 1, cy - 5);
-        this.resourceLayer.lineStyle(1, COLORS.shadow, 0.4);
-        this.resourceLayer.beginPath();
-        this.resourceLayer.moveTo(cx, cy + 4);
-        this.resourceLayer.lineTo(cx, cy - 4);
-        this.resourceLayer.strokePath();
-        break;
-      }
-      case "grain": {
-        this.resourceLayer.lineStyle(1.4, COLORS.shadow, 0.55);
-        for (const ox of [-3, 0, 3]) {
-          this.resourceLayer.beginPath();
-          this.resourceLayer.moveTo(cx + ox, cy + 5);
-          this.resourceLayer.lineTo(cx + ox, cy - 4);
-          this.resourceLayer.strokePath();
-        }
-        this.resourceLayer.fillStyle(color, 1);
-        for (const ox of [-3, 0, 3]) {
-          this.resourceLayer.fillEllipse(cx + ox, cy - 5, 3, 5);
-        }
-        break;
-      }
-      case "shellfish": {
-        this.resourceLayer.fillStyle(color, 1);
-        this.resourceLayer.slice(cx, cy + 1, r + 1, Math.PI, 0, true);
-        this.resourceLayer.fillPath();
-        this.resourceLayer.lineStyle(1, COLORS.shadow, 0.45);
-        for (let i = 0; i < 4; i++) {
-          const a = Math.PI + (Math.PI / 4) * (i + 0.5);
-          this.resourceLayer.beginPath();
-          this.resourceLayer.moveTo(cx, cy + 1);
-          this.resourceLayer.lineTo(cx + Math.cos(a) * (r + 1), cy + 1 + Math.sin(a) * (r + 1));
-          this.resourceLayer.strokePath();
-        }
-        break;
-      }
-      case "tubers": {
-        this.resourceLayer.fillStyle(color, 1);
-        this.resourceLayer.fillEllipse(cx - 2, cy + 1, 6, 8);
-        this.resourceLayer.fillEllipse(cx + 3, cy - 1, 5, 7);
-        this.resourceLayer.fillStyle(COLORS.shadow, 0.4);
-        this.resourceLayer.fillCircle(cx - 2, cy, 0.8);
-        this.resourceLayer.fillCircle(cx + 3, cy - 2, 0.8);
-        break;
-      }
-      case "wood": {
-        this.resourceLayer.fillStyle(color, 0.85);
-        this.resourceLayer.fillRoundedRect(cx - 6, cy - 3, 12, 6, 2);
-        this.resourceLayer.lineStyle(1, COLORS.shadow, 0.5);
-        this.resourceLayer.strokeCircle(cx - 6, cy, 3);
-        this.resourceLayer.strokeCircle(cx + 6, cy, 3);
-        break;
-      }
-      case "reed": {
-        this.resourceLayer.lineStyle(1.6, color, 0.85);
-        for (const ox of [-3, 0, 3]) {
-          this.resourceLayer.beginPath();
-          this.resourceLayer.moveTo(cx + ox, cy + 5);
-          this.resourceLayer.lineTo(cx + ox, cy - 5);
-          this.resourceLayer.strokePath();
-        }
-        break;
-      }
-      case "stone": {
-        this.resourceLayer.fillStyle(color, 0.85);
-        fillPolygon(this.resourceLayer, [
-          [cx - 5, cy + 2],
-          [cx - 3, cy - 4],
-          [cx + 3, cy - 4],
-          [cx + 5, cy + 1],
-          [cx + 1, cy + 4],
-        ]);
-        this.resourceLayer.fillStyle(COLORS.shadow, 0.18);
-        this.resourceLayer.fillEllipse(cx, cy + 4, 8, 2);
-        break;
-      }
-      case "ore": {
-        this.resourceLayer.fillStyle(color, 0.85);
-        fillPolygon(this.resourceLayer, [
-          [cx, cy - 5],
-          [cx + 5, cy],
-          [cx, cy + 5],
-          [cx - 5, cy],
-        ]);
-        this.resourceLayer.fillStyle(0xffffff, 0.4);
-        this.resourceLayer.fillTriangle(cx - 1, cy - 4, cx - 4, cy - 1, cx - 1, cy - 1);
-        break;
-      }
-    }
   }
 
   private drawRoute(player: { route: Array<{ gx: number; gy: number }> | null }) {
@@ -736,28 +628,17 @@ export class BiomeScene extends Phaser.Scene {
   }
 
   private drawPlayer() {
-    this.playerShadow.clear();
-    this.playerShadow.fillStyle(COLORS.shadow, 0.18);
-    this.playerShadow.fillRoundedRect(
-      this.playerCx - PLAYER_SIZE / 2,
-      this.playerCy - PLAYER_SIZE / 2 + 2,
-      PLAYER_SIZE,
-      PLAYER_SIZE,
-      6,
-    );
-    this.playerLayer.clear();
     const player = useGameStore.getState().world?.life?.player;
     const factionColor =
       FACTIONS.find((f) => f.id === player?.factionOfOriginId)?.color ?? COLORS.player;
-    drawFactionShape(
-      this.playerLayer,
-      "square",
-      factionColor,
-      this.playerCx,
-      this.playerCy,
-      PLAYER_SIZE,
-      { stroke: 2, strokeColor: COLORS.outline },
-    );
+    // Bob the sprite vertically while walking between tiles. Holding the
+    // sprite still off-tick would feel lifeless on a slow speed; holding
+    // through a 250 ms tile transition gives a clear walk cadence.
+    const moving = this.playerTransitionStart !== 0;
+    const bob = moving ? Math.sin(this.time.now * 0.018) * 1.6 : 0;
+    this.playerImage.setPosition(this.playerCx, this.playerCy + PLAYER_SIZE * 0.35 + bob);
+    this.playerImage.setTint(factionColor);
+    this.playerShadow.setPosition(this.playerCx, this.playerCy + PLAYER_SIZE * 0.42);
   }
 
   private drawVisitors(npcs: Npc[], world: { ticks: number }, fog: FogContext) {
@@ -790,21 +671,37 @@ export class BiomeScene extends Phaser.Scene {
 
       let view = this.visitorViews.get(npc.id);
       if (!view) {
-        const body = this.add.graphics();
+        const shadow = this.add.ellipse(
+          target.x,
+          target.y + NPC_SIZE * 0.42,
+          NPC_SIZE * 0.7,
+          NPC_SIZE * 0.18,
+          COLORS.shadow,
+          0.22,
+        );
+        shadow.setDepth(2);
+        const body = this.add
+          .image(target.x, target.y + NPC_SIZE * 0.35, ATLAS_KEY, frameKey("char"))
+          .setOrigin(0.5, 0.85)
+          .setDisplaySize(NPC_SIZE, NPC_SIZE);
+        body.setDepth(3);
         view = {
           body,
+          shadow,
           cx: target.x,
           cy: target.y,
           targetCx: target.x,
           targetCy: target.y,
           flashUntil: 0,
           fading: false,
+          tint: 0,
         };
         this.visitorViews.set(npc.id, view);
       } else if (view.fading) {
-        // NPC came back mid-fade. Cancel the fade and reset.
         this.tweens.killTweensOf(view.body);
+        this.tweens.killTweensOf(view.shadow);
         view.body.setAlpha(1);
+        view.shadow.setAlpha(0.22);
         view.fading = false;
       }
       view.targetCx = target.x;
@@ -812,17 +709,18 @@ export class BiomeScene extends Phaser.Scene {
       view.cx += (view.targetCx - view.cx) * 0.18;
       view.cy += (view.targetCy - view.cy) * 0.18;
 
-      const faction = FACTIONS.find((f) => f.id === npc.factionId);
-      const shape = faction?.shape ?? "diamond";
-      view.body.clear();
-      view.body.fillStyle(COLORS.shadow, 0.18);
-      view.body.fillCircle(view.cx, view.cy + 2, NPC_SIZE / 2);
       const flashing = this.time.now < view.flashUntil;
-      const fillColor = flashing ? 0xffffff : npc.factionColor;
-      drawFactionShape(view.body, shape, fillColor, view.cx, view.cy, NPC_SIZE, {
-        stroke: 1.5,
-        strokeColor: COLORS.outline,
-      });
+      const tint = flashing ? 0xffffff : npc.factionColor;
+      if (tint !== view.tint) {
+        view.body.setTint(tint);
+        view.tint = tint;
+      }
+      const distSq =
+        (view.targetCx - view.cx) * (view.targetCx - view.cx) +
+        (view.targetCy - view.cy) * (view.targetCy - view.cy);
+      const bob = distSq > 0.5 ? Math.sin(this.time.now * 0.018 + view.cx * 0.05) * 1.4 : 0;
+      view.body.setPosition(view.cx, view.cy + NPC_SIZE * 0.35 + bob);
+      view.shadow.setPosition(view.cx, view.cy + NPC_SIZE * 0.42);
       hits.push({ id: npc.id, x: view.cx, y: view.cy, half: NPC_SIZE / 2 + 14 });
     }
 
@@ -830,12 +728,13 @@ export class BiomeScene extends Phaser.Scene {
       if (seen.has(id) || view.fading) continue;
       view.fading = true;
       this.tweens.add({
-        targets: view.body,
-        alpha: { from: 1, to: 0 },
+        targets: [view.body, view.shadow],
+        alpha: 0,
         duration: 250,
         ease: "Cubic.easeOut",
         onComplete: () => {
           view.body.destroy();
+          view.shadow.destroy();
           this.visitorViews.delete(id);
         },
       });
@@ -1000,7 +899,6 @@ export class BiomeScene extends Phaser.Scene {
       return;
     }
 
-    const dt = this.time.now - this.pointerDownAt;
     const moved = Phaser.Math.Distance.Between(
       this.pointerDownPos.x,
       this.pointerDownPos.y,
@@ -1108,48 +1006,19 @@ function needArticle(tool: "axe" | "pickaxe"): string {
   return tool === "axe" ? "an axe" : "a pickaxe";
 }
 
-function fillPolygon(g: Phaser.GameObjects.Graphics, pts: ReadonlyArray<readonly [number, number]>) {
-  if (pts.length === 0) return;
-  const first = pts[0]!;
-  g.beginPath();
-  g.moveTo(first[0], first[1]);
-  for (let i = 1; i < pts.length; i++) {
-    const p = pts[i]!;
-    g.lineTo(p[0], p[1]);
+function obstacleFrame(kind: ObstacleKind, gx: number, gy: number): TileName {
+  switch (kind) {
+    case "tree":
+      return pickVariant(["tree_oak", "tree_pine"] as const, gx, gy);
+    case "rock":
+      return pickVariant(["rock_a", "rock_b"] as const, gx, gy);
+    case "cactus":
+      return "cactus";
+    case "bush":
+      return "bush";
+    case "workbench":
+      return "workbench";
   }
-  g.closePath();
-  g.fillPath();
-}
-
-function computeTileColor(gx: number, gy: number, biome: Biome): number {
-  const baseHex = BIOMES[biome].swatch;
-  const base = hexToInt(baseHex);
-  let blendColor = base;
-  let blendWeight = 0;
-  for (let dy = -BLEND_RADIUS; dy <= BLEND_RADIUS; dy++) {
-    for (let dx = -BLEND_RADIUS; dx <= BLEND_RADIUS; dx++) {
-      if (dx === 0 && dy === 0) continue;
-      const dist = Math.abs(dx) + Math.abs(dy);
-      if (dist > BLEND_RADIUS) continue;
-      const nb = biomeAt(gx + dx, gy + dy);
-      if (nb === biome) continue;
-      const w = (BLEND_RADIUS + 1 - dist) / (BLEND_RADIUS + 1);
-      const nbColor = hexToInt(BIOMES[nb].swatch);
-      if (blendWeight === 0) {
-        blendColor = nbColor;
-        blendWeight = w;
-      } else {
-        blendColor = mixToward(blendColor, nbColor, w / (blendWeight + w));
-        blendWeight += w;
-      }
-    }
-  }
-  if (blendWeight === 0) {
-    return (gx + gy) % 2 === 0 ? base : mixToward(base, 0xffffff, 0.05);
-  }
-  const noise = blendNoise(gx, gy);
-  const t = Math.min(0.5, blendWeight * 0.45 + noise * 0.05);
-  return mixToward(base, blendColor, t);
 }
 
 function visitorSlot(
@@ -1177,23 +1046,6 @@ function visitorSlot(
 function easeOutCubic(t: number): number {
   const u = 1 - t;
   return 1 - u * u * u;
-}
-
-function hexToInt(hex: string): number {
-  return parseInt(hex.replace("#", ""), 16);
-}
-
-function mixToward(color: number, target: number, t: number): number {
-  const r1 = (color >> 16) & 0xff;
-  const g1 = (color >> 8) & 0xff;
-  const b1 = color & 0xff;
-  const r2 = (target >> 16) & 0xff;
-  const g2 = (target >> 8) & 0xff;
-  const b2 = target & 0xff;
-  const r = Math.round(r1 + (r2 - r1) * t);
-  const g = Math.round(g1 + (g2 - g1) * t);
-  const b = Math.round(b1 + (b2 - b1) * t);
-  return (r << 16) | (g << 8) | b;
 }
 
 function hashString(s: string): number {
