@@ -126,6 +126,13 @@ export class BiomeScene extends Phaser.Scene {
   }
 
   create() {
+    // Phaser does NOT auto-call user `shutdown()` methods — they have to be
+    // wired to the SHUTDOWN event explicitly, otherwise stale Maps leak into
+    // the next scene activation. Without this listener, the `chunks` Map
+    // would still point at containers destroyed by the global DisplayList
+    // shutdown, and `paintChunk` would silently fail to add child Images.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.shutdown, this);
+
     this.dpr = (this.game.registry.get("dpr") as number) ?? 1;
     this.cameras.main.setBackgroundColor(COLORS.bg);
 

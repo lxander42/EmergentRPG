@@ -86,6 +86,9 @@ export class WorldScene extends Phaser.Scene {
   }
 
   create() {
+    // Phaser does not auto-wire user `shutdown()` — register it explicitly
+    // so handlers added below are torn down on world<->biome scene swaps.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.shutdown, this);
     this.dpr = (this.game.registry.get("dpr") as number) ?? 1;
     this.cameras.main.setBackgroundColor(COLORS.bg);
     this.tileLayer = this.add.graphics();
