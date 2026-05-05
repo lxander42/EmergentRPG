@@ -44,9 +44,7 @@ const COLORS = {
   outline: 0x2c2820,
 };
 
-// Stamp configs reused per-tile to avoid object churn inside the chunk paint.
-const GROUND_STAMP = { originX: 0, originY: 0, scale: 2 } as const;
-const MATERIAL_STAMP = { originX: 0, originY: 0, scale: 2, alpha: 0.7 } as const;
+const MATERIAL_ALPHA = 0.7;
 
 type VisitorView = {
   body: Phaser.GameObjects.Image;
@@ -72,7 +70,12 @@ type FogContext = {
 };
 
 type ChunkEntry = {
-  rt: Phaser.GameObjects.RenderTexture;
+  // Container-of-Images per region. Each tile is a 16-px atlas frame
+  // displayed at CELL px via setDisplaySize. Cheaper to manage than a
+  // RenderTexture because there's no DynamicTexture command buffer to
+  // reset across scene swaps — Phaser's Canvas renderer just iterates
+  // the container's children each frame.
+  container: Phaser.GameObjects.Container;
   // Reference-equality tags. Interior mutations follow an immutable pattern
   // (clearObstacle / removeResource / removeLoot / addLoot return new arrays),
   // so a single ref check is enough to know whether to repaint.
@@ -191,8 +194,11 @@ export class BiomeScene extends Phaser.Scene {
     }
     this.visitorViews.clear();
     this.visitorHits = [];
-    for (const entry of this.chunks.values()) entry.rt.destroy();
+    for (const entry of this.chunks.values()) entry.container.destroy(true);
     this.chunks.clear();
+    this.prevPlayerHealth = -1;
+    this.prevNpcHealth.clear();
+    this.seenPickupIds.clear();
     this.cancelLongPress();
   }
 
@@ -296,7 +302,7 @@ export class BiomeScene extends Phaser.Scene {
         .sort((a, b) => a[1].lastUsedTick - b[1].lastUsedTick);
       while (this.chunks.size > MAX_CACHED_CHUNKS && entries.length > 0) {
         const next = entries.shift()!;
-        next[1].rt.destroy();
+        next[1].container.destroy(true);
         this.chunks.delete(next[0]);
       }
     }
@@ -316,11 +322,10 @@ export class BiomeScene extends Phaser.Scene {
         entry.resources !== (interior?.resources ?? null) ||
         entry.loot !== (interior?.loot ?? null));
     if (!entry) {
-      const rt = this.add.renderTexture(rx * CHUNK_PX, ry * CHUNK_PX, CHUNK_PX, CHUNK_PX);
-      rt.setOrigin(0, 0);
-      this.chunkLayer.add(rt);
+      const container = this.add.container(rx * CHUNK_PX, ry * CHUNK_PX);
+      this.chunkLayer.add(container);
       entry = {
-        rt,
+        container,
         obstacles: null,
         resources: null,
         loot: null,
@@ -340,35 +345,35 @@ export class BiomeScene extends Phaser.Scene {
     ry: number,
     interior: BiomeInterior | undefined,
   ) {
-    const { rt } = entry;
-    rt.clear();
+    const { container } = entry;
+    container.removeAll(true);
     const baseBiome = interior ? interior.biome : biomeAt(rx, ry);
 
-    // Ground pass — every tile gets a sprite stamp. RT origin is region-local
-    // so tile (lx, ly) lives at (lx * CELL, ly * CELL). Each tile uses the
-    // biome of its global coords so a region that straddles a biome boundary
-    // still mixes correctly without the old colour-blend cache.
+    // Ground pass — every tile is its own Image child of the chunk
+    // container. Container is positioned at the region's world origin so
+    // tile (lx, ly) lives at child-local (lx * CELL, ly * CELL).
     for (let ly = 0; ly < INTERIOR_H; ly++) {
       for (let lx = 0; lx < INTERIOR_W; lx++) {
         const gx = rx * INTERIOR_W + lx;
         const gy = ry * INTERIOR_H + ly;
         const biome = interior ? baseBiome : biomeAt(gx, gy);
         const variant = pickVariant(BIOMES[biome].variants, gx, gy);
-        rt.stamp(ATLAS_KEY, frameKey(variant), lx * CELL, ly * CELL, GROUND_STAMP);
+        const tile = this.add.image(0, 0, ATLAS_KEY, frameKey(variant));
+        tile.setOrigin(0, 0);
+        tile.setPosition(lx * CELL, ly * CELL);
+        tile.setDisplaySize(CELL, CELL);
+        container.add(tile);
       }
     }
 
     if (!interior) {
-      rt.render();
       entry.obstacles = null;
       entry.resources = null;
       entry.loot = null;
       return;
     }
 
-    // Obstacles, resources and loot bake into the same RT — chunk becomes a
-    // single static image. Mutations invalidate via array-reference change
-    // (see ensureChunk).
+    // Obstacles render on top of ground tiles via container child order.
     for (let ly = 0; ly < INTERIOR_H; ly++) {
       for (let lx = 0; lx < INTERIOR_W; lx++) {
         const kind = obstacleKindAt(interior, lx, ly);
@@ -376,33 +381,31 @@ export class BiomeScene extends Phaser.Scene {
         const gx = rx * INTERIOR_W + lx;
         const gy = ry * INTERIOR_H + ly;
         const frame = obstacleFrame(kind, gx, gy);
-        rt.stamp(ATLAS_KEY, frameKey(frame), lx * CELL, ly * CELL, GROUND_STAMP);
+        const sprite = this.add.image(0, 0, ATLAS_KEY, frameKey(frame));
+        sprite.setOrigin(0, 0);
+        sprite.setPosition(lx * CELL, ly * CELL);
+        sprite.setDisplaySize(CELL, CELL);
+        container.add(sprite);
       }
     }
 
     for (const r of interior.resources) {
       const meta = RESOURCES[r.kind];
-      const config = meta.food ? GROUND_STAMP : MATERIAL_STAMP;
-      rt.stamp(
-        ATLAS_KEY,
-        frameKey(meta.frame),
-        r.lx * CELL,
-        r.ly * CELL,
-        config,
-      );
+      const sprite = this.add.image(0, 0, ATLAS_KEY, frameKey(meta.frame));
+      sprite.setOrigin(0, 0);
+      sprite.setPosition(r.lx * CELL, r.ly * CELL);
+      sprite.setDisplaySize(CELL, CELL);
+      sprite.setAlpha(meta.food ? 1 : MATERIAL_ALPHA);
+      container.add(sprite);
     }
 
     for (const pile of interior.loot) {
-      rt.stamp(
-        ATLAS_KEY,
-        frameKey("loot_pile"),
-        pile.lx * CELL,
-        pile.ly * CELL,
-        GROUND_STAMP,
-      );
+      const sprite = this.add.image(0, 0, ATLAS_KEY, frameKey("loot_pile"));
+      sprite.setOrigin(0, 0);
+      sprite.setPosition(pile.lx * CELL, pile.ly * CELL);
+      sprite.setDisplaySize(CELL, CELL);
+      container.add(sprite);
     }
-
-    rt.render();
 
     entry.obstacles = interior.obstacles;
     entry.resources = interior.resources;
@@ -605,7 +608,12 @@ export class BiomeScene extends Phaser.Scene {
     const player = useGameStore.getState().world?.life?.player;
     const factionColor =
       FACTIONS.find((f) => f.id === player?.factionOfOriginId)?.color ?? COLORS.player;
-    this.playerImage.setPosition(this.playerCx, this.playerCy + PLAYER_SIZE * 0.35);
+    // Bob the sprite vertically while walking between tiles. Holding the
+    // sprite still off-tick would feel lifeless on a slow speed; holding
+    // through a 250 ms tile transition gives a clear walk cadence.
+    const moving = this.playerTransitionStart !== 0;
+    const bob = moving ? Math.sin(this.time.now * 0.018) * 1.6 : 0;
+    this.playerImage.setPosition(this.playerCx, this.playerCy + PLAYER_SIZE * 0.35 + bob);
     this.playerImage.setTint(factionColor);
     this.playerShadow.setPosition(this.playerCx, this.playerCy + PLAYER_SIZE * 0.42);
   }
@@ -684,7 +692,11 @@ export class BiomeScene extends Phaser.Scene {
         view.body.setTint(tint);
         view.tint = tint;
       }
-      view.body.setPosition(view.cx, view.cy + NPC_SIZE * 0.35);
+      const distSq =
+        (view.targetCx - view.cx) * (view.targetCx - view.cx) +
+        (view.targetCy - view.cy) * (view.targetCy - view.cy);
+      const bob = distSq > 0.5 ? Math.sin(this.time.now * 0.018 + view.cx * 0.05) * 1.4 : 0;
+      view.body.setPosition(view.cx, view.cy + NPC_SIZE * 0.35 + bob);
       view.shadow.setPosition(view.cx, view.cy + NPC_SIZE * 0.42);
       hits.push({ id: npc.id, x: view.cx, y: view.cy, half: NPC_SIZE / 2 + 14 });
     }
