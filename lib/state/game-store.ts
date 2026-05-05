@@ -137,6 +137,7 @@ type GameStore = {
   eatFood: (kind: import("@/content/resources").ResourceKind) => void;
   teleportToRegion: (rx: number, ry: number) => void;
   inspectBiome: (rx: number, ry: number) => void;
+  examineKind: (kind: string) => void;
 };
 
 function withLife(world: World, life: LifeState): World {
@@ -647,6 +648,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   inspectBiome: (rx, ry) => {
     get().teleportToRegion(rx, ry);
+  },
+
+  examineKind: (kind) => {
+    const current = get().world;
+    if (!current) return;
+    if (current.examinedKinds[kind]) return;
+    set({
+      world: {
+        ...current,
+        examinedKinds: { ...current.examinedKinds, [kind]: true as const },
+      },
+    });
   },
 }));
 

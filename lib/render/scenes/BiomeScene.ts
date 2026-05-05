@@ -6,8 +6,6 @@ import {
   INTERIOR_H,
   obstacleKindAt,
   regionKey,
-  resourceAtLocal,
-  isLocalObstacle,
   type BiomeInterior,
   type ObstacleKind,
 } from "@/lib/sim/biome-interior";
@@ -111,7 +109,7 @@ export class BiomeScene extends Phaser.Scene {
   private dpr = 1;
   private tileColorCache = new Map<string, number>();
   private longPressTimer: Phaser.Time.TimerEvent | null = null;
-  private peekText: Phaser.GameObjects.Text | null = null;
+  private longPressFired = false;
 
   constructor() {
     super("Biome");
@@ -173,10 +171,6 @@ export class BiomeScene extends Phaser.Scene {
     this.visitorHits = [];
     this.tileColorCache.clear();
     this.cancelLongPress();
-    if (this.peekText) {
-      this.peekText.destroy();
-      this.peekText = null;
-    }
   }
 
   update(_time: number, delta: number) {
@@ -915,12 +909,13 @@ export class BiomeScene extends Phaser.Scene {
     this.dragMoved = false;
     this.pointerDownAt = this.time.now;
     this.pointerDownPos = { x: pointer.x, y: pointer.y };
+    this.longPressFired = false;
     const startX = pointer.x;
     const startY = pointer.y;
     this.longPressTimer = this.time.delayedCall(500, () => {
       this.longPressTimer = null;
       if (this.dragMoved) return;
-      this.showTilePeek(startX, startY);
+      this.openContextMenuAt(startX, startY);
     });
   }
 
@@ -961,12 +956,18 @@ export class BiomeScene extends Phaser.Scene {
     }
   }
 
-  private showTilePeek(screenX: number, screenY: number) {
+  private openContextMenuAt(screenX: number, screenY: number) {
     const store = useGameStore.getState();
     const world = store.world;
     if (!world?.life) return;
     const player = world.life.player;
     const wp = this.cameras.main.getWorldPoint(screenX, screenY);
+    const tappedVisitor = this.hitVisitorAt(wp.x, wp.y);
+    if (tappedVisitor) {
+      store.openNpcContextMenu(tappedVisitor, screenX, screenY);
+      this.longPressFired = true;
+      return;
+    }
     const gx = Math.floor(wp.x / CELL);
     const gy = Math.floor(wp.y / CELL);
     const dx = gx - player.gx;
@@ -976,48 +977,10 @@ export class BiomeScene extends Phaser.Scene {
     const { rx, ry, lx, ly } = globalToLocal(gx, gy);
     const interior = world.biomeInteriors[regionKey(rx, ry)];
     if (!interior) return;
-    if (isLocalObstacle(interior, lx, ly)) return;
-
-    let label: string | null = null;
-    const npc = world.npcs.find((n) => {
-      if (n.rx !== rx || n.ry !== ry) return false;
-      if (n.interior) return n.interior.lx === lx && n.interior.ly === ly;
-      return false;
-    });
-    if (npc) {
-      const faction = FACTIONS.find((f) => f.id === npc.factionId);
-      label = faction ? `${npc.name} of ${faction.name}` : npc.name;
-    } else {
-      const resource = resourceAtLocal(interior, lx, ly);
-      if (resource) label = RESOURCES[resource.kind].label;
-    }
-    if (!label) return;
-
-    if (this.peekText) {
-      this.peekText.destroy();
-      this.peekText = null;
-    }
-    const center = tileCenter(gx, gy);
-    const text = this.add.text(center.x, center.y - 18, label, {
-      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-      fontSize: "11px",
-      color: "#2c2820",
-      backgroundColor: "#fbf6ed",
-      padding: { x: 4, y: 2 },
-    });
-    text.setOrigin(0.5, 1);
-    text.setDepth(12);
-    this.peekText = text;
-    this.tweens.add({
-      targets: text,
-      alpha: { from: 1, to: 0 },
-      duration: 1500,
-      ease: "Cubic.easeOut",
-      onComplete: () => {
-        text.destroy();
-        if (this.peekText === text) this.peekText = null;
-      },
-    });
+    const kind = obstacleKindAt(interior, lx, ly);
+    if (!kind) return;
+    store.openObstacleContextMenu(rx, ry, lx, ly, kind, screenX, screenY, false);
+    this.longPressFired = true;
   }
 
   private onPointerUp(pointer: Phaser.Input.Pointer) {
@@ -1036,12 +999,14 @@ export class BiomeScene extends Phaser.Scene {
       pointer.y,
     );
 
-    if (!this.dragMoved && dt < 350 && moved < 10) {
+    if (!this.dragMoved && !this.longPressFired && moved < 10) {
       const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
       const tappedVisitor = this.hitVisitorAt(world.x, world.y);
       const store = useGameStore.getState();
       if (tappedVisitor) {
-        store.openNpcContextMenu(tappedVisitor, pointer.x, pointer.y);
+        store.closeNpcContextMenu();
+        store.closeObstacleContextMenu();
+        store.selectNpc(tappedVisitor);
       } else {
         const gx = Math.floor(world.x / CELL);
         const gy = Math.floor(world.y / CELL);
@@ -1054,10 +1019,15 @@ export class BiomeScene extends Phaser.Scene {
         const interior = store.world?.biomeInteriors[regionKey(rx, ry)];
         const kind = visible && interior ? obstacleKindAt(interior, lx, ly) : null;
         store.closeNpcContextMenu();
+        store.closeObstacleContextMenu();
         if (kind) {
-          store.openObstacleContextMenu(rx, ry, lx, ly, kind, pointer.x, pointer.y, false);
+          const action = defaultObstacleAction(kind);
+          if (action) {
+            store.interactWithObstacle(rx, ry, lx, ly, action);
+          } else {
+            store.walkPlayerTo(gx, gy);
+          }
         } else {
-          store.closeObstacleContextMenu();
           store.walkPlayerTo(gx, gy);
         }
       }
@@ -1066,6 +1036,7 @@ export class BiomeScene extends Phaser.Scene {
     this.cancelLongPress();
     this.dragStart = null;
     this.dragMoved = false;
+    this.longPressFired = false;
     this.pinchInitial = null;
   }
 
@@ -1091,6 +1062,21 @@ export class BiomeScene extends Phaser.Scene {
 
 function tileCenter(gx: number, gy: number): { x: number; y: number } {
   return { x: gx * CELL + CELL / 2, y: gy * CELL + CELL / 2 };
+}
+
+function defaultObstacleAction(
+  kind: ObstacleKind,
+): "harvest" | "workbench" | null {
+  switch (kind) {
+    case "tree":
+    case "rock":
+      return "harvest";
+    case "workbench":
+      return "workbench";
+    case "cactus":
+    case "bush":
+      return null;
+  }
 }
 
 function fillPolygon(g: Phaser.GameObjects.Graphics, pts: ReadonlyArray<readonly [number, number]>) {

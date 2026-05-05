@@ -140,7 +140,7 @@ export default function NpcContextMenu() {
           attackNpc(ctx.id);
           close();
         }}
-        className="tactile mt-1 inline-flex items-center gap-2 rounded-xl bg-[rgba(217,104,70,0.12)] px-2 py-2 text-left text-sm font-medium text-[var(--color-accent)] hover:bg-[rgba(217,104,70,0.2)]"
+        className="tactile mt-1 inline-flex items-center gap-2 rounded-xl bg-[rgba(176,49,49,0.12)] px-2 py-2 text-left text-sm font-medium text-[#b03131] hover:bg-[rgba(176,49,49,0.2)]"
       >
         <Sword size={14} weight="fill" />
         Attack

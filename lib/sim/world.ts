@@ -35,7 +35,7 @@ import {
 
 export { biomeAt, isPassable, type Biome } from "@/lib/sim/biome";
 
-export const WORLD_VERSION = 11;
+export const WORLD_VERSION = 12;
 export const MAP_W = 32;
 export const MAP_H = 32;
 export const NPC_COUNT = 200;
@@ -102,6 +102,9 @@ export type World = {
   // Per-region 20x20 tile bitmaps marking tiles ever within perception of
   // the player. Drives fog-of-war on both the biome and world maps.
   discoveredTiles: Record<string, Uint8Array>;
+  // Kinds the player has explicitly examined. Drives whether obstacle
+  // blurbs and (later) item descriptions are revealed in the UI.
+  examinedKinds: Record<string, true>;
   // factionId -> per-player reputation. Drives hostile/friendly encounters.
   // Halved on rebirth so past misdeeds linger but don't doom the new life.
   playerReputation: Record<string, number>;
@@ -134,6 +137,7 @@ export function createWorld(seed = Date.now() & 0xffffffff): World {
     regionPresence: {},
     regionControl: {},
     discoveredTiles: {},
+    examinedKinds: {},
     playerReputation: {},
     factionRelations: {},
     recentFactionAttacks: {},

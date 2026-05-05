@@ -41,6 +41,8 @@ export default function ObstacleContextMenu() {
   const ctx = useGameStore((s) => s.obstacleContextMenu);
   const close = useGameStore((s) => s.closeObstacleContextMenu);
   const interact = useGameStore((s) => s.interactWithObstacle);
+  const examineKind = useGameStore((s) => s.examineKind);
+  const examined = useGameStore((s) => s.world?.examinedKinds ?? null);
   const player = useGameStore((s) => s.world?.life?.player ?? null);
 
   const ref = useRef<HTMLDivElement | null>(null);
@@ -90,16 +92,19 @@ export default function ObstacleContextMenu() {
   if (!ctx || !player || !pos) return null;
   const { rx, ry, lx, ly, kind, remembered } = ctx;
   const label = OBSTACLE_LABEL[kind];
+  const isExamined = Boolean(examined && examined[`obstacle:${kind}`]);
   const blurb = remembered
     ? "Out of sight. You remember it being here."
-    : OBSTACLE_BLURB[kind];
+    : isExamined
+      ? OBSTACLE_BLURB[kind]
+      : null;
 
   const actions: ActionDef[] = [
     {
       id: "examine",
       label: "Examine",
       icon: "eye",
-      onClick: () => close(),
+      onClick: () => examineKind(`obstacle:${kind}`),
     },
   ];
   if (!remembered && kind === "tree") {
@@ -200,10 +205,14 @@ export default function ObstacleContextMenu() {
         </div>
       </div>
       <div className="my-0.5 h-px bg-[var(--color-border)]" aria-hidden />
-      <p className="px-2.5 pb-1 pt-0.5 text-xs leading-snug text-[var(--color-fg-muted)]">
-        {blurb}
-      </p>
-      <div className="my-0.5 h-px bg-[var(--color-border)]" aria-hidden />
+      {blurb && (
+        <>
+          <p className="px-2.5 pb-1 pt-0.5 text-xs leading-snug text-[var(--color-fg-muted)]">
+            {blurb}
+          </p>
+          <div className="my-0.5 h-px bg-[var(--color-border)]" aria-hidden />
+        </>
+      )}
       {actions.map((a) => (
         <button
           key={a.id}
