@@ -149,12 +149,6 @@ export function tickPlayer(input: PlayerTickInput): PlayerTickOutput {
             energy,
             energyAccumDrain: nextAccum,
           };
-          // Auto-pickup loot at the new tile.
-          const picked = pickupLoot(player, interiors, inventory);
-          player = picked.player;
-          interiors = picked.interiors;
-          inventory = picked.inventory;
-          for (const p of picked.pickups) pickups.push(p);
         }
       }
     }
@@ -170,6 +164,13 @@ export function tickPlayer(input: PlayerTickInput): PlayerTickOutput {
       interiors = result.interiors;
       inventory = result.inventory;
       if (result.pickup) pickups.push(result.pickup);
+    } else if (action.kind === "pickup") {
+      player = { ...player, pendingAction: null };
+      const result = tryPickup(player, interiors, inventory, action.lootId);
+      player = result.player;
+      interiors = result.interiors;
+      inventory = result.inventory;
+      for (const p of result.pickups) pickups.push(p);
     } else if (action.kind === "harvest") {
       const result = tryHarvest(player, interiors, inventory, action, rng);
       player = result.player;
@@ -502,10 +503,11 @@ function tryDeconstruct(
   };
 }
 
-function pickupLoot(
+function tryPickup(
   player: Player,
   interiors: Record<string, BiomeInterior>,
   inventory: Inventory,
+  lootId: string,
 ): {
   player: Player;
   interiors: Record<string, BiomeInterior>;
@@ -517,7 +519,7 @@ function pickupLoot(
   const interior = interiors[k];
   if (!interior) return { player, interiors, inventory, pickups: [] };
   const pile = lootAtLocal(interior, lx, ly);
-  if (!pile) return { player, interiors, inventory, pickups: [] };
+  if (!pile || pile.id !== lootId) return { player, interiors, inventory, pickups: [] };
   let nextInventory: Inventory = inventory;
   const pickups: PickupNotice[] = [];
   let nextPlayer = player;

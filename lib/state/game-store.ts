@@ -27,7 +27,6 @@ import {
   placeObstacle,
   regionCenterGlobal,
   regionKey,
-  resourceAtLocal,
   INTERIOR_W,
   INTERIOR_H,
   type ObstacleKind,
@@ -53,6 +52,12 @@ export type SelectedRegion = { rx: number; ry: number };
 export type View = "world" | "biome";
 
 export type NpcContextMenu = { id: string; x: number; y: number };
+export type StatusMessage = {
+  id: number;
+  text: string;
+  addedAt: number;
+};
+
 export type ObstacleContextMenuState = {
   rx: number;
   ry: number;
@@ -82,6 +87,7 @@ type GameStore = {
   npcContextMenu: NpcContextMenu | null;
   obstacleContextMenu: ObstacleContextMenuState | null;
   pendingMarker: { rx: number; ry: number } | null;
+  statusMessages: StatusMessage[];
 
   startNew: () => void;
   loadFromDisk: (slot: string) => Promise<void>;
@@ -143,6 +149,22 @@ type GameStore = {
   cancelMarker: () => void;
   addMapMarker: (rx: number, ry: number, name: string) => void;
   removeMapMarker: (id: string) => void;
+  pushStatus: (text: string) => void;
+  dismissStatus: (id: number) => void;
+  collectResourceAt: (
+    rx: number,
+    ry: number,
+    lx: number,
+    ly: number,
+    resourceId: string,
+  ) => void;
+  pickupLootAt: (
+    rx: number,
+    ry: number,
+    lx: number,
+    ly: number,
+    lootId: string,
+  ) => void;
 };
 
 function withLife(world: World, life: LifeState): World {
@@ -172,6 +194,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   npcContextMenu: null,
   obstacleContextMenu: null,
   pendingMarker: null,
+  statusMessages: [],
 
   startNew: () => {
     const fresh = createWorld();
@@ -315,21 +338,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
       WALK_MAX_RADIUS,
     );
 
-    let pendingAction: PendingAction | null = null;
-    if (path) {
-      const interior = world.biomeInteriors[regionKey(dst.rx, dst.ry)];
-      if (interior) {
-        const r = resourceAtLocal(interior, dst.lx, dst.ly);
-        if (r) pendingAction = { kind: "collect", resourceId: r.id };
-      }
-    }
-
     const player: Player = path
       ? {
           ...startingPlayer,
           route: path.length === 0 ? null : path,
           stepCooldown: path.length === 0 ? 0 : Math.max(1, startingPlayer.stats.speed),
-          pendingAction,
+          pendingAction: null,
         }
       : { ...startingPlayer, pendingAction: null };
 
@@ -693,6 +707,93 @@ export const useGameStore = create<GameStore>((set, get) => ({
         mapMarkers: current.mapMarkers.filter((m) => m.id !== id),
       },
     });
+  },
+
+  pushStatus: (text) => {
+    const id = Date.now() + Math.floor(Math.random() * 1000);
+    const next = [...get().statusMessages, { id, text, addedAt: Date.now() }];
+    set({ statusMessages: next.slice(-6) });
+  },
+  dismissStatus: (id) => {
+    set({ statusMessages: get().statusMessages.filter((m) => m.id !== id) });
+  },
+
+  collectResourceAt: (rx, ry, lx, ly, resourceId) => {
+    const current = get().world;
+    if (!current?.life || current.life.gameOver) return;
+    const target = localToGlobal(rx, ry, lx, ly);
+    let world = ensureInteriorsForRegion(current, rx, ry);
+    const startingPlayer = world.life!.player;
+    const isObstacle = (tgx: number, tgy: number): boolean => {
+      const loc = globalToLocal(tgx, tgy);
+      if (loc.rx < 0 || loc.ry < 0 || loc.rx >= MAP_W || loc.ry >= MAP_H) return true;
+      if (loc.lx < 0 || loc.ly < 0 || loc.lx >= INTERIOR_W || loc.ly >= INTERIOR_H) return true;
+      const interior = world.biomeInteriors[regionKey(loc.rx, loc.ry)];
+      if (!interior) {
+        const w2 = ensureInteriorsForRegion(world, loc.rx, loc.ry);
+        if (w2 !== world) world = w2;
+        const fresh = world.biomeInteriors[regionKey(loc.rx, loc.ry)];
+        if (!fresh) return true;
+        return isLocalObstacle(fresh, loc.lx, loc.ly);
+      }
+      return isLocalObstacle(interior, loc.lx, loc.ly);
+    };
+    const path = bfsPredicate(
+      isObstacle,
+      startingPlayer.gx,
+      startingPlayer.gy,
+      target.gx,
+      target.gy,
+      WALK_MAX_RADIUS,
+    );
+    if (!path) return;
+    const player: Player = {
+      ...startingPlayer,
+      route: path.length === 0 ? null : path,
+      stepCooldown: path.length === 0 ? 0 : Math.max(1, startingPlayer.stats.speed),
+      pendingAction: { kind: "collect", resourceId },
+    };
+    const next = withPlayer(world, player);
+    if (next) set({ world: next });
+  },
+
+  pickupLootAt: (rx, ry, lx, ly, lootId) => {
+    const current = get().world;
+    if (!current?.life || current.life.gameOver) return;
+    const target = localToGlobal(rx, ry, lx, ly);
+    let world = ensureInteriorsForRegion(current, rx, ry);
+    const startingPlayer = world.life!.player;
+    const isObstacle = (tgx: number, tgy: number): boolean => {
+      const loc = globalToLocal(tgx, tgy);
+      if (loc.rx < 0 || loc.ry < 0 || loc.rx >= MAP_W || loc.ry >= MAP_H) return true;
+      if (loc.lx < 0 || loc.ly < 0 || loc.lx >= INTERIOR_W || loc.ly >= INTERIOR_H) return true;
+      const interior = world.biomeInteriors[regionKey(loc.rx, loc.ry)];
+      if (!interior) {
+        const w2 = ensureInteriorsForRegion(world, loc.rx, loc.ry);
+        if (w2 !== world) world = w2;
+        const fresh = world.biomeInteriors[regionKey(loc.rx, loc.ry)];
+        if (!fresh) return true;
+        return isLocalObstacle(fresh, loc.lx, loc.ly);
+      }
+      return isLocalObstacle(interior, loc.lx, loc.ly);
+    };
+    const path = bfsPredicate(
+      isObstacle,
+      startingPlayer.gx,
+      startingPlayer.gy,
+      target.gx,
+      target.gy,
+      WALK_MAX_RADIUS,
+    );
+    if (!path) return;
+    const player: Player = {
+      ...startingPlayer,
+      route: path.length === 0 ? null : path,
+      stepCooldown: path.length === 0 ? 0 : Math.max(1, startingPlayer.stats.speed),
+      pendingAction: { kind: "pickup", rx, ry, lx, ly, lootId },
+    };
+    const next = withPlayer(world, player);
+    if (next) set({ world: next });
   },
 }));
 

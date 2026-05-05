@@ -4,11 +4,14 @@ import {
   globalToLocal,
   INTERIOR_W,
   INTERIOR_H,
+  lootAtLocal,
   obstacleKindAt,
   regionKey,
+  resourceAtLocal,
   type BiomeInterior,
   type ObstacleKind,
 } from "@/lib/sim/biome-interior";
+import { hasTool } from "@/lib/sim/tools";
 import { biomeAt, blendNoise, type Biome } from "@/lib/sim/biome";
 import { BIOMES } from "@/content/biomes";
 import { RESOURCES, type ResourceKind } from "@/content/resources";
@@ -912,7 +915,7 @@ export class BiomeScene extends Phaser.Scene {
     this.longPressFired = false;
     const startX = pointer.x;
     const startY = pointer.y;
-    this.longPressTimer = this.time.delayedCall(500, () => {
+    this.longPressTimer = this.time.delayedCall(600, () => {
       this.longPressTimer = null;
       if (this.dragMoved) return;
       this.openContextMenuAt(startX, startY);
@@ -956,6 +959,26 @@ export class BiomeScene extends Phaser.Scene {
     }
   }
 
+  private flashTapRing(wx: number, wy: number, color: number) {
+    const ring = this.add.graphics();
+    ring.setDepth(8);
+    let progress = 0;
+    this.tweens.add({
+      targets: { v: 0 },
+      v: 1,
+      duration: 380,
+      ease: "Cubic.easeOut",
+      onUpdate: (tween) => {
+        progress = tween.progress;
+        ring.clear();
+        const radius = 4 + progress * 22;
+        ring.lineStyle(2.5, color, 0.9 * (1 - progress));
+        ring.strokeCircle(wx, wy, radius);
+      },
+      onComplete: () => ring.destroy(),
+    });
+  }
+
   private openContextMenuAt(screenX: number, screenY: number) {
     const store = useGameStore.getState();
     const world = store.world;
@@ -964,6 +987,7 @@ export class BiomeScene extends Phaser.Scene {
     const wp = this.cameras.main.getWorldPoint(screenX, screenY);
     const tappedVisitor = this.hitVisitorAt(wp.x, wp.y);
     if (tappedVisitor) {
+      this.flashTapRing(wp.x, wp.y, COLORS.outline);
       store.openNpcContextMenu(tappedVisitor, screenX, screenY);
       this.longPressFired = true;
       return;
@@ -979,6 +1003,7 @@ export class BiomeScene extends Phaser.Scene {
     if (!interior) return;
     const kind = obstacleKindAt(interior, lx, ly);
     if (!kind) return;
+    this.flashTapRing(wp.x, wp.y, COLORS.outline);
     store.openObstacleContextMenu(rx, ry, lx, ly, kind, screenX, screenY, false);
     this.longPressFired = true;
   }
@@ -1001,6 +1026,7 @@ export class BiomeScene extends Phaser.Scene {
 
     if (!this.dragMoved && !this.longPressFired && moved < 10) {
       const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+      this.flashTapRing(world.x, world.y, COLORS.routeDot);
       const tappedVisitor = this.hitVisitorAt(world.x, world.y);
       const store = useGameStore.getState();
       if (tappedVisitor) {
@@ -1018,15 +1044,30 @@ export class BiomeScene extends Phaser.Scene {
         const visible = player ? dxp * dxp + dyp * dyp <= perception * perception : false;
         const interior = store.world?.biomeInteriors[regionKey(rx, ry)];
         const kind = visible && interior ? obstacleKindAt(interior, lx, ly) : null;
+        const resource = visible && interior ? resourceAtLocal(interior, lx, ly) : null;
+        const loot = visible && interior ? lootAtLocal(interior, lx, ly) : null;
         store.closeNpcContextMenu();
         store.closeObstacleContextMenu();
         if (kind) {
           const action = defaultObstacleAction(kind);
-          if (action) {
+          if (action === "harvest" && player) {
+            const need: "axe" | "pickaxe" =
+              kind === "tree" ? "axe" : "pickaxe";
+            if (!hasTool(player.tools, need)) {
+              store.pushStatus(`You need ${needArticle(need)}.`);
+              store.walkPlayerTo(gx, gy);
+            } else {
+              store.interactWithObstacle(rx, ry, lx, ly, action);
+            }
+          } else if (action) {
             store.interactWithObstacle(rx, ry, lx, ly, action);
           } else {
             store.walkPlayerTo(gx, gy);
           }
+        } else if (loot) {
+          store.pickupLootAt(rx, ry, lx, ly, loot.id);
+        } else if (resource) {
+          store.collectResourceAt(rx, ry, lx, ly, resource.id);
         } else {
           store.walkPlayerTo(gx, gy);
         }
@@ -1077,6 +1118,10 @@ function defaultObstacleAction(
     case "bush":
       return null;
   }
+}
+
+function needArticle(tool: "axe" | "pickaxe"): string {
+  return tool === "axe" ? "an axe" : "a pickaxe";
 }
 
 function fillPolygon(g: Phaser.GameObjects.Graphics, pts: ReadonlyArray<readonly [number, number]>) {

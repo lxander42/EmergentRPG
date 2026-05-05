@@ -13,10 +13,9 @@ import WorkbenchPanel from "@/components/panels/WorkbenchPanel";
 import PastLivesPanel from "@/components/PastLivesPanel";
 import TutorialModal from "@/components/TutorialModal";
 import RecenterButton from "@/components/RecenterButton";
-import EncounterToast from "@/components/EncounterToast";
 import EncounterFeed from "@/components/EncounterFeed";
 import FactionLegend from "@/components/FactionLegend";
-import HungerLog from "@/components/HungerLog";
+import StatusLog from "@/components/StatusLog";
 import MarkerNameModal from "@/components/MarkerNameModal";
 import { useGameStore } from "@/lib/state/game-store";
 
@@ -61,9 +60,8 @@ function PlayInner() {
       <InventoryPanel />
       <WorkbenchPanel />
       <PastLivesPanel />
-      <EncounterToast />
       <EncounterFeed />
-      <HungerLog />
+      <StatusLog />
       <MarkerNameModal />
       <TutorialModal />
     </main>

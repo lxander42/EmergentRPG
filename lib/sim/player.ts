@@ -12,6 +12,7 @@ export type PlayerStats = {
 
 export type PendingAction =
   | { kind: "collect"; resourceId: string }
+  | { kind: "pickup"; rx: number; ry: number; lx: number; ly: number; lootId: string }
   | { kind: "attack"; npcId: string }
   | { kind: "harvest"; rx: number; ry: number; lx: number; ly: number; obstacle: ObstacleKind }
   | { kind: "workbench"; rx: number; ry: number; lx: number; ly: number }

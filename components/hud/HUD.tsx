@@ -12,6 +12,7 @@ import {
   FastForward,
   MapTrifold,
   Heart,
+  ForkKnife,
   Skull,
   TreasureChest,
 } from "@phosphor-icons/react/dist/ssr";
@@ -190,12 +191,16 @@ export default function HUD() {
         <IdentityBadge
           name={player.name}
           factionOfOriginId={player.factionOfOriginId}
+          health={player.health}
+          healthMax={player.healthMax}
+          energy={player.energy}
+          energyMax={player.energyMax}
+          inCombat={inCombat}
         />
       )}
 
       {player && (
         <div className="pointer-events-none absolute inset-x-2 top-16 z-10 flex flex-wrap items-center justify-end gap-2">
-          <HealthStrip health={player.health} max={player.healthMax} inCombat={inCombat} />
           <InventoryStrip
             inventory={inventory}
             tools={player.tools}
@@ -376,82 +381,90 @@ function DebugStrip() {
 function IdentityBadge({
   name,
   factionOfOriginId,
+  health,
+  healthMax,
+  energy,
+  energyMax,
+  inCombat,
 }: {
   name: string;
   factionOfOriginId: string;
+  health: number;
+  healthMax: number;
+  energy: number;
+  energyMax: number;
+  inCombat: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const faction = FACTIONS.find((f) => f.id === factionOfOriginId);
   const color = faction
     ? "#" + faction.color.toString(16).padStart(6, "0")
     : "#cccccc";
   const factionName = faction?.name ?? factionOfOriginId;
+  const lowHealth = health > 0 && health <= Math.ceil(healthMax / 2);
+  const lowEnergy = energy > 0 && energy <= 3;
+  const empty = energy === 0;
   return (
-    <button
-      onClick={() => setExpanded((v) => !v)}
-      aria-label={`You are ${name} of ${factionName}`}
-      title={`${name} · ${factionName}`}
-      className="tactile pointer-events-auto absolute left-2 top-32 z-20 inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] py-1 pl-1 pr-1 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
-    >
-      <span
-        aria-hidden
-        className="h-6 w-6 shrink-0 rounded-md border border-[var(--color-border-strong)]"
-        style={{ background: color }}
-      />
-      {expanded && (
-        <span className="flex flex-col items-start pr-2 leading-tight">
+    <div className="pointer-events-auto absolute left-2 top-16 z-20 flex flex-col items-start gap-1.5">
+      <div
+        className="inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] py-1 pl-1 pr-3 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
+        title={`${name} · ${factionName}`}
+      >
+        <span
+          aria-hidden
+          className="h-6 w-6 shrink-0 rounded-md border border-[var(--color-border-strong)]"
+          style={{ background: color }}
+        />
+        <span className="flex flex-col items-start leading-tight">
           <span className="text-xs font-medium text-[var(--color-fg)]">{name}</span>
           <span className="font-mono text-[9px] uppercase tracking-wider text-[var(--color-fg-muted)]">
             {factionName}
           </span>
         </span>
-      )}
-    </button>
-  );
-}
-
-function HealthStrip({
-  health,
-  max,
-  inCombat,
-}: {
-  health: number;
-  max: number;
-  inCombat: boolean;
-}) {
-  const low = health > 0 && health <= Math.ceil(max / 2);
-  return (
-    <div className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]">
-      {inCombat && (
-        <span
-          aria-hidden
-          className="h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] animate-pulse"
-        />
-      )}
-      <Heart
-        size={14}
-        weight="fill"
-        className={low ? "text-[var(--color-accent)] animate-pulse" : "text-[var(--color-accent)]"}
-      />
-      <div className="flex items-center gap-[3px]">
-        {Array.from({ length: max }).map((_, i) => (
-          <span
-            key={i}
-            aria-hidden
-            className="h-2.5 w-2 rounded-[2px]"
-            style={{
-              background: i < health ? "var(--color-accent)" : "var(--color-surface-warm)",
-              border:
-                i < health
-                  ? "1px solid var(--color-accent)"
-                  : "1px solid var(--color-border)",
-            }}
-          />
-        ))}
       </div>
-      <span className="ml-1 font-mono text-[10px] tabular-nums text-[var(--color-fg-muted)]">
-        {health}/{max}
-      </span>
+      <div className="ml-1 flex items-center gap-2">
+        <span
+          aria-label={`Health ${health}/${healthMax}`}
+          className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 shadow-[0_2px_8px_-4px_rgba(44,40,32,0.18)]"
+        >
+          <Heart
+            size={11}
+            weight="fill"
+            className={
+              lowHealth
+                ? "animate-pulse text-[#b03131]"
+                : "text-[#b03131]"
+            }
+          />
+          <span className="font-mono text-[10px] tabular-nums text-[var(--color-fg)]">
+            {health}/{healthMax}
+          </span>
+          {inCombat && (
+            <span
+              aria-hidden
+              className="ml-0.5 h-1.5 w-1.5 rounded-full bg-[#b03131] animate-pulse"
+            />
+          )}
+        </span>
+        <span
+          aria-label={`Hunger ${energy}/${energyMax}`}
+          className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 shadow-[0_2px_8px_-4px_rgba(44,40,32,0.18)]"
+        >
+          <ForkKnife
+            size={11}
+            weight="fill"
+            className={
+              empty
+                ? "animate-pulse text-[var(--color-accent)]"
+                : lowEnergy
+                  ? "text-[var(--color-accent)]"
+                  : "text-[var(--color-fg-muted)]"
+            }
+          />
+          <span className="font-mono text-[10px] tabular-nums text-[var(--color-fg)]">
+            {energy}/{energyMax}
+          </span>
+        </span>
+      </div>
     </div>
   );
 }
