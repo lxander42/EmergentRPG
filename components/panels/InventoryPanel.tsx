@@ -9,6 +9,7 @@ import { RECIPES, type Recipe } from "@/content/recipes";
 import { affordable } from "@/lib/sim/weapons";
 import { inventoryCapFromBaskets, inventoryTotal } from "@/lib/sim/inventory";
 import { basketCount } from "@/lib/sim/tools";
+import { useOutsideClose } from "@/lib/ui/use-outside-close";
 
 export default function InventoryPanel() {
   const open = useGameStore((s) => s.inventoryOpen);
@@ -16,6 +17,7 @@ export default function InventoryPanel() {
   const world = useGameStore((s) => s.world);
   const craftRecipe = useGameStore((s) => s.craftRecipe);
   const eatFood = useGameStore((s) => s.eatFood);
+  const ref = useOutsideClose(open, close);
 
   if (!open || !world) return null;
 
@@ -31,6 +33,7 @@ export default function InventoryPanel() {
 
   return (
     <aside
+      ref={ref}
       role="dialog"
       aria-label="Inventory"
       className="pointer-events-auto absolute inset-x-2 bottom-2 z-20 max-h-[68dvh] overflow-y-auto rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[0_20px_48px_-20px_rgba(44,40,32,0.25)]"

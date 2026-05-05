@@ -33,11 +33,14 @@ export const RESOURCES: Record<ResourceKind, ResourceMeta> = {
 export type BiomeResourceLists = { food: ResourceKind[]; materials: ResourceKind[] };
 
 // Every passable biome has at least one food source. Density varies.
+// Repeated entries weight the random pick — forests are mostly wood with a
+// minority of stone (sparser than mountain regions, but enough to craft an
+// initial workbench at home).
 export const BIOME_RESOURCES: Record<Biome, BiomeResourceLists> = {
   grass: { food: ["berry", "grain"], materials: ["reed"] },
-  forest: { food: ["berry", "herb"], materials: ["wood"] },
+  forest: { food: ["berry", "herb"], materials: ["wood", "wood", "wood", "stone"] },
   sand: { food: ["shellfish"], materials: ["reed"] },
-  stone: { food: ["tubers"], materials: ["stone", "ore"] },
+  stone: { food: ["tubers"], materials: ["stone", "stone", "ore"] },
   water: { food: [], materials: [] },
 };
 

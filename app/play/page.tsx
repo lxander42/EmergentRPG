@@ -13,9 +13,10 @@ import WorkbenchPanel from "@/components/panels/WorkbenchPanel";
 import PastLivesPanel from "@/components/PastLivesPanel";
 import TutorialModal from "@/components/TutorialModal";
 import RecenterButton from "@/components/RecenterButton";
-import EncounterToast from "@/components/EncounterToast";
 import EncounterFeed from "@/components/EncounterFeed";
 import FactionLegend from "@/components/FactionLegend";
+import StatusLog from "@/components/StatusLog";
+import MarkerNameModal from "@/components/MarkerNameModal";
 import { useGameStore } from "@/lib/state/game-store";
 
 const PhaserGame = dynamic(() => import("@/components/PhaserGame"), {
@@ -59,8 +60,9 @@ function PlayInner() {
       <InventoryPanel />
       <WorkbenchPanel />
       <PastLivesPanel />
-      <EncounterToast />
       <EncounterFeed />
+      <StatusLog />
+      <MarkerNameModal />
       <TutorialModal />
     </main>
   );

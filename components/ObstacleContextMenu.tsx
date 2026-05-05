@@ -41,6 +41,8 @@ export default function ObstacleContextMenu() {
   const ctx = useGameStore((s) => s.obstacleContextMenu);
   const close = useGameStore((s) => s.closeObstacleContextMenu);
   const interact = useGameStore((s) => s.interactWithObstacle);
+  const examineKind = useGameStore((s) => s.examineKind);
+  const examined = useGameStore((s) => s.world?.examinedKinds ?? null);
   const player = useGameStore((s) => s.world?.life?.player ?? null);
 
   const ref = useRef<HTMLDivElement | null>(null);
@@ -88,19 +90,24 @@ export default function ObstacleContextMenu() {
   }, [ctx, drag]);
 
   if (!ctx || !player || !pos) return null;
-  const { rx, ry, lx, ly, kind } = ctx;
+  const { rx, ry, lx, ly, kind, remembered } = ctx;
   const label = OBSTACLE_LABEL[kind];
-  const blurb = OBSTACLE_BLURB[kind];
+  const isExamined = Boolean(examined && examined[`obstacle:${kind}`]);
+  const blurb = remembered
+    ? "Out of sight. You remember it being here."
+    : isExamined
+      ? OBSTACLE_BLURB[kind]
+      : null;
 
   const actions: ActionDef[] = [
     {
       id: "examine",
       label: "Examine",
       icon: "eye",
-      onClick: () => close(),
+      onClick: () => examineKind(`obstacle:${kind}`),
     },
   ];
-  if (kind === "tree") {
+  if (!remembered && kind === "tree") {
     const have = hasTool(player.tools, "axe");
     actions.push({
       id: "chop",
@@ -114,7 +121,7 @@ export default function ObstacleContextMenu() {
         interact(rx, ry, lx, ly, "harvest");
       },
     });
-  } else if (kind === "rock") {
+  } else if (!remembered && kind === "rock") {
     const have = hasTool(player.tools, "pickaxe");
     actions.push({
       id: "mine",
@@ -128,7 +135,7 @@ export default function ObstacleContextMenu() {
         interact(rx, ry, lx, ly, "harvest");
       },
     });
-  } else if (kind === "workbench") {
+  } else if (!remembered && kind === "workbench") {
     actions.push({
       id: "craft",
       label: "Craft",
@@ -148,9 +155,10 @@ export default function ObstacleContextMenu() {
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (!ref.current) return;
+    if ((e.target as Element).closest("button")) return;
     const rect = ref.current.getBoundingClientRect();
     dragOffset.current = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
-    (e.target as Element).setPointerCapture?.(e.pointerId);
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
   };
   const onPointerMove = (e: React.PointerEvent) => {
     if (!dragOffset.current) return;
@@ -170,7 +178,7 @@ export default function ObstacleContextMenu() {
   };
   const onPointerUp = (e: React.PointerEvent) => {
     dragOffset.current = null;
-    (e.target as Element).releasePointerCapture?.(e.pointerId);
+    (e.currentTarget as Element).releasePointerCapture?.(e.pointerId);
   };
 
   return (
@@ -178,31 +186,33 @@ export default function ObstacleContextMenu() {
       ref={ref}
       role="menu"
       aria-label={`${label} actions`}
-      className="pointer-events-auto absolute z-30 flex flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-1.5 shadow-[0_16px_40px_-16px_rgba(44,40,32,0.45)]"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+      className="pointer-events-auto absolute z-30 flex touch-none select-none flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-1.5 shadow-[0_16px_40px_-16px_rgba(44,40,32,0.45)]"
       style={{ left: pos.left, top: pos.top, width: MENU_WIDTH }}
     >
-      <div
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-        className="flex cursor-grab items-center gap-2 px-2 py-1.5 active:cursor-grabbing touch-none select-none"
-      >
+      <div className="flex items-center gap-2 px-2 py-1.5">
         <ObstacleSwatch kind={kind} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium text-[var(--color-fg)]">
             {label}
           </div>
           <div className="font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
-            r({rx},{ry}) · drag to move
+            ({rx},{ry})
           </div>
         </div>
       </div>
       <div className="my-0.5 h-px bg-[var(--color-border)]" aria-hidden />
-      <p className="px-2.5 pb-1 pt-0.5 text-xs leading-snug text-[var(--color-fg-muted)]">
-        {blurb}
-      </p>
-      <div className="my-0.5 h-px bg-[var(--color-border)]" aria-hidden />
+      {blurb && (
+        <>
+          <p className="px-2.5 pb-1 pt-0.5 text-xs leading-snug text-[var(--color-fg-muted)]">
+            {blurb}
+          </p>
+          <div className="my-0.5 h-px bg-[var(--color-border)]" aria-hidden />
+        </>
+      )}
       {actions.map((a) => (
         <button
           key={a.id}

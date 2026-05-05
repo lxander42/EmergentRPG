@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import {
   beginNewLife,
-  claimHome as claimHomeWorld,
+  claimRandomForestHome,
   createWorld,
   ensureInteriorsForRegion,
   tickWorld,
@@ -27,7 +27,6 @@ import {
   placeObstacle,
   regionCenterGlobal,
   regionKey,
-  resourceAtLocal,
   INTERIOR_W,
   INTERIOR_H,
   type ObstacleKind,
@@ -53,6 +52,12 @@ export type SelectedRegion = { rx: number; ry: number };
 export type View = "world" | "biome";
 
 export type NpcContextMenu = { id: string; x: number; y: number };
+export type StatusMessage = {
+  id: number;
+  text: string;
+  addedAt: number;
+};
+
 export type ObstacleContextMenuState = {
   rx: number;
   ry: number;
@@ -61,6 +66,7 @@ export type ObstacleContextMenuState = {
   kind: ObstacleKind;
   x: number;
   y: number;
+  remembered: boolean;
 };
 
 type GameStore = {
@@ -71,7 +77,6 @@ type GameStore = {
   selectedRegion: SelectedRegion | null;
   lastEvent: WorldEvent | null;
   view: View;
-  homePending: boolean;
   inventoryOpen: boolean;
   workbenchOpen: boolean;
   pastLivesOpen: boolean;
@@ -81,6 +86,9 @@ type GameStore = {
   mapShowFactions: boolean;
   npcContextMenu: NpcContextMenu | null;
   obstacleContextMenu: ObstacleContextMenuState | null;
+  pendingMarker: { rx: number; ry: number } | null;
+  statusMessages: StatusMessage[];
+  cameraPanned: boolean;
 
   startNew: () => void;
   loadFromDisk: (slot: string) => Promise<void>;
@@ -92,7 +100,6 @@ type GameStore = {
   selectNpc: (id: string | null) => void;
   selectRegion: (region: SelectedRegion | null) => void;
 
-  claimHome: (rx: number, ry: number) => void;
   setView: (v: View) => void;
   walkPlayerTo: (gx: number, gy: number) => void;
   travelToRegion: (rx: number, ry: number) => void;
@@ -132,11 +139,34 @@ type GameStore = {
     kind: ObstacleKind,
     x: number,
     y: number,
+    remembered?: boolean,
   ) => void;
   closeObstacleContextMenu: () => void;
   eatFood: (kind: import("@/content/resources").ResourceKind) => void;
   teleportToRegion: (rx: number, ry: number) => void;
   inspectBiome: (rx: number, ry: number) => void;
+  examineKind: (kind: string) => void;
+  requestMarker: (rx: number, ry: number) => void;
+  cancelMarker: () => void;
+  addMapMarker: (rx: number, ry: number, name: string) => void;
+  removeMapMarker: (id: string) => void;
+  pushStatus: (text: string) => void;
+  dismissStatus: (id: number) => void;
+  collectResourceAt: (
+    rx: number,
+    ry: number,
+    lx: number,
+    ly: number,
+    resourceId: string,
+  ) => void;
+  pickupLootAt: (
+    rx: number,
+    ry: number,
+    lx: number,
+    ly: number,
+    lootId: string,
+  ) => void;
+  setCameraPanned: (panned: boolean) => void;
 };
 
 function withLife(world: World, life: LifeState): World {
@@ -156,7 +186,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
   selectedRegion: null,
   lastEvent: null,
   view: "world",
-  homePending: false,
   inventoryOpen: false,
   workbenchOpen: false,
   pastLivesOpen: false,
@@ -166,16 +195,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
   mapShowFactions: true,
   npcContextMenu: null,
   obstacleContextMenu: null,
+  pendingMarker: null,
+  statusMessages: [],
+  cameraPanned: false,
 
   startNew: () => {
+    const fresh = createWorld();
+    const claimed = claimRandomForestHome(fresh) ?? fresh;
     set({
-      world: createWorld(),
+      world: claimed,
       selectedNpcId: null,
       selectedRegion: null,
       lastEvent: null,
       paused: false,
-      view: "world",
-      homePending: true,
+      view: claimed.home ? "biome" : "world",
       inventoryOpen: false,
       workbenchOpen: false,
       pastLivesOpen: false,
@@ -183,6 +216,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       npcContextMenu: null,
       obstacleContextMenu: null,
     });
+    void saveWorld("default", claimed);
   },
 
   loadFromDisk: async (slot) => {
@@ -191,12 +225,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set({
         world: loaded,
         view: loaded.home ? "biome" : "world",
-        homePending: !loaded.home,
         paused: false,
       });
-    } else {
-      set({ world: createWorld(), view: "world", homePending: true, paused: false });
+      return;
     }
+    const fresh = createWorld();
+    const claimed = claimRandomForestHome(fresh) ?? fresh;
+    set({
+      world: claimed,
+      view: claimed.home ? "biome" : "world",
+      paused: false,
+    });
+    void saveWorld(slot, claimed);
   },
 
   saveToDisk: async (slot) => {
@@ -254,22 +294,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (region) bus.emit("npc:deselected");
   },
 
-  claimHome: (rx, ry) => {
-    const current = get().world;
-    if (!current) return;
-    const next = claimHomeWorld(current, rx, ry);
-    if (!next) return;
-    set({
-      world: next,
-      homePending: false,
-      view: "biome",
-      selectedNpcId: null,
-      selectedRegion: null,
-      obstacleContextMenu: null,
-    });
-    void saveWorld("default", next);
-  },
-
   setView: (v) => {
     if (v === get().view) return;
     set({
@@ -317,21 +341,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
       WALK_MAX_RADIUS,
     );
 
-    let pendingAction: PendingAction | null = null;
-    if (path) {
-      const interior = world.biomeInteriors[regionKey(dst.rx, dst.ry)];
-      if (interior) {
-        const r = resourceAtLocal(interior, dst.lx, dst.ly);
-        if (r) pendingAction = { kind: "collect", resourceId: r.id };
-      }
-    }
-
     const player: Player = path
       ? {
           ...startingPlayer,
           route: path.length === 0 ? null : path,
           stepCooldown: path.length === 0 ? 0 : Math.max(1, startingPlayer.stats.speed),
-          pendingAction,
+          pendingAction: null,
         }
       : { ...startingPlayer, pendingAction: null };
 
@@ -350,8 +365,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
       workbenchOpen: false,
     });
     bus.emit("npc:deselected");
+    const seeded = ensureInteriorsForRegion(w, rx, ry);
+    if (seeded !== w) set({ world: seeded });
+    const interior = seeded.biomeInteriors[regionKey(rx, ry)];
     const center = regionCenterGlobal(rx, ry);
-    get().walkPlayerTo(center.gx, center.gy);
+    const target = interior
+      ? nearestPassable(interior, center.gx, center.gy, rx, ry)
+      : center;
+    get().walkPlayerTo(target.gx, target.gy);
   },
 
   interactWithObstacle: (rx, ry, lx, ly, action) => {
@@ -436,33 +457,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
   resetAfterDeath: () => {
     const current = get().world;
     if (!current) return;
-    if (!current.home) {
-      set({
-        world: createWorld(),
-        selectedNpcId: null,
-        selectedRegion: null,
-        lastEvent: null,
-        paused: false,
-        view: "world",
-        homePending: true,
-        inventoryOpen: false,
-        workbenchOpen: false,
-        pastLivesOpen: false,
-        tutorialOpen: false,
-        npcContextMenu: null,
-        obstacleContextMenu: null,
-      });
-      return;
+    let next: World;
+    if (current.home) {
+      next = beginNewLife(current);
+    } else {
+      const fresh = createWorld();
+      next = claimRandomForestHome(fresh) ?? fresh;
     }
-    const next = beginNewLife(current);
     set({
       world: next,
       selectedNpcId: null,
       selectedRegion: null,
       lastEvent: null,
       paused: false,
-      view: "biome",
-      homePending: false,
+      view: next.home ? "biome" : "world",
       inventoryOpen: false,
       workbenchOpen: false,
       pastLivesOpen: false,
@@ -470,6 +478,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       npcContextMenu: null,
       obstacleContextMenu: null,
     });
+    void saveWorld("default", next);
   },
 
   acceptEncounter: () => {
@@ -605,9 +614,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }),
   closeNpcContextMenu: () => set({ npcContextMenu: null }),
 
-  openObstacleContextMenu: (rx, ry, lx, ly, kind, x, y) =>
+  openObstacleContextMenu: (rx, ry, lx, ly, kind, x, y, remembered = false) =>
     set({
-      obstacleContextMenu: { rx, ry, lx, ly, kind, x, y },
+      obstacleContextMenu: { rx, ry, lx, ly, kind, x, y, remembered },
       npcContextMenu: null,
       selectedNpcId: null,
       selectedRegion: null,
@@ -662,6 +671,137 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   inspectBiome: (rx, ry) => {
     get().teleportToRegion(rx, ry);
+  },
+
+  examineKind: (kind) => {
+    const current = get().world;
+    if (!current) return;
+    if (current.examinedKinds[kind]) return;
+    set({
+      world: {
+        ...current,
+        examinedKinds: { ...current.examinedKinds, [kind]: true as const },
+      },
+    });
+  },
+
+  requestMarker: (rx, ry) => set({ pendingMarker: { rx, ry } }),
+  cancelMarker: () => set({ pendingMarker: null }),
+  addMapMarker: (rx, ry, name) => {
+    const current = get().world;
+    if (!current) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const id = `mk-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    set({
+      world: {
+        ...current,
+        mapMarkers: [...current.mapMarkers, { id, rx, ry, name: trimmed }],
+      },
+      pendingMarker: null,
+    });
+  },
+  removeMapMarker: (id) => {
+    const current = get().world;
+    if (!current) return;
+    set({
+      world: {
+        ...current,
+        mapMarkers: current.mapMarkers.filter((m) => m.id !== id),
+      },
+    });
+  },
+
+  pushStatus: (text) => {
+    const id = Date.now() + Math.floor(Math.random() * 1000);
+    const next = [...get().statusMessages, { id, text, addedAt: Date.now() }];
+    set({ statusMessages: next.slice(-6) });
+  },
+  dismissStatus: (id) => {
+    set({ statusMessages: get().statusMessages.filter((m) => m.id !== id) });
+  },
+
+  collectResourceAt: (rx, ry, lx, ly, resourceId) => {
+    const current = get().world;
+    if (!current?.life || current.life.gameOver) return;
+    const target = localToGlobal(rx, ry, lx, ly);
+    let world = ensureInteriorsForRegion(current, rx, ry);
+    const startingPlayer = world.life!.player;
+    const isObstacle = (tgx: number, tgy: number): boolean => {
+      const loc = globalToLocal(tgx, tgy);
+      if (loc.rx < 0 || loc.ry < 0 || loc.rx >= MAP_W || loc.ry >= MAP_H) return true;
+      if (loc.lx < 0 || loc.ly < 0 || loc.lx >= INTERIOR_W || loc.ly >= INTERIOR_H) return true;
+      const interior = world.biomeInteriors[regionKey(loc.rx, loc.ry)];
+      if (!interior) {
+        const w2 = ensureInteriorsForRegion(world, loc.rx, loc.ry);
+        if (w2 !== world) world = w2;
+        const fresh = world.biomeInteriors[regionKey(loc.rx, loc.ry)];
+        if (!fresh) return true;
+        return isLocalObstacle(fresh, loc.lx, loc.ly);
+      }
+      return isLocalObstacle(interior, loc.lx, loc.ly);
+    };
+    const path = bfsPredicate(
+      isObstacle,
+      startingPlayer.gx,
+      startingPlayer.gy,
+      target.gx,
+      target.gy,
+      WALK_MAX_RADIUS,
+    );
+    if (!path) return;
+    const player: Player = {
+      ...startingPlayer,
+      route: path.length === 0 ? null : path,
+      stepCooldown: path.length === 0 ? 0 : Math.max(1, startingPlayer.stats.speed),
+      pendingAction: { kind: "collect", resourceId },
+    };
+    const next = withPlayer(world, player);
+    if (next) set({ world: next });
+  },
+
+  setCameraPanned: (panned) => {
+    if (get().cameraPanned === panned) return;
+    set({ cameraPanned: panned });
+  },
+
+  pickupLootAt: (rx, ry, lx, ly, lootId) => {
+    const current = get().world;
+    if (!current?.life || current.life.gameOver) return;
+    const target = localToGlobal(rx, ry, lx, ly);
+    let world = ensureInteriorsForRegion(current, rx, ry);
+    const startingPlayer = world.life!.player;
+    const isObstacle = (tgx: number, tgy: number): boolean => {
+      const loc = globalToLocal(tgx, tgy);
+      if (loc.rx < 0 || loc.ry < 0 || loc.rx >= MAP_W || loc.ry >= MAP_H) return true;
+      if (loc.lx < 0 || loc.ly < 0 || loc.lx >= INTERIOR_W || loc.ly >= INTERIOR_H) return true;
+      const interior = world.biomeInteriors[regionKey(loc.rx, loc.ry)];
+      if (!interior) {
+        const w2 = ensureInteriorsForRegion(world, loc.rx, loc.ry);
+        if (w2 !== world) world = w2;
+        const fresh = world.biomeInteriors[regionKey(loc.rx, loc.ry)];
+        if (!fresh) return true;
+        return isLocalObstacle(fresh, loc.lx, loc.ly);
+      }
+      return isLocalObstacle(interior, loc.lx, loc.ly);
+    };
+    const path = bfsPredicate(
+      isObstacle,
+      startingPlayer.gx,
+      startingPlayer.gy,
+      target.gx,
+      target.gy,
+      WALK_MAX_RADIUS,
+    );
+    if (!path) return;
+    const player: Player = {
+      ...startingPlayer,
+      route: path.length === 0 ? null : path,
+      stepCooldown: path.length === 0 ? 0 : Math.max(1, startingPlayer.stats.speed),
+      pendingAction: { kind: "pickup", rx, ry, lx, ly, lootId },
+    };
+    const next = withPlayer(world, player);
+    if (next) set({ world: next });
   },
 }));
 

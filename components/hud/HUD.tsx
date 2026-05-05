@@ -11,12 +11,13 @@ import {
   Play,
   FastForward,
   MapTrifold,
-  Lightning,
   Heart,
+  ForkKnife,
   Skull,
+  TreasureChest,
 } from "@phosphor-icons/react/dist/ssr";
 import { useGameStore } from "@/lib/state/game-store";
-import { RESOURCES, type ResourceKind } from "@/content/resources";
+import type { ResourceKind } from "@/content/resources";
 import { globalToLocal } from "@/lib/sim/biome-interior";
 import type { GameOverReason } from "@/lib/sim/world";
 import type { Legacy } from "@/lib/sim/legacy";
@@ -27,12 +28,7 @@ import {
   inventoryCapFromBaskets,
   inventoryTotal,
 } from "@/lib/sim/inventory";
-import {
-  basketCount,
-  TOOLS,
-  type ToolInstance,
-  type ToolKind,
-} from "@/lib/sim/tools";
+import { basketCount, type ToolInstance } from "@/lib/sim/tools";
 
 const SPEEDS = [1, 2, 4] as const;
 const EMPTY_INVENTORY: Partial<Record<ResourceKind, number>> = {};
@@ -45,7 +41,6 @@ export default function HUD() {
   const setSpeed = useGameStore((s) => s.setSpeed);
   const view = useGameStore((s) => s.view);
   const setView = useGameStore((s) => s.setView);
-  const homePending = useGameStore((s) => s.homePending);
   const hasHome = useGameStore((s) => Boolean(s.world?.home));
   const player = useGameStore((s) => s.world?.life?.player ?? null);
   const inventory = useGameStore(
@@ -192,25 +187,20 @@ export default function HUD() {
 
       {debugMode && <DebugStrip />}
 
-      {homePending && view === "world" && (
-        <div className="pointer-events-none absolute inset-x-0 top-16 z-10 flex justify-center px-3">
-          <div className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-1.5 font-mono text-[11px] uppercase tracking-wider text-[var(--color-fg-muted)] shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]">
-            Tap a region to claim your home base
-          </div>
-        </div>
-      )}
-
       {player && (
         <IdentityBadge
           name={player.name}
           factionOfOriginId={player.factionOfOriginId}
+          health={player.health}
+          healthMax={player.healthMax}
+          energy={player.energy}
+          energyMax={player.energyMax}
+          inCombat={inCombat}
         />
       )}
 
       {player && (
         <div className="pointer-events-none absolute inset-x-2 top-16 z-10 flex flex-wrap items-center justify-end gap-2">
-          <HealthStrip health={player.health} max={player.healthMax} inCombat={inCombat} />
-          <EnergyStrip energy={player.energy} max={player.energyMax} />
           <InventoryStrip
             inventory={inventory}
             tools={player.tools}
@@ -391,109 +381,90 @@ function DebugStrip() {
 function IdentityBadge({
   name,
   factionOfOriginId,
+  health,
+  healthMax,
+  energy,
+  energyMax,
+  inCombat,
 }: {
   name: string;
   factionOfOriginId: string;
+  health: number;
+  healthMax: number;
+  energy: number;
+  energyMax: number;
+  inCombat: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const faction = FACTIONS.find((f) => f.id === factionOfOriginId);
   const color = faction
     ? "#" + faction.color.toString(16).padStart(6, "0")
     : "#cccccc";
   const factionName = faction?.name ?? factionOfOriginId;
+  const lowHealth = health > 0 && health <= Math.ceil(healthMax / 2);
+  const lowEnergy = energy > 0 && energy <= 3;
+  const empty = energy === 0;
   return (
-    <button
-      onClick={() => setExpanded((v) => !v)}
-      aria-label={`You are ${name} of ${factionName}`}
-      title={`${name} · ${factionName}`}
-      className="tactile pointer-events-auto absolute left-2 top-32 z-20 inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] py-1 pl-1 pr-1 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
-    >
-      <span
-        aria-hidden
-        className="h-6 w-6 shrink-0 rounded-md border border-[var(--color-border-strong)]"
-        style={{ background: color }}
-      />
-      {expanded && (
-        <span className="flex flex-col items-start pr-2 leading-tight">
+    <div className="pointer-events-auto absolute left-2 top-16 z-20 flex flex-col items-start gap-1.5">
+      <div
+        className="inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] py-1 pl-1 pr-3 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
+        title={`${name} · ${factionName}`}
+      >
+        <span
+          aria-hidden
+          className="h-6 w-6 shrink-0 rounded-md border border-[var(--color-border-strong)]"
+          style={{ background: color }}
+        />
+        <span className="flex flex-col items-start leading-tight">
           <span className="text-xs font-medium text-[var(--color-fg)]">{name}</span>
           <span className="font-mono text-[9px] uppercase tracking-wider text-[var(--color-fg-muted)]">
             {factionName}
           </span>
         </span>
-      )}
-    </button>
-  );
-}
-
-function HealthStrip({
-  health,
-  max,
-  inCombat,
-}: {
-  health: number;
-  max: number;
-  inCombat: boolean;
-}) {
-  const low = health > 0 && health <= Math.ceil(max / 2);
-  return (
-    <div className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]">
-      {inCombat && (
+      </div>
+      <div className="ml-1 flex items-center gap-2">
         <span
-          aria-hidden
-          className="h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] animate-pulse"
-        />
-      )}
-      <Heart
-        size={14}
-        weight="fill"
-        className={low ? "text-[var(--color-accent)] animate-pulse" : "text-[var(--color-accent)]"}
-      />
-      <div className="flex items-center gap-[3px]">
-        {Array.from({ length: max }).map((_, i) => (
-          <span
-            key={i}
-            aria-hidden
-            className="h-2.5 w-2 rounded-[2px]"
-            style={{
-              background: i < health ? "var(--color-accent)" : "var(--color-surface-warm)",
-              border:
-                i < health
-                  ? "1px solid var(--color-accent)"
-                  : "1px solid var(--color-border)",
-            }}
+          aria-label={`Health ${health}/${healthMax}`}
+          className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 shadow-[0_2px_8px_-4px_rgba(44,40,32,0.18)]"
+        >
+          <Heart
+            size={11}
+            weight="fill"
+            className={
+              lowHealth
+                ? "animate-pulse text-[#b03131]"
+                : "text-[#b03131]"
+            }
           />
-        ))}
-      </div>
-      <span className="ml-1 font-mono text-[10px] tabular-nums text-[var(--color-fg-muted)]">
-        {health}/{max}
-      </span>
-    </div>
-  );
-}
-
-function EnergyStrip({ energy, max }: { energy: number; max: number }) {
-  return (
-    <div className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]">
-      <Lightning size={14} weight="fill" className="text-[var(--color-accent)]" />
-      <div className="flex items-center gap-[3px]">
-        {Array.from({ length: max }).map((_, i) => (
-          <span
-            key={i}
-            aria-hidden
-            className="h-2.5 w-2 rounded-[2px]"
-            style={{
-              background: i < energy ? "var(--color-accent)" : "var(--color-surface-warm)",
-              border:
-                i < energy
-                  ? "1px solid var(--color-accent)"
-                  : "1px solid var(--color-border)",
-            }}
+          <span className="font-mono text-[10px] tabular-nums text-[var(--color-fg)]">
+            {health}/{healthMax}
+          </span>
+          {inCombat && (
+            <span
+              aria-hidden
+              className="ml-0.5 h-1.5 w-1.5 rounded-full bg-[#b03131] animate-pulse"
+            />
+          )}
+        </span>
+        <span
+          aria-label={`Hunger ${energy}/${energyMax}`}
+          className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 shadow-[0_2px_8px_-4px_rgba(44,40,32,0.18)]"
+        >
+          <ForkKnife
+            size={11}
+            weight="fill"
+            className={
+              empty
+                ? "animate-pulse text-[var(--color-accent)]"
+                : lowEnergy
+                  ? "text-[var(--color-accent)]"
+                  : "text-[var(--color-fg-muted)]"
+            }
           />
-        ))}
+          <span className="font-mono text-[10px] tabular-nums text-[var(--color-fg)]">
+            {energy}/{energyMax}
+          </span>
+        </span>
       </div>
-      <span className="ml-1 font-mono text-[10px] tabular-nums text-[var(--color-fg-muted)]">
-        {energy}/{max}
-      </span>
     </div>
   );
 }
@@ -507,131 +478,23 @@ function InventoryStrip({
   tools: ToolInstance[];
   onOpen: () => void;
 }) {
-  const entries = (Object.entries(inventory) as Array<[ResourceKind, number]>).filter(
-    ([, n]) => n > 0,
-  );
   const cap = inventoryCapFromBaskets(basketCount(tools));
   const total = inventoryTotal(inventory);
-  const grouped = groupTools(tools);
+  const full = total >= cap;
   return (
     <button
       onClick={onOpen}
       aria-label="Open inventory"
-      className="tactile pointer-events-auto inline-flex flex-col items-stretch gap-1 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
+      className="tactile pointer-events-auto relative inline-flex h-10 w-10 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-fg)] shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
     >
-      <span className="inline-flex items-center gap-2">
-        <span className="font-mono text-[10px] uppercase tracking-wider tabular-nums text-[var(--color-fg-muted)]">
-          {total}/{cap}
-        </span>
-        {entries.length === 0 ? (
-          <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
-            empty
-          </span>
-        ) : (
-          entries.map(([kind, count]) => (
-            <span key={kind} className="inline-flex items-center gap-1">
-              <span
-                aria-hidden
-                className="h-2.5 w-2.5 rounded-full border border-[var(--color-border-strong)]"
-                style={{ background: RESOURCES[kind].swatch }}
-              />
-              <span className="font-mono text-[10px] tabular-nums text-[var(--color-fg)]">
-                {count}
-              </span>
-            </span>
-          ))
-        )}
-      </span>
-      {grouped.length > 0 && (
-        <span className="inline-flex items-center gap-1.5 border-t border-[var(--color-border)] pt-1">
-          {grouped.map((g) => (
-            <ToolBadge key={g.kind} kind={g.kind} count={g.count} fraction={g.fraction} />
-          ))}
-        </span>
+      <TreasureChest size={20} weight="duotone" />
+      {full && (
+        <span
+          aria-hidden
+          className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-[var(--color-accent)]"
+        />
       )}
     </button>
   );
 }
 
-type ToolGroup = { kind: ToolKind; count: number; fraction: number };
-
-function groupTools(tools: ToolInstance[]): ToolGroup[] {
-  const map = new Map<ToolKind, { count: number; minFraction: number }>();
-  for (const t of tools) {
-    const meta = TOOLS[t.kind];
-    const fraction = meta.durability > 0 ? Math.max(0, t.usesLeft) / meta.durability : 1;
-    const cur = map.get(t.kind);
-    if (cur) {
-      cur.count += 1;
-      if (fraction < cur.minFraction) cur.minFraction = fraction;
-    } else {
-      map.set(t.kind, { count: 1, minFraction: fraction });
-    }
-  }
-  const out: ToolGroup[] = [];
-  for (const [kind, v] of map) {
-    out.push({ kind, count: v.count, fraction: v.minFraction });
-  }
-  return out;
-}
-
-function ToolBadge({
-  kind,
-  count,
-  fraction,
-}: {
-  kind: ToolKind;
-  count: number;
-  fraction: number;
-}) {
-  const meta = TOOLS[kind];
-  const f = Math.max(0, Math.min(1, fraction));
-  const r = 8;
-  const c = 2 * Math.PI * r;
-  const dash = c * f;
-  const showRing = meta.durability < 999;
-  return (
-    <span
-      aria-label={`${meta.label} ×${count}`}
-      className="relative inline-flex h-5 w-5 items-center justify-center"
-    >
-      {showRing && (
-        <svg
-          viewBox="0 0 20 20"
-          className="absolute inset-0"
-          aria-hidden
-        >
-          <circle
-            cx="10"
-            cy="10"
-            r={r}
-            fill="none"
-            stroke="var(--color-border)"
-            strokeWidth="1.5"
-          />
-          <circle
-            cx="10"
-            cy="10"
-            r={r}
-            fill="none"
-            stroke="var(--color-accent)"
-            strokeWidth="1.5"
-            strokeDasharray={`${dash} ${c}`}
-            strokeLinecap="round"
-            transform="rotate(-90 10 10)"
-          />
-        </svg>
-      )}
-      <span
-        aria-hidden
-        className="relative h-3 w-3 rounded-sm border border-[var(--color-border-strong)]"
-        style={{ background: meta.swatch }}
-      />
-      {count > 1 && (
-        <span className="absolute -bottom-1 -right-1 inline-flex min-w-3 items-center justify-center rounded-full bg-[var(--color-fg)] px-1 font-mono text-[8px] font-medium leading-none text-[var(--color-bg)]">
-          ×{count}
-        </span>
-      )}
-    </span>
-  );
-}

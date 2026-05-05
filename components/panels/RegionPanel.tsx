@@ -1,24 +1,25 @@
 "use client";
 
-import { Footprints, House, X } from "@phosphor-icons/react/dist/ssr";
+import { Footprints, X } from "@phosphor-icons/react/dist/ssr";
 import { useGameStore, WALK_MAX_RADIUS } from "@/lib/state/game-store";
 import { biomeAt } from "@/lib/sim/biome";
 import { BIOMES } from "@/content/biomes";
 import { FACTIONS } from "@/content/factions";
 import { BIOME_RESOURCES, RESOURCES, type ResourceKind } from "@/content/resources";
 import { globalToLocal, regionCenterGlobal, regionKey } from "@/lib/sim/biome-interior";
+import { useOutsideClose } from "@/lib/ui/use-outside-close";
 
 export default function RegionPanel() {
   const region = useGameStore((s) => s.selectedRegion);
   const world = useGameStore((s) => s.world);
   const select = useGameStore((s) => s.selectRegion);
   const selectNpc = useGameStore((s) => s.selectNpc);
-  const homePending = useGameStore((s) => s.homePending);
-  const claimHome = useGameStore((s) => s.claimHome);
   const travelToRegion = useGameStore((s) => s.travelToRegion);
   const teleportToRegion = useGameStore((s) => s.teleportToRegion);
   const debug = useGameStore((s) => s.debugMode);
   const inspectBiome = useGameStore((s) => s.inspectBiome);
+
+  const ref = useOutsideClose(Boolean(region), () => select(null));
 
   if (!region || !world) return null;
 
@@ -28,7 +29,6 @@ export default function RegionPanel() {
   const incoming = world.npcs.filter(
     (n) => n.intent && n.intent.rx === region.rx && n.intent.ry === region.ry,
   );
-  const canClaim = homePending && meta.passable;
   const foods = BIOME_RESOURCES[biome].food;
   const controllerId = world.regionControl[`${region.rx},${region.ry}`];
   const controller = controllerId ? FACTIONS.find((f) => f.id === controllerId) : undefined;
@@ -45,6 +45,7 @@ export default function RegionPanel() {
 
   return (
     <aside
+      ref={ref}
       role="dialog"
       aria-label={`${meta.title} region details`}
       className="pointer-events-auto absolute inset-x-2 bottom-2 z-20 max-h-[60dvh] overflow-y-auto rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[0_20px_48px_-20px_rgba(44,40,32,0.25)]"
@@ -110,16 +111,6 @@ export default function RegionPanel() {
         )}
 
         <ResourcesHere world={world} rx={region.rx} ry={region.ry} />
-
-        {canClaim && (
-          <button
-            onClick={() => claimHome(region.rx, region.ry)}
-            className="tactile mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[var(--color-accent)] px-4 py-3 text-sm font-medium text-[var(--color-bg)] shadow-[0_8px_24px_-12px_rgba(217,104,70,0.5)]"
-          >
-            <House size={16} weight="fill" />
-            Claim as home base
-          </button>
-        )}
 
         {showTravel && (
           <button
