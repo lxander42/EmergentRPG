@@ -229,6 +229,33 @@ export function claimHome(world: World, rx: number, ry: number): World | null {
   };
 }
 
+// Pick a random passable forest region using the world's rng and claim it
+// as home. Used to drop a fresh game straight into play without making the
+// player choose a starting region.
+export function claimRandomForestHome(world: World): World | null {
+  const rng = createRng(world.rngState);
+  const candidates: Array<{ rx: number; ry: number }> = [];
+  for (let ry = 0; ry < MAP_H; ry++) {
+    for (let rx = 0; rx < MAP_W; rx++) {
+      if (biomeAt(rx, ry) !== "forest") continue;
+      if (!isPassable(rx, ry, MAP_W, MAP_H)) continue;
+      candidates.push({ rx, ry });
+    }
+  }
+  if (candidates.length === 0) {
+    for (let ry = 0; ry < MAP_H; ry++) {
+      for (let rx = 0; rx < MAP_W; rx++) {
+        if (!isPassable(rx, ry, MAP_W, MAP_H)) continue;
+        if (biomeAt(rx, ry) === "water") continue;
+        candidates.push({ rx, ry });
+      }
+    }
+  }
+  if (candidates.length === 0) return null;
+  const pick = candidates[rng.int(0, candidates.length)]!;
+  return claimHome({ ...world, rngState: rng.state() }, pick.rx, pick.ry);
+}
+
 // Build the next life on top of the existing world. Called after a death
 // when the player taps "Begin a new life". Picks a deterministic spawn
 // (home if friendly, else nearest passable friendly-or-neutral region —

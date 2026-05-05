@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import {
   beginNewLife,
-  claimHome as claimHomeWorld,
+  claimRandomForestHome,
   createWorld,
   ensureInteriorsForRegion,
   tickWorld,
@@ -72,7 +72,6 @@ type GameStore = {
   selectedRegion: SelectedRegion | null;
   lastEvent: WorldEvent | null;
   view: View;
-  homePending: boolean;
   inventoryOpen: boolean;
   workbenchOpen: boolean;
   pastLivesOpen: boolean;
@@ -93,7 +92,6 @@ type GameStore = {
   selectNpc: (id: string | null) => void;
   selectRegion: (region: SelectedRegion | null) => void;
 
-  claimHome: (rx: number, ry: number) => void;
   setView: (v: View) => void;
   walkPlayerTo: (gx: number, gy: number) => void;
   travelToRegion: (rx: number, ry: number) => void;
@@ -158,7 +156,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
   selectedRegion: null,
   lastEvent: null,
   view: "world",
-  homePending: false,
   inventoryOpen: false,
   workbenchOpen: false,
   pastLivesOpen: false,
@@ -170,14 +167,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
   obstacleContextMenu: null,
 
   startNew: () => {
+    const fresh = createWorld();
+    const claimed = claimRandomForestHome(fresh) ?? fresh;
     set({
-      world: createWorld(),
+      world: claimed,
       selectedNpcId: null,
       selectedRegion: null,
       lastEvent: null,
       paused: false,
-      view: "world",
-      homePending: true,
+      view: claimed.home ? "biome" : "world",
       inventoryOpen: false,
       workbenchOpen: false,
       pastLivesOpen: false,
@@ -185,6 +183,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       npcContextMenu: null,
       obstacleContextMenu: null,
     });
+    void saveWorld("default", claimed);
   },
 
   loadFromDisk: async (slot) => {
@@ -193,12 +192,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set({
         world: loaded,
         view: loaded.home ? "biome" : "world",
-        homePending: !loaded.home,
         paused: false,
       });
-    } else {
-      set({ world: createWorld(), view: "world", homePending: true, paused: false });
+      return;
     }
+    const fresh = createWorld();
+    const claimed = claimRandomForestHome(fresh) ?? fresh;
+    set({
+      world: claimed,
+      view: claimed.home ? "biome" : "world",
+      paused: false,
+    });
+    void saveWorld(slot, claimed);
   },
 
   saveToDisk: async (slot) => {
@@ -254,22 +259,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
       pastLivesOpen: region ? false : get().pastLivesOpen,
     });
     if (region) bus.emit("npc:deselected");
-  },
-
-  claimHome: (rx, ry) => {
-    const current = get().world;
-    if (!current) return;
-    const next = claimHomeWorld(current, rx, ry);
-    if (!next) return;
-    set({
-      world: next,
-      homePending: false,
-      view: "biome",
-      selectedNpcId: null,
-      selectedRegion: null,
-      obstacleContextMenu: null,
-    });
-    void saveWorld("default", next);
   },
 
   setView: (v) => {
@@ -438,33 +427,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
   resetAfterDeath: () => {
     const current = get().world;
     if (!current) return;
-    if (!current.home) {
-      set({
-        world: createWorld(),
-        selectedNpcId: null,
-        selectedRegion: null,
-        lastEvent: null,
-        paused: false,
-        view: "world",
-        homePending: true,
-        inventoryOpen: false,
-        workbenchOpen: false,
-        pastLivesOpen: false,
-        tutorialOpen: false,
-        npcContextMenu: null,
-        obstacleContextMenu: null,
-      });
-      return;
+    let next: World;
+    if (current.home) {
+      next = beginNewLife(current);
+    } else {
+      const fresh = createWorld();
+      next = claimRandomForestHome(fresh) ?? fresh;
     }
-    const next = beginNewLife(current);
     set({
       world: next,
       selectedNpcId: null,
       selectedRegion: null,
       lastEvent: null,
       paused: false,
-      view: "biome",
-      homePending: false,
+      view: next.home ? "biome" : "world",
       inventoryOpen: false,
       workbenchOpen: false,
       pastLivesOpen: false,
@@ -472,6 +448,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       npcContextMenu: null,
       obstacleContextMenu: null,
     });
+    void saveWorld("default", next);
   },
 
   acceptEncounter: () => {

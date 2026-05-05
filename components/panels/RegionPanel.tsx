@@ -1,6 +1,6 @@
 "use client";
 
-import { Footprints, House, X } from "@phosphor-icons/react/dist/ssr";
+import { Footprints, X } from "@phosphor-icons/react/dist/ssr";
 import { useGameStore, WALK_MAX_RADIUS } from "@/lib/state/game-store";
 import { biomeAt } from "@/lib/sim/biome";
 import { BIOMES } from "@/content/biomes";
@@ -13,8 +13,6 @@ export default function RegionPanel() {
   const world = useGameStore((s) => s.world);
   const select = useGameStore((s) => s.selectRegion);
   const selectNpc = useGameStore((s) => s.selectNpc);
-  const homePending = useGameStore((s) => s.homePending);
-  const claimHome = useGameStore((s) => s.claimHome);
   const travelToRegion = useGameStore((s) => s.travelToRegion);
   const teleportToRegion = useGameStore((s) => s.teleportToRegion);
   const debug = useGameStore((s) => s.debugMode);
@@ -28,7 +26,6 @@ export default function RegionPanel() {
   const incoming = world.npcs.filter(
     (n) => n.intent && n.intent.rx === region.rx && n.intent.ry === region.ry,
   );
-  const canClaim = homePending && meta.passable;
   const foods = BIOME_RESOURCES[biome].food;
   const controllerId = world.regionControl[`${region.rx},${region.ry}`];
   const controller = controllerId ? FACTIONS.find((f) => f.id === controllerId) : undefined;
@@ -110,16 +107,6 @@ export default function RegionPanel() {
         )}
 
         <ResourcesHere world={world} rx={region.rx} ry={region.ry} />
-
-        {canClaim && (
-          <button
-            onClick={() => claimHome(region.rx, region.ry)}
-            className="tactile mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[var(--color-accent)] px-4 py-3 text-sm font-medium text-[var(--color-bg)] shadow-[0_8px_24px_-12px_rgba(217,104,70,0.5)]"
-          >
-            <House size={16} weight="fill" />
-            Claim as home base
-          </button>
-        )}
 
         {showTravel && (
           <button

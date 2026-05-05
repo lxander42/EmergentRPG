@@ -45,7 +45,6 @@ export default function HUD() {
   const setSpeed = useGameStore((s) => s.setSpeed);
   const view = useGameStore((s) => s.view);
   const setView = useGameStore((s) => s.setView);
-  const homePending = useGameStore((s) => s.homePending);
   const hasHome = useGameStore((s) => Boolean(s.world?.home));
   const player = useGameStore((s) => s.world?.life?.player ?? null);
   const inventory = useGameStore(
@@ -191,14 +190,6 @@ export default function HUD() {
       </header>
 
       {debugMode && <DebugStrip />}
-
-      {homePending && view === "world" && (
-        <div className="pointer-events-none absolute inset-x-0 top-16 z-10 flex justify-center px-3">
-          <div className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-1.5 font-mono text-[11px] uppercase tracking-wider text-[var(--color-fg-muted)] shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]">
-            Tap a region to claim your home base
-          </div>
-        </div>
-      )}
 
       {player && (
         <IdentityBadge

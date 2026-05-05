@@ -25,13 +25,13 @@ const PAGES: Page[] = [
     icon: <Compass size={28} weight="duotone" className="text-[var(--color-accent)]" />,
     title: "A small living world",
     body:
-      "Three factions wander a 32×32 grid of biomes. Their stories happen whether you're watching or not. Your job is to survive, claim a home, and shape the politics around you.",
+      "Three factions wander a 32×32 grid of biomes. Their stories happen whether you're watching or not. Your job is to survive and shape the politics around you.",
   },
   {
     icon: <House size={28} weight="duotone" className="text-[var(--color-accent)]" />,
-    title: "Claim a home base",
+    title: "You wake in a forest",
     body:
-      "Tap a passable region on the world map to claim it as home. From there you'll forage, craft, and venture out. Pick a region close to forest or stone — you'll need their materials.",
+      "You start in a random forest region — that's home. You'll respawn here when you die. Forage what you need around home and venture further once you can defend yourself.",
   },
   {
     icon: <Footprints size={28} weight="duotone" className="text-[var(--color-accent)]" />,
