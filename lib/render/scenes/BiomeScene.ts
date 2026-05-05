@@ -66,7 +66,6 @@ type FogContext = {
   perception: number;
   r2: number;
   discoveredTiles: Record<string, Uint8Array>;
-  simplified: boolean;
 };
 
 type ChunkEntry = {
@@ -278,7 +277,6 @@ export class BiomeScene extends Phaser.Scene {
       perception,
       r2: perception * perception,
       discoveredTiles: world.discoveredTiles,
-      simplified: this.cameras.main.zoom < 0.7 * this.dpr,
     };
   }
 
@@ -421,7 +419,6 @@ export class BiomeScene extends Phaser.Scene {
 
   private drawFog(fog: FogContext) {
     this.fogLayer.clear();
-    if (fog.simplified) return;
     const v = this.viewport();
     const FADE_BAND = 3;
     const inner = Math.max(0, fog.perception - FADE_BAND);
