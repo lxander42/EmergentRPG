@@ -8,6 +8,7 @@ import { FACTIONS } from "@/content/factions";
 import { BIOME_RESOURCES, RESOURCES, type ResourceKind } from "@/content/resources";
 import { globalToLocal, regionCenterGlobal, regionKey } from "@/lib/sim/biome-interior";
 import { useOutsideClose } from "@/lib/ui/use-outside-close";
+import TileChip from "@/components/panels/TileChip";
 
 export default function RegionPanel() {
   const region = useGameStore((s) => s.selectedRegion);
@@ -53,11 +54,7 @@ export default function RegionPanel() {
       <div className="mx-auto max-w-2xl">
         <header className="mb-4 flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
-            <span
-              aria-hidden
-              className="h-9 w-9 shrink-0 rounded-lg border border-[var(--color-border-strong)]"
-              style={{ background: meta.swatch }}
-            />
+            <TileChip name={meta.variants[0]!} size={36} rounded="lg" />
             <div>
               <h2 className="text-lg font-medium leading-tight text-[var(--color-fg)]">
                 {meta.title}
@@ -99,11 +96,7 @@ export default function RegionPanel() {
             Foods
             {foods.map((kind) => (
               <span key={kind} className="inline-flex items-center gap-1.5 normal-case">
-                <span
-                  aria-hidden
-                  className="h-2.5 w-2.5 rounded-full border border-[var(--color-border-strong)]"
-                  style={{ background: RESOURCES[kind].swatch }}
-                />
+                <TileChip name={RESOURCES[kind].frame} size={14} rounded="sm" />
                 <span className="text-[var(--color-fg)]">{RESOURCES[kind].label}</span>
               </span>
             ))}
@@ -231,11 +224,7 @@ function ResourcesHere({
       Resources here
       {entries.map(([kind, n]) => (
         <span key={kind} className="inline-flex items-center gap-1.5 normal-case">
-          <span
-            aria-hidden
-            className="h-2.5 w-2.5 rounded-full border border-[var(--color-border-strong)]"
-            style={{ background: RESOURCES[kind].swatch }}
-          />
+          <TileChip name={RESOURCES[kind].frame} size={14} rounded="sm" />
           <span className="text-[var(--color-fg)]">
             {RESOURCES[kind].label}{" "}
             <span className="tabular-nums text-[var(--color-fg-muted)]">×{n}</span>

@@ -1,4 +1,5 @@
 import type { Biome } from "@/lib/sim/biome";
+import type { TileName } from "@/content/tiles";
 
 export type ResourceKind =
   | "berry"
@@ -16,18 +17,19 @@ export type ResourceMeta = {
   swatch: string;
   food: boolean;
   energy: number;
+  frame: TileName;
 };
 
 export const RESOURCES: Record<ResourceKind, ResourceMeta> = {
-  berry: { label: "Berry", swatch: "#b85b6e", food: true, energy: 3 },
-  herb: { label: "Herb", swatch: "#7aa05c", food: true, energy: 2 },
-  grain: { label: "Grain", swatch: "#d8b66a", food: true, energy: 3 },
-  shellfish: { label: "Shellfish", swatch: "#e8c8b0", food: true, energy: 4 },
-  tubers: { label: "Tubers", swatch: "#a88660", food: true, energy: 3 },
-  wood: { label: "Wood", swatch: "#8a6a4a", food: false, energy: 0 },
-  reed: { label: "Reed", swatch: "#a8b878", food: false, energy: 0 },
-  stone: { label: "Stone", swatch: "#9c9588", food: false, energy: 0 },
-  ore: { label: "Ore", swatch: "#6f7a8e", food: false, energy: 0 },
+  berry: { label: "Berry", swatch: "#b85b6e", food: true, energy: 3, frame: "res_berry" },
+  herb: { label: "Herb", swatch: "#7aa05c", food: true, energy: 2, frame: "res_herb" },
+  grain: { label: "Grain", swatch: "#d8b66a", food: true, energy: 3, frame: "res_grain" },
+  shellfish: { label: "Shellfish", swatch: "#e8c8b0", food: true, energy: 4, frame: "res_shellfish" },
+  tubers: { label: "Tubers", swatch: "#a88660", food: true, energy: 3, frame: "res_tubers" },
+  wood: { label: "Wood", swatch: "#8a6a4a", food: false, energy: 0, frame: "res_wood" },
+  reed: { label: "Reed", swatch: "#a8b878", food: false, energy: 0, frame: "res_reed" },
+  stone: { label: "Stone", swatch: "#9c9588", food: false, energy: 0, frame: "res_stone" },
+  ore: { label: "Ore", swatch: "#6f7a8e", food: false, energy: 0, frame: "res_ore" },
 };
 
 export type BiomeResourceLists = { food: ResourceKind[]; materials: ResourceKind[] };
