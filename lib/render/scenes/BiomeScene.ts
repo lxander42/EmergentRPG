@@ -17,7 +17,6 @@ import { BIOMES } from "@/content/biomes";
 import { RESOURCES, type ResourceKind } from "@/content/resources";
 import { FACTIONS } from "@/content/factions";
 import { drawFactionShape } from "@/lib/render/shapes";
-import { bus } from "@/lib/render/bus";
 import type { Npc } from "@/lib/sim/npc";
 import { effectivePerception, isBitmapTileDiscovered } from "@/lib/sim/fog";
 import type { Player } from "@/lib/sim/player";
@@ -102,10 +101,10 @@ export class BiomeScene extends Phaser.Scene {
   private pointerDownPos = { x: 0, y: 0 };
   private dragMoved = false;
 
-  // Google-Maps style pan: once the user drags, the camera holds its
-  // absolute scroll position and the player can walk out of view.
-  // A floating recenter button (rendered in React) snaps it back.
-  private cameraPanned = false;
+  // Google-Maps style pan state lives in the Zustand store so it survives
+  // scene restarts (biome <-> world transitions). Once the user drags,
+  // the camera holds its absolute scroll position; the recenter button
+  // (React) flips the flag back to false to restore auto-follow.
 
   private accumulator = 0;
   private readonly tickStepMs = 250;
@@ -137,10 +136,9 @@ export class BiomeScene extends Phaser.Scene {
     this.accumulator = 0;
     this.playerTransitionStart = 0;
     this.tileColorCache.clear();
-    this.cameraPanned = false;
+    useGameStore.getState().setCameraPanned(false);
     this.visitorViews.clear();
     this.visitorHits = [];
-    bus.emit("biome:panned", { panned: false });
 
     const player = useGameStore.getState().world?.life?.player;
     if (player) {
@@ -161,14 +159,11 @@ export class BiomeScene extends Phaser.Scene {
     this.input.on("wheel", this.onWheel, this);
     this.scale.on("resize", this.handleResize, this);
     this.game.events.on("dprchange", this.onDprChange, this);
-    bus.on("biome:recenter", this.onRecenterRequest);
   }
 
   shutdown() {
     this.scale.off("resize", this.handleResize, this);
     this.game.events.off("dprchange", this.onDprChange, this);
-    bus.off("biome:recenter", this.onRecenterRequest);
-    bus.emit("biome:panned", { panned: false });
     for (const view of this.visitorViews.values()) view.body.destroy();
     this.visitorViews.clear();
     this.visitorHits = [];
@@ -220,7 +215,7 @@ export class BiomeScene extends Phaser.Scene {
 
     // Camera is pinned to the player by default; once the user drags it
     // sticks where they put it until the recenter button is tapped.
-    if (!this.cameraPanned) {
+    if (!useGameStore.getState().cameraPanned) {
       this.cameras.main.centerOn(this.playerCx, this.playerCy);
     }
 
@@ -870,17 +865,6 @@ export class BiomeScene extends Phaser.Scene {
     return useGameStore.getState().world?.life?.gameOver ?? false;
   }
 
-  private setCameraPanned(panned: boolean) {
-    if (this.cameraPanned === panned) return;
-    this.cameraPanned = panned;
-    bus.emit("biome:panned", { panned });
-  }
-
-  private onRecenterRequest = () => {
-    this.setCameraPanned(false);
-    this.cameras.main.centerOn(this.playerCx, this.playerCy);
-  };
-
   private hitVisitorAt(wx: number, wy: number): string | null {
     let best: { id: string; d2: number } | null = null;
     for (const h of this.visitorHits) {
@@ -944,7 +928,7 @@ export class BiomeScene extends Phaser.Scene {
       if (Math.abs(dx) + Math.abs(dy) > PAN_THRESHOLD_PX) {
         this.dragMoved = true;
         this.cancelLongPress();
-        this.setCameraPanned(true);
+        useGameStore.getState().setCameraPanned(true);
       }
       this.cameras.main.scrollX -= dx / this.cameras.main.zoom;
       this.cameras.main.scrollY -= dy / this.cameras.main.zoom;

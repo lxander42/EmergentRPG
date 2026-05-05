@@ -88,6 +88,7 @@ type GameStore = {
   obstacleContextMenu: ObstacleContextMenuState | null;
   pendingMarker: { rx: number; ry: number } | null;
   statusMessages: StatusMessage[];
+  cameraPanned: boolean;
 
   startNew: () => void;
   loadFromDisk: (slot: string) => Promise<void>;
@@ -165,6 +166,7 @@ type GameStore = {
     ly: number,
     lootId: string,
   ) => void;
+  setCameraPanned: (panned: boolean) => void;
 };
 
 function withLife(world: World, life: LifeState): World {
@@ -195,6 +197,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   obstacleContextMenu: null,
   pendingMarker: null,
   statusMessages: [],
+  cameraPanned: false,
 
   startNew: () => {
     const fresh = createWorld();
@@ -755,6 +758,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     };
     const next = withPlayer(world, player);
     if (next) set({ world: next });
+  },
+
+  setCameraPanned: (panned) => {
+    if (get().cameraPanned === panned) return;
+    set({ cameraPanned: panned });
   },
 
   pickupLootAt: (rx, ry, lx, ly, lootId) => {
