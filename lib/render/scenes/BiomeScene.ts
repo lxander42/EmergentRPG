@@ -17,7 +17,12 @@ import { BIOMES } from "@/content/biomes";
 import { RESOURCES, type ResourceKind } from "@/content/resources";
 import { FACTIONS } from "@/content/factions";
 import { ATLAS_KEY, type TileName } from "@/content/tiles";
-import { frameKey, pickVariant, registerTileFrames } from "@/lib/render/tiles";
+import {
+  blendedBiomeAt,
+  frameKey,
+  pickVariant,
+  registerTileFrames,
+} from "@/lib/render/tiles";
 import type { Npc } from "@/lib/sim/npc";
 import { effectivePerception, isBitmapTileDiscovered } from "@/lib/sim/fog";
 import type { Player } from "@/lib/sim/player";
@@ -231,11 +236,19 @@ export class BiomeScene extends Phaser.Scene {
     const now = this.time.now;
 
     if (player.gx !== this.playerGx || player.gy !== this.playerGy) {
-      this.prevPlayerGx = this.playerGx;
-      this.prevPlayerGy = this.playerGy;
+      // Treat large jumps (death respawn, debug teleport) as snaps so the
+      // marker doesn't tween-slide across the whole map for 250 ms — that
+      // animation feels like a glitch on a 30-tile move.
+      const jump = Math.max(
+        Math.abs(player.gx - this.playerGx),
+        Math.abs(player.gy - this.playerGy),
+      );
+      const teleport = jump > 6;
+      this.prevPlayerGx = teleport ? player.gx : this.playerGx;
+      this.prevPlayerGy = teleport ? player.gy : this.playerGy;
       this.playerGx = player.gx;
       this.playerGy = player.gy;
-      this.playerTransitionStart = now;
+      this.playerTransitionStart = teleport ? 0 : now;
     }
 
     const stepMs = Math.max(1, player.stats.speed) * this.tickStepMs;
@@ -357,12 +370,18 @@ export class BiomeScene extends Phaser.Scene {
     // Ground pass — every tile is its own Image child of the chunk
     // container. Container is positioned at the region's world origin so
     // tile (lx, ly) lives at child-local (lx * CELL, ly * CELL).
+    //
+    // Within EDGE_BAND tiles of a region boundary the displayed biome may
+    // borrow from the neighbour region (see blendedBiomeAt) — produces a
+    // feathered transition instead of a hard line, with no transition
+    // sprites needed.
     for (let ly = 0; ly < INTERIOR_H; ly++) {
       for (let lx = 0; lx < INTERIOR_W; lx++) {
         const gx = rx * INTERIOR_W + lx;
         const gy = ry * INTERIOR_H + ly;
-        const biome = interior ? baseBiome : biomeAt(gx, gy);
-        const variant = pickVariant(BIOMES[biome].variants, gx, gy);
+        const here = interior ? baseBiome : biomeAt(gx, gy);
+        const display = blendedBiomeAt(gx, gy, here);
+        const variant = pickVariant(BIOMES[display].variants, gx, gy);
         const tile = this.add.image(0, 0, ATLAS_KEY, frameKey(variant));
         tile.setOrigin(0, 0);
         tile.setPosition(lx * CELL, ly * CELL);
