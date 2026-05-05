@@ -56,8 +56,8 @@ export type Npc = {
   engagedTick: number | null;
 };
 
-const IDLE_MIN = 12;
-const IDLE_MAX = 30;
+const IDLE_MIN = 24;
+const IDLE_MAX = 56;
 const TELEGRAPH_TICKS = 8;
 const MOVE_CHANCE = 0.5;
 const STUCK_THRESHOLD = 4;

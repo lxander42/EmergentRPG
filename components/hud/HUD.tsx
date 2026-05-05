@@ -14,9 +14,10 @@ import {
   Lightning,
   Heart,
   Skull,
+  TreasureChest,
 } from "@phosphor-icons/react/dist/ssr";
 import { useGameStore } from "@/lib/state/game-store";
-import { RESOURCES, type ResourceKind } from "@/content/resources";
+import type { ResourceKind } from "@/content/resources";
 import { globalToLocal } from "@/lib/sim/biome-interior";
 import type { GameOverReason } from "@/lib/sim/world";
 import type { Legacy } from "@/lib/sim/legacy";
@@ -27,12 +28,7 @@ import {
   inventoryCapFromBaskets,
   inventoryTotal,
 } from "@/lib/sim/inventory";
-import {
-  basketCount,
-  TOOLS,
-  type ToolInstance,
-  type ToolKind,
-} from "@/lib/sim/tools";
+import { basketCount, type ToolInstance } from "@/lib/sim/tools";
 
 const SPEEDS = [1, 2, 4] as const;
 const EMPTY_INVENTORY: Partial<Record<ResourceKind, number>> = {};
@@ -498,131 +494,23 @@ function InventoryStrip({
   tools: ToolInstance[];
   onOpen: () => void;
 }) {
-  const entries = (Object.entries(inventory) as Array<[ResourceKind, number]>).filter(
-    ([, n]) => n > 0,
-  );
   const cap = inventoryCapFromBaskets(basketCount(tools));
   const total = inventoryTotal(inventory);
-  const grouped = groupTools(tools);
+  const full = total >= cap;
   return (
     <button
       onClick={onOpen}
       aria-label="Open inventory"
-      className="tactile pointer-events-auto inline-flex flex-col items-stretch gap-1 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
+      className="tactile pointer-events-auto relative inline-flex h-10 w-10 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-fg)] shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
     >
-      <span className="inline-flex items-center gap-2">
-        <span className="font-mono text-[10px] uppercase tracking-wider tabular-nums text-[var(--color-fg-muted)]">
-          {total}/{cap}
-        </span>
-        {entries.length === 0 ? (
-          <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
-            empty
-          </span>
-        ) : (
-          entries.map(([kind, count]) => (
-            <span key={kind} className="inline-flex items-center gap-1">
-              <span
-                aria-hidden
-                className="h-2.5 w-2.5 rounded-full border border-[var(--color-border-strong)]"
-                style={{ background: RESOURCES[kind].swatch }}
-              />
-              <span className="font-mono text-[10px] tabular-nums text-[var(--color-fg)]">
-                {count}
-              </span>
-            </span>
-          ))
-        )}
-      </span>
-      {grouped.length > 0 && (
-        <span className="inline-flex items-center gap-1.5 border-t border-[var(--color-border)] pt-1">
-          {grouped.map((g) => (
-            <ToolBadge key={g.kind} kind={g.kind} count={g.count} fraction={g.fraction} />
-          ))}
-        </span>
+      <TreasureChest size={20} weight="duotone" />
+      {full && (
+        <span
+          aria-hidden
+          className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-[var(--color-accent)]"
+        />
       )}
     </button>
   );
 }
 
-type ToolGroup = { kind: ToolKind; count: number; fraction: number };
-
-function groupTools(tools: ToolInstance[]): ToolGroup[] {
-  const map = new Map<ToolKind, { count: number; minFraction: number }>();
-  for (const t of tools) {
-    const meta = TOOLS[t.kind];
-    const fraction = meta.durability > 0 ? Math.max(0, t.usesLeft) / meta.durability : 1;
-    const cur = map.get(t.kind);
-    if (cur) {
-      cur.count += 1;
-      if (fraction < cur.minFraction) cur.minFraction = fraction;
-    } else {
-      map.set(t.kind, { count: 1, minFraction: fraction });
-    }
-  }
-  const out: ToolGroup[] = [];
-  for (const [kind, v] of map) {
-    out.push({ kind, count: v.count, fraction: v.minFraction });
-  }
-  return out;
-}
-
-function ToolBadge({
-  kind,
-  count,
-  fraction,
-}: {
-  kind: ToolKind;
-  count: number;
-  fraction: number;
-}) {
-  const meta = TOOLS[kind];
-  const f = Math.max(0, Math.min(1, fraction));
-  const r = 8;
-  const c = 2 * Math.PI * r;
-  const dash = c * f;
-  const showRing = meta.durability < 999;
-  return (
-    <span
-      aria-label={`${meta.label} ×${count}`}
-      className="relative inline-flex h-5 w-5 items-center justify-center"
-    >
-      {showRing && (
-        <svg
-          viewBox="0 0 20 20"
-          className="absolute inset-0"
-          aria-hidden
-        >
-          <circle
-            cx="10"
-            cy="10"
-            r={r}
-            fill="none"
-            stroke="var(--color-border)"
-            strokeWidth="1.5"
-          />
-          <circle
-            cx="10"
-            cy="10"
-            r={r}
-            fill="none"
-            stroke="var(--color-accent)"
-            strokeWidth="1.5"
-            strokeDasharray={`${dash} ${c}`}
-            strokeLinecap="round"
-            transform="rotate(-90 10 10)"
-          />
-        </svg>
-      )}
-      <span
-        aria-hidden
-        className="relative h-3 w-3 rounded-sm border border-[var(--color-border-strong)]"
-        style={{ background: meta.swatch }}
-      />
-      {count > 1 && (
-        <span className="absolute -bottom-1 -right-1 inline-flex min-w-3 items-center justify-center rounded-full bg-[var(--color-fg)] px-1 font-mono text-[8px] font-medium leading-none text-[var(--color-bg)]">
-          ×{count}
-        </span>
-      )}
-    </span>
-  );
-}

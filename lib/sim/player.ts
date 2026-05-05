@@ -46,14 +46,14 @@ export type Player = {
 
 export const ENERGY_MAX = 10;
 export const HEALTH_MAX = 10;
-export const BASE_SPEED_TICKS_PER_TILE = 2;
-export const BASE_PERCEPTION = 6;
+export const BASE_SPEED_TICKS_PER_TILE = 1;
+export const BASE_PERCEPTION = 10;
 export const BASE_ATTACK = 1;
 export const BASE_DEFENSE = 0;
 export const BASE_REACH = 1;
 
-export const WALK_ENERGY_PER_STEP = 0.3;
-export const STARVE_TICKS_PER_DAMAGE = 80;
+export const WALK_ENERGY_PER_STEP = 0.05;
+export const STARVE_TICKS_PER_DAMAGE = 240;
 export const EAT_ENERGY_PER_FOOD = 3;
 export const EAT_HEALTH_PER_FOOD = 1;
 

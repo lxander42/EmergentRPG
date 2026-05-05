@@ -318,18 +318,19 @@ export class BiomeScene extends Phaser.Scene {
         this.playerCy - 14,
         `+${p.amount} ${meta.label}`,
         {
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-          fontSize: "12px",
-          color: meta.swatch,
+          fontFamily: "Outfit, ui-sans-serif, system-ui, sans-serif",
+          fontSize: "20px",
+          fontStyle: "bold",
+          color: "#2c2820",
         },
       );
       text.setOrigin(0.5, 1);
       text.setDepth(11);
       this.tweens.add({
         targets: text,
-        y: this.playerCy - 32,
+        y: this.playerCy - 44,
         alpha: { from: 1, to: 0 },
-        duration: 900,
+        duration: 1400,
         ease: "Cubic.easeOut",
         onComplete: () => text.destroy(),
       });
@@ -473,15 +474,30 @@ export class BiomeScene extends Phaser.Scene {
     this.fogLayer.clear();
     if (fog.simplified) return;
     const v = this.viewport();
-    this.fogLayer.fillStyle(COLORS.bg, 0.55);
+    const FADE_BAND = 3;
+    const inner = Math.max(0, fog.perception - FADE_BAND);
+    const inner2 = inner * inner;
+    const outer = fog.perception;
+    const ramp = Math.max(1, outer - inner);
     for (let gy = v.gyMin; gy <= v.gyMax; gy++) {
       for (let gx = v.gxMin; gx <= v.gxMax; gx++) {
         const dx = gx - fog.px;
         const dy = gy - fog.py;
-        if (dx * dx + dy * dy <= fog.r2) continue;
-        const { rx, ry, lx, ly } = globalToLocal(gx, gy);
-        const bitmap = fog.discoveredTiles[regionKey(rx, ry)];
-        if (!bitmap || !isBitmapTileDiscovered(bitmap, lx, ly)) continue;
+        const d2 = dx * dx + dy * dy;
+        let alpha: number;
+        if (d2 <= inner2) {
+          continue;
+        } else if (d2 <= fog.r2) {
+          const d = Math.sqrt(d2);
+          const t = (d - inner) / ramp;
+          alpha = t * 0.55;
+        } else {
+          const { rx, ry, lx, ly } = globalToLocal(gx, gy);
+          const bitmap = fog.discoveredTiles[regionKey(rx, ry)];
+          if (!bitmap || !isBitmapTileDiscovered(bitmap, lx, ly)) continue;
+          alpha = 0.55;
+        }
+        this.fogLayer.fillStyle(COLORS.bg, alpha);
         this.fogLayer.fillRect(gx * CELL, gy * CELL, CELL, CELL);
       }
     }
@@ -1031,22 +1047,15 @@ export class BiomeScene extends Phaser.Scene {
         const gy = Math.floor(world.y / CELL);
         const { rx, ry, lx, ly } = globalToLocal(gx, gy);
         const player = store.world?.life?.player;
-        const discoveredTiles = store.world?.discoveredTiles ?? {};
-        const bitmap = discoveredTiles[regionKey(rx, ry)];
         const dxp = player ? gx - player.gx : 0;
         const dyp = player ? gy - player.gy : 0;
         const perception = player ? effectivePerception(player) : 0;
         const visible = player ? dxp * dxp + dyp * dyp <= perception * perception : false;
-        const discovered = bitmap ? isBitmapTileDiscovered(bitmap, lx, ly) : false;
         const interior = store.world?.biomeInteriors[regionKey(rx, ry)];
-        const kind = interior ? obstacleKindAt(interior, lx, ly) : null;
+        const kind = visible && interior ? obstacleKindAt(interior, lx, ly) : null;
         store.closeNpcContextMenu();
-        if (visible && kind) {
+        if (kind) {
           store.openObstacleContextMenu(rx, ry, lx, ly, kind, pointer.x, pointer.y, false);
-        } else if (!visible && discovered && kind) {
-          store.openObstacleContextMenu(rx, ry, lx, ly, kind, pointer.x, pointer.y, true);
-        } else if (!visible && !discovered) {
-          store.closeObstacleContextMenu();
         } else {
           store.closeObstacleContextMenu();
           store.walkPlayerTo(gx, gy);

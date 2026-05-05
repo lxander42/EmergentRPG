@@ -118,9 +118,7 @@ export function isTileVisibleEuclid(
 }
 
 export function effectivePerception(player: Player): number {
-  let p = player.stats.perception;
-  if (player.tools.some((t) => t.kind === "torch")) p += 3;
-  return p;
+  return player.stats.perception;
 }
 
 export function countDiscoveredRegions(
