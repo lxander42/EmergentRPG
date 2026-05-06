@@ -6,6 +6,7 @@ import {
   Bug,
   Eye,
   EyeSlash,
+  Hammer,
   House,
   Pause,
   Play,
@@ -79,6 +80,9 @@ export default function HUD() {
   const toggleDebug = useGameStore((s) => s.toggleDebug);
   const mapShowFactions = useGameStore((s) => s.mapShowFactions);
   const toggleMapFactions = useGameStore((s) => s.toggleMapFactions);
+  const buildModeActive = useGameStore((s) => s.buildMode.active);
+  const enterBuildMode = useGameStore((s) => s.enterBuildMode);
+  const exitBuildMode = useGameStore((s) => s.exitBuildMode);
 
   return (
     <>
@@ -135,6 +139,19 @@ export default function HUD() {
                 )}
               </button>
             </>
+          )}
+
+          {hasHome && view === "biome" && (
+            <button
+              aria-label={buildModeActive ? "Exit build mode" : "Enter build mode"}
+              aria-pressed={buildModeActive}
+              onClick={buildModeActive ? exitBuildMode : enterBuildMode}
+              className={`tactile inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-[var(--color-surface-warm)] ${
+                buildModeActive ? "text-[var(--color-accent)]" : "text-[var(--color-fg)]"
+              }`}
+            >
+              <Hammer size={16} weight={buildModeActive ? "fill" : "duotone"} />
+            </button>
           )}
 
           {view === "world" && (

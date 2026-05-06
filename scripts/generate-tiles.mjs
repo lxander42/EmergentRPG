@@ -392,16 +392,65 @@ function bush(set) {
 }
 
 function workbench(set) {
-  for (let y = 9; y <= 12; y++) {
+  // South-edge / rotation 0: horizontal tabletop flush with the tile's south
+  // edge. Legs descend to the very bottom row so the workbench hugs the
+  // floor instead of floating at tile center.
+  for (let y = 8; y <= 10; y++) {
+    for (let x = 3; x <= 12; x++) set(x, y, PAL.workbench);
+  }
+  for (let x = 3; x <= 12; x++) set(x, 8, shade(PAL.workbench, 0.18));
+  for (let x = 4; x <= 11; x++) set(x, 11, shade(PAL.workbench, -0.25));
+  for (let y = 11; y <= 14; y++) {
     set(4, y, PAL.workbenchLeg);
     set(11, y, PAL.workbenchLeg);
   }
-  for (let y = 6; y <= 8; y++) {
+  for (let x = 4; x <= 11; x++) set(x, 15, [0, 0, 0, 60]);
+}
+
+function workbenchN(set) {
+  // North-edge / rotation 2: horizontal tabletop flush with the tile's north
+  // edge. Legs still face the camera (descend southward), but the whole
+  // sprite sits in the top half of the tile.
+  for (let y = 0; y <= 2; y++) {
     for (let x = 3; x <= 12; x++) set(x, y, PAL.workbench);
   }
-  for (let x = 3; x <= 12; x++) set(x, 6, shade(PAL.workbench, 0.18));
-  for (let x = 4; x <= 11; x++) set(x, 9, shade(PAL.workbench, -0.25));
-  for (let x = 4; x <= 11; x++) set(x, 13, [0, 0, 0, 60]);
+  for (let x = 3; x <= 12; x++) set(x, 0, shade(PAL.workbench, 0.18));
+  for (let x = 4; x <= 11; x++) set(x, 3, shade(PAL.workbench, -0.25));
+  for (let y = 3; y <= 6; y++) {
+    set(4, y, PAL.workbenchLeg);
+    set(11, y, PAL.workbenchLeg);
+  }
+  for (let x = 4; x <= 11; x++) set(x, 7, [0, 0, 0, 60]);
+}
+
+function workbenchW(set) {
+  // West-edge / rotation 3: vertical tabletop flush with the tile's west
+  // edge. Tabletop runs north-south on the left; legs face camera (south).
+  for (let y = 2; y <= 10; y++) {
+    for (let x = 0; x <= 3; x++) set(x, y, PAL.workbench);
+  }
+  for (let x = 0; x <= 3; x++) set(x, 2, shade(PAL.workbench, 0.18));
+  for (let x = 0; x <= 3; x++) set(x, 10, shade(PAL.workbench, -0.25));
+  for (let y = 11; y <= 13; y++) {
+    set(0, y, PAL.workbenchLeg);
+    set(3, y, PAL.workbenchLeg);
+  }
+  for (let x = 0; x <= 3; x++) set(x, 14, [0, 0, 0, 60]);
+}
+
+function workbenchE(set) {
+  // East-edge / rotation 1: vertical tabletop flush with the tile's east
+  // edge. Tabletop runs north-south on the right; legs face camera (south).
+  for (let y = 2; y <= 10; y++) {
+    for (let x = 12; x <= 15; x++) set(x, y, PAL.workbench);
+  }
+  for (let x = 12; x <= 15; x++) set(x, 2, shade(PAL.workbench, 0.18));
+  for (let x = 12; x <= 15; x++) set(x, 10, shade(PAL.workbench, -0.25));
+  for (let y = 11; y <= 13; y++) {
+    set(12, y, PAL.workbenchLeg);
+    set(15, y, PAL.workbenchLeg);
+  }
+  for (let x = 12; x <= 15; x++) set(x, 14, [0, 0, 0, 60]);
 }
 
 // ---- resources -------------------------------------------------------------
@@ -860,6 +909,12 @@ const FRAMES = [
   ["res_tin_ore", tinOre],
   ["res_iron_ore", ironOre],
   ["res_coal", coalOre],
+  // Row 2 (col 15) onward: structure rotation variants. The default
+  // `workbench` frame (row 1) is the south-edge / rotation-0 variant.
+  ["workbench_n", workbenchN],
+  // Row 3: rotation overflow.
+  ["workbench_w", workbenchW],
+  ["workbench_e", workbenchE],
 ];
 
 for (let i = 0; i < FRAMES.length; i++) {

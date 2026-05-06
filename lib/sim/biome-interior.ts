@@ -46,6 +46,11 @@ export type StructureContents = {
   tools?: import("@/lib/sim/tools").ToolInstance[];
 };
 
+// Rotation index 0..3 maps to south, east, north, west tile-edge anchors
+// (clockwise to match the rotate-clockwise UI). Used both for ghost preview
+// and for persisted placement orientation.
+export type Rotation = 0 | 1 | 2 | 3;
+
 export type PlacedStructure = {
   id: string;
   kind: StructureKind;
@@ -53,6 +58,7 @@ export type PlacedStructure = {
   ly: number;
   hp?: number;
   tier?: number;
+  orientation?: Rotation;
   contents?: StructureContents;
   label?: string;
 };
@@ -68,6 +74,10 @@ export type BiomeInterior = {
   // is sparse and only kept in stone biomes; cleared alongside the obstacle.
   oreDeposits: Record<number, OreTier>;
   placedStructures: PlacedStructure[];
+  // Per-cell rotation for player-placed obstacle-grid structures (workbench
+  // today). Sparse — only set when the player picks a non-default rotation.
+  // Optional so old saves rehydrate cleanly.
+  obstacleRotations?: Record<number, Rotation>;
 };
 
 export function regionKey(rx: number, ry: number): string {
@@ -179,7 +189,23 @@ export function clearObstacle(
     oreDeposits = { ...oreDeposits };
     delete oreDeposits[idx];
   }
-  return { ...interior, obstacles: next, oreDeposits };
+  let obstacleRotations = interior.obstacleRotations;
+  if (obstacleRotations && obstacleRotations[idx] != null) {
+    const nextRotations = { ...obstacleRotations };
+    delete nextRotations[idx];
+    obstacleRotations = nextRotations;
+  }
+  return { ...interior, obstacles: next, oreDeposits, obstacleRotations };
+}
+
+export function obstacleRotationAt(
+  interior: BiomeInterior,
+  lx: number,
+  ly: number,
+): Rotation {
+  if (!interior.obstacleRotations) return 0;
+  const idx = ly * INTERIOR_W + lx;
+  return interior.obstacleRotations[idx] ?? 0;
 }
 
 // Place a workbench on the interior at a passable tile near `near`. Picks
@@ -257,13 +283,69 @@ export function placeObstacle(
   lx: number,
   ly: number,
   kind: ObstacleKind,
+  rotation: Rotation = 0,
 ): BiomeInterior {
   if (lx < 0 || ly < 0 || lx >= INTERIOR_W || ly >= INTERIOR_H) return interior;
   const idx = ly * INTERIOR_W + lx;
   if (interior.obstacles[idx] != null) return interior;
   const next = interior.obstacles.slice();
   next[idx] = kind;
-  return { ...interior, obstacles: next };
+  let obstacleRotations = interior.obstacleRotations;
+  if (rotation !== 0) {
+    obstacleRotations = { ...(obstacleRotations ?? {}), [idx]: rotation };
+  }
+  return { ...interior, obstacles: next, obstacleRotations };
+}
+
+// Workbench keeps living in the obstacle grid for backwards compatibility
+// with the B1 schema. Every other StructureKind goes through
+// placedStructures[]. The two-column split avoids re-bumping WORLD_VERSION
+// and keeps existing workbench gather/decompose code paths untouched.
+export const STRUCTURE_USES_OBSTACLE_GRID: ReadonlySet<StructureKind> = new Set([
+  "workbench",
+]);
+
+export function placedStructureAt(
+  interior: BiomeInterior,
+  lx: number,
+  ly: number,
+): PlacedStructure | null {
+  return interior.placedStructures.find((s) => s.lx === lx && s.ly === ly) ?? null;
+}
+
+export function placedStructureById(
+  interior: BiomeInterior,
+  id: string,
+): PlacedStructure | null {
+  return interior.placedStructures.find((s) => s.id === id) ?? null;
+}
+
+export function tileOccupied(
+  interior: BiomeInterior,
+  lx: number,
+  ly: number,
+): boolean {
+  if (lx < 0 || ly < 0 || lx >= INTERIOR_W || ly >= INTERIOR_H) return true;
+  if (isLocalObstacle(interior, lx, ly)) return true;
+  if (resourceAtLocal(interior, lx, ly) != null) return true;
+  if (placedStructureAt(interior, lx, ly) != null) return true;
+  return false;
+}
+
+export function addPlacedStructure(
+  interior: BiomeInterior,
+  s: PlacedStructure,
+): BiomeInterior {
+  return { ...interior, placedStructures: [...interior.placedStructures, s] };
+}
+
+export function removePlacedStructure(
+  interior: BiomeInterior,
+  id: string,
+): BiomeInterior {
+  const next = interior.placedStructures.filter((s) => s.id !== id);
+  if (next.length === interior.placedStructures.length) return interior;
+  return { ...interior, placedStructures: next };
 }
 
 export function resourceAtLocal(

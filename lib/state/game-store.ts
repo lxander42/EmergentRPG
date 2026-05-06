@@ -25,11 +25,15 @@ import {
   localToGlobal,
   obstacleKindAt,
   placeObstacle,
+  placedStructureAt,
+  placedStructureById,
   regionCenterGlobal,
   regionKey,
+  tileOccupied,
   INTERIOR_W,
   INTERIOR_H,
   type ObstacleKind,
+  type Rotation,
 } from "@/lib/sim/biome-interior";
 import { bfsPredicate } from "@/lib/sim/path";
 import { chebyshev } from "@/lib/sim/combat";
@@ -41,7 +45,7 @@ import {
   spendRecipe,
 } from "@/lib/sim/weapons";
 import { makeTool, type ToolKind } from "@/lib/sim/tools";
-import { RECIPES_BY_ID } from "@/content/recipes";
+import { RECIPES_BY_ID, type StructureKind } from "@/content/recipes";
 import { RESOURCES, type ResourceKind } from "@/content/resources";
 import { EAT_ENERGY_PER_FOOD, EAT_HEALTH_PER_FOOD } from "@/lib/sim/player";
 
@@ -69,6 +73,30 @@ export type ObstacleContextMenuState = {
   remembered: boolean;
 };
 
+// Rotation index 0..3 cycles south, east, north, west (clockwise) and
+// pins the placed structure against that tile edge. Persisted on
+// PlacedStructure via `orientation` and on obstacle-grid kinds (workbench)
+// via `obstacleRotations`.
+export type BuildRotation = Rotation;
+
+export type BuildModeState = {
+  active: boolean;
+  selectedKind: StructureKind | null;
+  selectedTile: { rx: number; ry: number; lx: number; ly: number } | null;
+  rotation: BuildRotation;
+};
+
+export type PlacedStructureContextMenuState = {
+  rx: number;
+  ry: number;
+  lx: number;
+  ly: number;
+  structureId: string;
+  kind: StructureKind;
+  x: number;
+  y: number;
+};
+
 type GameStore = {
   world: World | null;
   paused: boolean;
@@ -86,6 +114,8 @@ type GameStore = {
   mapShowFactions: boolean;
   npcContextMenu: NpcContextMenu | null;
   obstacleContextMenu: ObstacleContextMenuState | null;
+  placedStructureContextMenu: PlacedStructureContextMenuState | null;
+  buildMode: BuildModeState;
   pendingMarker: { rx: number; ry: number } | null;
   statusMessages: StatusMessage[];
   cameraPanned: boolean;
@@ -143,6 +173,29 @@ type GameStore = {
     remembered?: boolean,
   ) => void;
   closeObstacleContextMenu: () => void;
+  openPlacedStructureContextMenu: (
+    rx: number,
+    ry: number,
+    lx: number,
+    ly: number,
+    structureId: string,
+    kind: StructureKind,
+    x: number,
+    y: number,
+  ) => void;
+  closePlacedStructureContextMenu: () => void;
+  interactWithPlacedStructure: (
+    rx: number,
+    ry: number,
+    structureId: string,
+    action: "deconstruct",
+  ) => void;
+  enterBuildMode: () => void;
+  exitBuildMode: () => void;
+  selectBuildKind: (kind: StructureKind | null) => void;
+  selectBuildTile: (rx: number, ry: number, lx: number, ly: number) => void;
+  cycleBuildRotation: () => void;
+  confirmPlaceStructure: () => void;
   eatFood: (kind: import("@/content/resources").ResourceKind) => void;
   teleportToRegion: (rx: number, ry: number) => void;
   inspectBiome: (rx: number, ry: number) => void;
@@ -196,6 +249,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   mapShowFactions: true,
   npcContextMenu: null,
   obstacleContextMenu: null,
+  placedStructureContextMenu: null,
+  buildMode: { active: false, selectedKind: null, selectedTile: null, rotation: 0 },
   pendingMarker: null,
   statusMessages: [],
   cameraPanned: false,
@@ -302,6 +357,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       selectedNpcId: null,
       selectedRegion: null,
       obstacleContextMenu: null,
+      placedStructureContextMenu: null,
+      buildMode: { active: false, selectedKind: null, selectedTile: null, rotation: 0 },
       workbenchOpen: false,
     });
     bus.emit("npc:deselected");
@@ -478,6 +535,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       tutorialOpen: false,
       npcContextMenu: null,
       obstacleContextMenu: null,
+      placedStructureContextMenu: null,
+      buildMode: { active: false, selectedKind: null, selectedTile: null, rotation: 0 },
       // Resume auto-follow so the camera centres on the respawned player
       // instead of holding wherever the previous life died.
       cameraPanned: false,
@@ -634,6 +693,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   openObstacleContextMenu: (rx, ry, lx, ly, kind, x, y, remembered = false) =>
     set({
       obstacleContextMenu: { rx, ry, lx, ly, kind, x, y, remembered },
+      placedStructureContextMenu: null,
       npcContextMenu: null,
       selectedNpcId: null,
       selectedRegion: null,
@@ -641,6 +701,212 @@ export const useGameStore = create<GameStore>((set, get) => ({
       workbenchOpen: false,
     }),
   closeObstacleContextMenu: () => set({ obstacleContextMenu: null }),
+
+  openPlacedStructureContextMenu: (rx, ry, lx, ly, structureId, kind, x, y) =>
+    set({
+      placedStructureContextMenu: { rx, ry, lx, ly, structureId, kind, x, y },
+      obstacleContextMenu: null,
+      npcContextMenu: null,
+      selectedNpcId: null,
+      selectedRegion: null,
+      inventoryOpen: false,
+      workbenchOpen: false,
+    }),
+  closePlacedStructureContextMenu: () => set({ placedStructureContextMenu: null }),
+
+  enterBuildMode: () => {
+    if (get().view !== "biome") return;
+    set({
+      buildMode: { active: true, selectedKind: null, selectedTile: null, rotation: 0 },
+      inventoryOpen: false,
+      workbenchOpen: false,
+      pastLivesOpen: false,
+      obstacleContextMenu: null,
+      placedStructureContextMenu: null,
+      npcContextMenu: null,
+      selectedNpcId: null,
+      selectedRegion: null,
+    });
+  },
+  exitBuildMode: () =>
+    set({
+      buildMode: { active: false, selectedKind: null, selectedTile: null, rotation: 0 },
+    }),
+  selectBuildKind: (kind) => {
+    const bm = get().buildMode;
+    if (!bm.active) return;
+    set({ buildMode: { ...bm, selectedKind: kind, selectedTile: null } });
+  },
+  cycleBuildRotation: () => {
+    const bm = get().buildMode;
+    if (!bm.active) return;
+    const next = ((bm.rotation + 1) % 4) as BuildRotation;
+    set({ buildMode: { ...bm, rotation: next } });
+  },
+  selectBuildTile: (rx, ry, lx, ly) => {
+    const bm = get().buildMode;
+    if (!bm.active || !bm.selectedKind) return;
+    const w = get().world;
+    if (!w?.life) return;
+    const here = globalToLocal(w.life.player.gx, w.life.player.gy);
+    if (here.rx !== rx || here.ry !== ry) return;
+    const interior = w.biomeInteriors[regionKey(rx, ry)];
+    if (!interior) return;
+    if (tileOccupied(interior, lx, ly)) return;
+    set({ buildMode: { ...bm, selectedTile: { rx, ry, lx, ly } } });
+  },
+  confirmPlaceStructure: () => {
+    const bm = get().buildMode;
+    if (!bm.active || !bm.selectedKind || !bm.selectedTile) return;
+    const current = get().world;
+    if (!current?.life || current.life.gameOver) return;
+    const { rx, ry, lx, ly } = bm.selectedTile;
+    const kind = bm.selectedKind;
+    let world = ensureInteriorsForRegion(current, rx, ry);
+    const interior = world.biomeInteriors[regionKey(rx, ry)];
+    if (!interior) return;
+    if (tileOccupied(interior, lx, ly)) {
+      set({ buildMode: { ...bm, selectedTile: null } });
+      return;
+    }
+    const recipe = RECIPES_BY_ID[kind];
+    if (!recipe || recipe.result.kind !== "structure") return;
+    if (!affordable(current.life.inventory, recipe)) return;
+
+    const startingPlayer = world.life!.player;
+    const isObstacle = (tgx: number, tgy: number): boolean => {
+      const loc = globalToLocal(tgx, tgy);
+      if (loc.rx < 0 || loc.ry < 0 || loc.rx >= MAP_W || loc.ry >= MAP_H) return true;
+      if (loc.lx < 0 || loc.ly < 0 || loc.lx >= INTERIOR_W || loc.ly >= INTERIOR_H) return true;
+      const i2 = world.biomeInteriors[regionKey(loc.rx, loc.ry)];
+      if (!i2) {
+        const w2 = ensureInteriorsForRegion(world, loc.rx, loc.ry);
+        if (w2 !== world) world = w2;
+        const fresh = world.biomeInteriors[regionKey(loc.rx, loc.ry)];
+        if (!fresh) return true;
+        return isLocalObstacle(fresh, loc.lx, loc.ly);
+      }
+      return isLocalObstacle(i2, loc.lx, loc.ly);
+    };
+
+    let bestPath: Array<{ gx: number; gy: number }> | null = null;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const tlx = lx + dx;
+        const tly = ly + dy;
+        if (tlx < 0 || tly < 0 || tlx >= INTERIOR_W || tly >= INTERIOR_H) continue;
+        if (isLocalObstacle(interior, tlx, tly)) continue;
+        const tg = localToGlobal(rx, ry, tlx, tly);
+        const path = bfsPredicate(
+          isObstacle,
+          startingPlayer.gx,
+          startingPlayer.gy,
+          tg.gx,
+          tg.gy,
+          WALK_MAX_RADIUS,
+        );
+        if (!path) continue;
+        if (!bestPath || path.length < bestPath.length) bestPath = path;
+      }
+    }
+    if (!bestPath) return;
+
+    const player: Player = {
+      ...startingPlayer,
+      route: bestPath.length === 0 ? null : bestPath,
+      stepCooldown: bestPath.length === 0 ? 0 : Math.max(1, startingPlayer.stats.speed),
+      pendingAction: {
+        kind: "place",
+        rx,
+        ry,
+        lx,
+        ly,
+        structureKind: kind,
+        rotation: bm.rotation,
+      },
+    };
+    const next = withPlayer(world, player);
+    if (!next) return;
+    set({
+      world: next,
+      buildMode: { active: false, selectedKind: null, selectedTile: null, rotation: 0 },
+    });
+  },
+
+  interactWithPlacedStructure: (rx, ry, structureId, action) => {
+    const current = get().world;
+    if (!current?.life || current.life.gameOver) return;
+    let world = ensureInteriorsForRegion(current, rx, ry);
+    const interior = world.biomeInteriors[regionKey(rx, ry)];
+    if (!interior) return;
+    const target = placedStructureById(interior, structureId);
+    if (!target) {
+      set({ placedStructureContextMenu: null });
+      return;
+    }
+    const { lx, ly } = target;
+
+    const startingPlayer = world.life!.player;
+    const isObstacle = (tgx: number, tgy: number): boolean => {
+      const loc = globalToLocal(tgx, tgy);
+      if (loc.rx < 0 || loc.ry < 0 || loc.rx >= MAP_W || loc.ry >= MAP_H) return true;
+      if (loc.lx < 0 || loc.ly < 0 || loc.lx >= INTERIOR_W || loc.ly >= INTERIOR_H) return true;
+      const i2 = world.biomeInteriors[regionKey(loc.rx, loc.ry)];
+      if (!i2) {
+        const w2 = ensureInteriorsForRegion(world, loc.rx, loc.ry);
+        if (w2 !== world) world = w2;
+        const fresh = world.biomeInteriors[regionKey(loc.rx, loc.ry)];
+        if (!fresh) return true;
+        return isLocalObstacle(fresh, loc.lx, loc.ly);
+      }
+      return isLocalObstacle(i2, loc.lx, loc.ly);
+    };
+
+    let bestPath: Array<{ gx: number; gy: number }> | null = null;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const tlx = lx + dx;
+        const tly = ly + dy;
+        if (tlx < 0 || tly < 0 || tlx >= INTERIOR_W || tly >= INTERIOR_H) continue;
+        if (isLocalObstacle(interior, tlx, tly)) continue;
+        if (placedStructureAt(interior, tlx, tly) != null) continue;
+        const tg = localToGlobal(rx, ry, tlx, tly);
+        const path = bfsPredicate(
+          isObstacle,
+          startingPlayer.gx,
+          startingPlayer.gy,
+          tg.gx,
+          tg.gy,
+          WALK_MAX_RADIUS,
+        );
+        if (!path) continue;
+        if (!bestPath || path.length < bestPath.length) bestPath = path;
+      }
+    }
+    if (!bestPath) {
+      set({ placedStructureContextMenu: null });
+      return;
+    }
+
+    const player: Player = {
+      ...startingPlayer,
+      route: bestPath.length === 0 ? null : bestPath,
+      stepCooldown: bestPath.length === 0 ? 0 : Math.max(1, startingPlayer.stats.speed),
+      pendingAction:
+        action === "deconstruct"
+          ? { kind: "deconstruct", rx, ry, lx, ly, structureId }
+          : null,
+    };
+    const next = withPlayer(world, player);
+    if (!next) return;
+    set({
+      world: next,
+      placedStructureContextMenu: null,
+      obstacleContextMenu: null,
+      npcContextMenu: null,
+    });
+  },
 
   eatFood: (kind: ResourceKind) => {
     const current = get().world;

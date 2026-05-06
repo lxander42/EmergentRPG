@@ -46,4 +46,21 @@ Banned: `Inter` (use Outfit, already loaded), `lucide-react` (Phosphor only), pu
 
 After finishing a feature, **always open a PR to `main`** via the `mcp__github__create_pull_request` MCP tool — that's the review handoff. Don't merge directly; don't leave a pushed branch sitting without a PR. One feature, one branch, one PR.
 
+PR body must follow this shape (no emojis, no marketing prose):
+
+```
+Closes #<sub-issue>
+Part of #<epic>
+
+<one short paragraph: what changed and why>
+
+## Acceptance
+- [x] <copy each bullet from the sub-issue's ## Acceptance, ticked when met>
+
+## Test plan
+- [ ] <each manual / automated check a reviewer should run before approving>
+```
+
+Mirror every bullet from the sub-issue's `## Acceptance` verbatim — tick the ones the PR satisfies, leave unticked ones (with a note) for any deliberately deferred. The Test plan is a checklist of reproducible steps a reviewer can walk through (start the dev server, click X, expect Y) plus the local checks (`npm run typecheck`, etc.) you ran.
+
 Once the PR is open, **always subscribe to it** via `mcp__github__subscribe_pr_activity` so review comments and CI failures arrive in-session as `<github-webhook-activity>` events. Don't end the turn without subscribing.

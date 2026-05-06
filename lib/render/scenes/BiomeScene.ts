@@ -6,11 +6,17 @@ import {
   INTERIOR_H,
   lootAtLocal,
   obstacleKindAt,
+  obstacleRotationAt,
+  placedStructureAt,
   regionKey,
   resourceAtLocal,
+  tileOccupied,
   type BiomeInterior,
   type ObstacleKind,
+  type PlacedStructure,
+  type Rotation,
 } from "@/lib/sim/biome-interior";
+import type { StructureKind } from "@/content/recipes";
 import { hasTool } from "@/lib/sim/tools";
 import { biomeAt } from "@/lib/sim/biome";
 import { BIOMES } from "@/content/biomes";
@@ -50,6 +56,9 @@ const COLORS = {
 };
 
 const MATERIAL_ALPHA = 0.7;
+const STRUCTURE_FALLBACK_COLOR = 0xa97f4f;
+const GHOST_VALID_COLOR = 0x5d8055;
+const GHOST_INVALID_COLOR = 0xb03131;
 
 type VisitorView = {
   body: Phaser.GameObjects.Image;
@@ -86,6 +95,8 @@ type ChunkEntry = {
   obstacles: (ObstacleKind | null)[] | null;
   resources: BiomeInterior["resources"] | null;
   loot: BiomeInterior["loot"] | null;
+  placedStructures: PlacedStructure[] | null;
+  obstacleRotations: BiomeInterior["obstacleRotations"] | null;
   lastUsedTick: number;
 };
 
@@ -97,6 +108,8 @@ export class BiomeScene extends Phaser.Scene {
   private playerShadow!: Phaser.GameObjects.Ellipse;
   private selectionRing!: Phaser.GameObjects.Graphics;
   private projectileLayer!: Phaser.GameObjects.Graphics;
+  private ghostLayer!: Phaser.GameObjects.Graphics;
+  private ghostSprite: Phaser.GameObjects.Image | null = null;
 
   private chunks = new Map<string, ChunkEntry>();
   private visitorViews = new Map<string, VisitorView>();
@@ -147,6 +160,7 @@ export class BiomeScene extends Phaser.Scene {
 
     this.chunkLayer = this.add.container(0, 0);
     this.routeLayer = this.add.graphics();
+    this.ghostLayer = this.add.graphics();
     this.fogLayer = this.add.graphics();
     this.selectionRing = this.add.graphics();
     this.selectionRing.setVisible(false);
@@ -158,10 +172,11 @@ export class BiomeScene extends Phaser.Scene {
     this.projectileLayer = this.add.graphics();
 
     // Layer ordering: chunks (ground+obstacles+resources+loot) → route →
-    // player shadow/sprite → projectiles → selection → fog (top, occludes
-    // everything outside the perception ring).
+    // ghost preview → player shadow/sprite → projectiles → selection → fog
+    // (top, occludes everything outside the perception ring).
     this.chunkLayer.setDepth(0);
     this.routeLayer.setDepth(1);
+    this.ghostLayer.setDepth(1);
     this.playerShadow.setDepth(2);
     this.playerImage.setDepth(3);
     this.projectileLayer.setDepth(4);
@@ -207,6 +222,10 @@ export class BiomeScene extends Phaser.Scene {
     this.visitorHits = [];
     for (const entry of this.chunks.values()) entry.container.destroy(true);
     this.chunks.clear();
+    if (this.ghostSprite) {
+      this.ghostSprite.destroy();
+      this.ghostSprite = null;
+    }
     this.prevPlayerHealth = -1;
     this.prevNpcHealth.clear();
     this.seenPickupIds.clear();
@@ -272,12 +291,53 @@ export class BiomeScene extends Phaser.Scene {
     this.drawFog(fog);
     this.drawRoute(player);
     this.drawMiningProgress(player);
+    this.drawBuildGhost(world);
     this.drawPlayer();
     this.drawVisitors(world.npcs, world, fog);
     this.detectHits(world.npcs, player.health);
     this.spawnPickupTexts(world.life.recentPickups);
     this.drawProjectiles(world.life.recentProjectiles, world.ticks);
     this.drawSelection();
+  }
+
+  private drawBuildGhost(world: { biomeInteriors: Record<string, BiomeInterior> }) {
+    this.ghostLayer.clear();
+    const bm = useGameStore.getState().buildMode;
+    if (!bm.active || !bm.selectedTile || !bm.selectedKind) {
+      if (this.ghostSprite) this.ghostSprite.setVisible(false);
+      return;
+    }
+    const { rx, ry, lx, ly } = bm.selectedTile;
+    const interior = world.biomeInteriors[regionKey(rx, ry)];
+    const valid = interior ? !tileOccupied(interior, lx, ly) : false;
+    const color = valid ? GHOST_VALID_COLOR : GHOST_INVALID_COLOR;
+    const gx = rx * INTERIOR_W + lx;
+    const gy = ry * INTERIOR_H + ly;
+    const x = gx * CELL;
+    const y = gy * CELL;
+    const pulse = 0.7 + 0.3 * Math.sin(this.time.now * 0.005);
+    this.ghostLayer.fillStyle(color, 0.18 * pulse);
+    this.ghostLayer.fillRect(x + 2, y + 2, CELL - 4, CELL - 4);
+    this.ghostLayer.lineStyle(2, color, 0.9);
+    this.ghostLayer.strokeRect(x + 1, y + 1, CELL - 2, CELL - 2);
+
+    const frame = placedStructureFrame(bm.selectedKind, bm.rotation);
+    if (!frame) {
+      if (this.ghostSprite) this.ghostSprite.setVisible(false);
+      return;
+    }
+    if (!this.ghostSprite) {
+      this.ghostSprite = this.add.image(0, 0, ATLAS_KEY, frameKey(frame));
+      this.ghostSprite.setOrigin(0.5, 0.5);
+      this.ghostSprite.setDisplaySize(CELL, CELL);
+      this.ghostSprite.setDepth(1);
+    } else {
+      this.ghostSprite.setTexture(ATLAS_KEY, frameKey(frame));
+      this.ghostSprite.setDisplaySize(CELL, CELL);
+    }
+    this.ghostSprite.setPosition(x + CELL / 2, y + CELL / 2);
+    this.ghostSprite.setAlpha(valid ? 0.65 : 0.45);
+    this.ghostSprite.setVisible(true);
   }
 
   private computeFog(
@@ -339,7 +399,9 @@ export class BiomeScene extends Phaser.Scene {
       entry &&
       (entry.obstacles !== (interior?.obstacles ?? null) ||
         entry.resources !== (interior?.resources ?? null) ||
-        entry.loot !== (interior?.loot ?? null));
+        entry.loot !== (interior?.loot ?? null) ||
+        entry.placedStructures !== (interior?.placedStructures ?? null) ||
+        entry.obstacleRotations !== (interior?.obstacleRotations ?? null));
     if (!entry) {
       const container = this.add.container(rx * CHUNK_PX, ry * CHUNK_PX);
       this.chunkLayer.add(container);
@@ -348,6 +410,8 @@ export class BiomeScene extends Phaser.Scene {
         obstacles: null,
         resources: null,
         loot: null,
+        placedStructures: null,
+        obstacleRotations: null,
         lastUsedTick: world.ticks,
       };
       this.chunks.set(key, entry);
@@ -395,6 +459,8 @@ export class BiomeScene extends Phaser.Scene {
       entry.obstacles = null;
       entry.resources = null;
       entry.loot = null;
+      entry.placedStructures = null;
+      entry.obstacleRotations = null;
       return;
     }
 
@@ -405,7 +471,8 @@ export class BiomeScene extends Phaser.Scene {
         if (!kind) continue;
         const gx = rx * INTERIOR_W + lx;
         const gy = ry * INTERIOR_H + ly;
-        const frame = obstacleFrame(kind, gx, gy, interior, lx, ly);
+        const rotation = obstacleRotationAt(interior, lx, ly);
+        const frame = obstacleFrame(kind, gx, gy, interior, lx, ly, rotation);
         const sprite = this.add.image(0, 0, ATLAS_KEY, frameKey(frame));
         sprite.setOrigin(0, 0);
         sprite.setPosition(lx * CELL, ly * CELL);
@@ -432,9 +499,35 @@ export class BiomeScene extends Phaser.Scene {
       container.add(sprite);
     }
 
+    for (const s of interior.placedStructures) {
+      const frame = placedStructureFrame(s.kind, s.orientation ?? 0);
+      if (frame) {
+        const sprite = this.add.image(0, 0, ATLAS_KEY, frameKey(frame));
+        sprite.setOrigin(0, 0);
+        sprite.setPosition(s.lx * CELL, s.ly * CELL);
+        sprite.setDisplaySize(CELL, CELL);
+        container.add(sprite);
+      } else {
+        // Fallback marker until the per-kind atlas frame ships in a later
+        // sub-issue. Keeps placement visible without blocking on art.
+        const rect = this.add.rectangle(
+          s.lx * CELL + CELL / 2,
+          s.ly * CELL + CELL / 2,
+          CELL * 0.7,
+          CELL * 0.7,
+          STRUCTURE_FALLBACK_COLOR,
+          0.85,
+        );
+        rect.setStrokeStyle(1.5, COLORS.outline, 0.9);
+        container.add(rect);
+      }
+    }
+
     entry.obstacles = interior.obstacles;
     entry.resources = interior.resources;
     entry.loot = interior.loot;
+    entry.placedStructures = interior.placedStructures;
+    entry.obstacleRotations = interior.obstacleRotations ?? null;
   }
 
   private drawFog(fog: FogContext) {
@@ -889,6 +982,7 @@ export class BiomeScene extends Phaser.Scene {
     const store = useGameStore.getState();
     const world = store.world;
     if (!world?.life) return;
+    if (store.buildMode.active) return;
     const player = world.life.player;
     const wp = this.cameras.main.getWorldPoint(screenX, screenY);
     const tappedVisitor = this.hitVisitorAt(wp.x, wp.y);
@@ -908,10 +1002,27 @@ export class BiomeScene extends Phaser.Scene {
     const interior = world.biomeInteriors[regionKey(rx, ry)];
     if (!interior) return;
     const kind = obstacleKindAt(interior, lx, ly);
-    if (!kind) return;
-    this.flashTapRing(wp.x, wp.y, COLORS.outline);
-    store.openObstacleContextMenu(rx, ry, lx, ly, kind, screenX, screenY, false);
-    this.longPressFired = true;
+    if (kind) {
+      this.flashTapRing(wp.x, wp.y, COLORS.outline);
+      store.openObstacleContextMenu(rx, ry, lx, ly, kind, screenX, screenY, false);
+      this.longPressFired = true;
+      return;
+    }
+    const placed = placedStructureAt(interior, lx, ly);
+    if (placed) {
+      this.flashTapRing(wp.x, wp.y, COLORS.outline);
+      store.openPlacedStructureContextMenu(
+        rx,
+        ry,
+        lx,
+        ly,
+        placed.id,
+        placed.kind,
+        screenX,
+        screenY,
+      );
+      this.longPressFired = true;
+    }
   }
 
   private onPointerUp(pointer: Phaser.Input.Pointer) {
@@ -932,16 +1043,38 @@ export class BiomeScene extends Phaser.Scene {
     if (!this.dragMoved && !this.longPressFired && moved < 10) {
       const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
       this.flashTapRing(world.x, world.y, COLORS.routeDot);
-      const tappedVisitor = this.hitVisitorAt(world.x, world.y);
       const store = useGameStore.getState();
+      const gx = Math.floor(world.x / CELL);
+      const gy = Math.floor(world.y / CELL);
+      const { rx, ry, lx, ly } = globalToLocal(gx, gy);
+
+      // Build-mode taps only ever pick a target tile. Player movement,
+      // harvest, pickup, and context menus are all suppressed until the
+      // player exits build mode or confirms placement.
+      if (store.buildMode.active) {
+        const player = store.world?.life?.player;
+        const dxp = player ? gx - player.gx : 0;
+        const dyp = player ? gy - player.gy : 0;
+        const perception = player ? effectivePerception(player) : 0;
+        const visible = player ? dxp * dxp + dyp * dyp <= perception * perception : false;
+        if (visible && store.buildMode.selectedKind) {
+          store.selectBuildTile(rx, ry, lx, ly);
+        }
+        this.cancelLongPress();
+        this.dragStart = null;
+        this.dragMoved = false;
+        this.longPressFired = false;
+        this.pinchInitial = null;
+        return;
+      }
+
+      const tappedVisitor = this.hitVisitorAt(world.x, world.y);
       if (tappedVisitor) {
         store.closeNpcContextMenu();
         store.closeObstacleContextMenu();
+        store.closePlacedStructureContextMenu();
         store.selectNpc(tappedVisitor);
       } else {
-        const gx = Math.floor(world.x / CELL);
-        const gy = Math.floor(world.y / CELL);
-        const { rx, ry, lx, ly } = globalToLocal(gx, gy);
         const player = store.world?.life?.player;
         const dxp = player ? gx - player.gx : 0;
         const dyp = player ? gy - player.gy : 0;
@@ -951,24 +1084,43 @@ export class BiomeScene extends Phaser.Scene {
         const kind = visible && interior ? obstacleKindAt(interior, lx, ly) : null;
         const resource = visible && interior ? resourceAtLocal(interior, lx, ly) : null;
         const loot = visible && interior ? lootAtLocal(interior, lx, ly) : null;
+        const placed = visible && interior ? placedStructureAt(interior, lx, ly) : null;
         store.closeNpcContextMenu();
         store.closeObstacleContextMenu();
+        store.closePlacedStructureContextMenu();
         if (kind) {
-          const action = defaultObstacleAction(kind);
-          if (action === "harvest" && player) {
-            const need: "axe" | "pickaxe" =
-              kind === "tree" ? "axe" : "pickaxe";
-            if (!hasTool(player.tools, need)) {
-              store.pushStatus(`You need ${needArticle(need)}.`);
-              store.walkPlayerTo(gx, gy);
-            } else {
-              store.interactWithObstacle(rx, ry, lx, ly, action);
-            }
-          } else if (action) {
-            store.interactWithObstacle(rx, ry, lx, ly, action);
+          // Player-built structures (workbench today) open the top-right
+          // context menu on tap so Craft and Deconstruct are both visible.
+          if (kind === "workbench") {
+            store.openObstacleContextMenu(rx, ry, lx, ly, kind, pointer.x, pointer.y, false);
           } else {
-            store.walkPlayerTo(gx, gy);
+            const action = defaultObstacleAction(kind);
+            if (action === "harvest" && player) {
+              const need: "axe" | "pickaxe" =
+                kind === "tree" ? "axe" : "pickaxe";
+              if (!hasTool(player.tools, need)) {
+                store.pushStatus(`You need ${needArticle(need)}.`);
+                store.walkPlayerTo(gx, gy);
+              } else {
+                store.interactWithObstacle(rx, ry, lx, ly, action);
+              }
+            } else if (action) {
+              store.interactWithObstacle(rx, ry, lx, ly, action);
+            } else {
+              store.walkPlayerTo(gx, gy);
+            }
           }
+        } else if (placed) {
+          store.openPlacedStructureContextMenu(
+            rx,
+            ry,
+            lx,
+            ly,
+            placed.id,
+            placed.kind,
+            pointer.x,
+            pointer.y,
+          );
         } else if (loot) {
           store.pickupLootAt(rx, ry, lx, ly, loot.id);
         } else if (resource) {
@@ -1030,6 +1182,33 @@ function needArticle(tool: "axe" | "pickaxe"): string {
   return tool === "axe" ? "an axe" : "a pickaxe";
 }
 
+function placedStructureFrame(
+  kind: StructureKind,
+  rotation: 0 | 1 | 2 | 3,
+): TileName | null {
+  // Each rotation pins the structure against a different edge of its tile.
+  // 0 = south, 1 = east, 2 = north, 3 = west (clockwise to match the
+  // rotate-clockwise icon). Most kinds (furnace/anvil/walls/door/chest/bed/
+  // campfire/cosmetics) ship their atlas frames in their own sub-issue;
+  // until then the renderer falls back to a coloured rectangle.
+  switch (kind) {
+    case "workbench":
+      switch (rotation) {
+        case 0:
+          return "workbench";
+        case 1:
+          return "workbench_e";
+        case 2:
+          return "workbench_n";
+        case 3:
+          return "workbench_w";
+      }
+      return "workbench";
+    default:
+      return null;
+  }
+}
+
 function obstacleFrame(
   kind: ObstacleKind,
   gx: number,
@@ -1037,6 +1216,7 @@ function obstacleFrame(
   interior: BiomeInterior,
   lx: number,
   ly: number,
+  rotation: Rotation = 0,
 ): TileName {
   switch (kind) {
     case "tree":
@@ -1048,6 +1228,16 @@ function obstacleFrame(
     case "bush":
       return "bush";
     case "workbench":
+      switch (rotation) {
+        case 0:
+          return "workbench";
+        case 1:
+          return "workbench_e";
+        case 2:
+          return "workbench_n";
+        case 3:
+          return "workbench_w";
+      }
       return "workbench";
     case "ore_deposit": {
       // A deposit cell shows tier only on the eroded exterior — i.e. when at
