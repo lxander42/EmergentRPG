@@ -45,3 +45,5 @@ Banned: `Inter` (use Outfit, already loaded), `lucide-react` (Phosphor only), pu
 `main` is the only persistent branch. Each task on a short-lived `claude/<task-name>` branch in a worktree off `origin/main`. `npm run typecheck && npm run lint && npm run build` must pass before pushing.
 
 After finishing a feature, **always open a PR to `main`** via the `mcp__github__create_pull_request` MCP tool — that's the review handoff. Don't merge directly; don't leave a pushed branch sitting without a PR. One feature, one branch, one PR.
+
+Once the PR is open, **always subscribe to it** via `mcp__github__subscribe_pr_activity` so review comments and CI failures arrive in-session as `<github-webhook-activity>` events. Don't end the turn without subscribing.
