@@ -40,7 +40,7 @@ import {
   makeWeapon,
   spendRecipe,
 } from "@/lib/sim/weapons";
-import { makeTool } from "@/lib/sim/tools";
+import { makeTool, type ToolKind } from "@/lib/sim/tools";
 import { RECIPES_BY_ID } from "@/content/recipes";
 import { RESOURCES, type ResourceKind } from "@/content/resources";
 import { EAT_ENERGY_PER_FOOD, EAT_HEALTH_PER_FOOD } from "@/lib/sim/player";
@@ -128,6 +128,7 @@ type GameStore = {
   closeTutorial: () => void;
   toggleDebug: () => void;
   toggleDebugMinimized: () => void;
+  debugGrantTool: (kind: ToolKind) => void;
   toggleMapFactions: () => void;
   openNpcContextMenu: (id: string, x: number, y: number) => void;
   closeNpcContextMenu: () => void;
@@ -605,6 +606,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
   closeTutorial: () => set({ tutorialOpen: false }),
   toggleDebug: () => set({ debugMode: !get().debugMode }),
   toggleDebugMinimized: () => set({ debugMinimized: !get().debugMinimized }),
+  debugGrantTool: (kind) => {
+    const current = get().world;
+    if (!current?.life || current.life.gameOver) return;
+    const life = current.life;
+    const player: Player = {
+      ...life.player,
+      tools: [...life.player.tools, makeTool(kind)],
+    };
+    set({ world: { ...current, life: { ...life, player } } });
+  },
   toggleMapFactions: () => set({ mapShowFactions: !get().mapShowFactions }),
 
   openNpcContextMenu: (id, x, y) =>
