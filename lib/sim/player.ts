@@ -1,6 +1,7 @@
 import type { WeaponInstance } from "@/lib/sim/weapons";
 import type { ToolInstance } from "@/lib/sim/tools";
 import type { ObstacleKind } from "@/lib/sim/biome-interior";
+import type { StructureKind } from "@/content/recipes";
 
 export type PlayerStats = {
   speed: number;
@@ -17,12 +18,23 @@ export type PendingAction =
   | { kind: "harvest"; rx: number; ry: number; lx: number; ly: number; obstacle: ObstacleKind }
   | { kind: "workbench"; rx: number; ry: number; lx: number; ly: number }
   | {
+      kind: "place";
+      rx: number;
+      ry: number;
+      lx: number;
+      ly: number;
+      structureKind: StructureKind;
+    }
+  | {
+      // Either obstacle (workbench, lives on obstacle grid) or structureId
+      // (lives in placedStructures[]) is set; never both.
       kind: "deconstruct";
       rx: number;
       ry: number;
       lx: number;
       ly: number;
-      obstacle: ObstacleKind;
+      obstacle?: ObstacleKind;
+      structureId?: string;
     };
 
 export type Player = {

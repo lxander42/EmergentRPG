@@ -266,6 +266,57 @@ export function placeObstacle(
   return { ...interior, obstacles: next };
 }
 
+// Workbench keeps living in the obstacle grid for backwards compatibility
+// with the B1 schema. Every other StructureKind goes through
+// placedStructures[]. The two-column split avoids re-bumping WORLD_VERSION
+// and keeps existing workbench gather/decompose code paths untouched.
+export const STRUCTURE_USES_OBSTACLE_GRID: ReadonlySet<StructureKind> = new Set([
+  "workbench",
+]);
+
+export function placedStructureAt(
+  interior: BiomeInterior,
+  lx: number,
+  ly: number,
+): PlacedStructure | null {
+  return interior.placedStructures.find((s) => s.lx === lx && s.ly === ly) ?? null;
+}
+
+export function placedStructureById(
+  interior: BiomeInterior,
+  id: string,
+): PlacedStructure | null {
+  return interior.placedStructures.find((s) => s.id === id) ?? null;
+}
+
+export function tileOccupied(
+  interior: BiomeInterior,
+  lx: number,
+  ly: number,
+): boolean {
+  if (lx < 0 || ly < 0 || lx >= INTERIOR_W || ly >= INTERIOR_H) return true;
+  if (isLocalObstacle(interior, lx, ly)) return true;
+  if (resourceAtLocal(interior, lx, ly) != null) return true;
+  if (placedStructureAt(interior, lx, ly) != null) return true;
+  return false;
+}
+
+export function addPlacedStructure(
+  interior: BiomeInterior,
+  s: PlacedStructure,
+): BiomeInterior {
+  return { ...interior, placedStructures: [...interior.placedStructures, s] };
+}
+
+export function removePlacedStructure(
+  interior: BiomeInterior,
+  id: string,
+): BiomeInterior {
+  const next = interior.placedStructures.filter((s) => s.id !== id);
+  if (next.length === interior.placedStructures.length) return interior;
+  return { ...interior, placedStructures: next };
+}
+
 export function resourceAtLocal(
   interior: BiomeInterior,
   lx: number,

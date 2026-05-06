@@ -7,6 +7,8 @@ import HUD from "@/components/hud/HUD";
 import NpcPanel from "@/components/panels/NpcPanel";
 import NpcContextMenu from "@/components/NpcContextMenu";
 import ObstacleContextMenu from "@/components/ObstacleContextMenu";
+import PlacedStructureContextMenu from "@/components/PlacedStructureContextMenu";
+import BuildModePalette from "@/components/BuildModePalette";
 import RegionPanel from "@/components/panels/RegionPanel";
 import InventoryPanel from "@/components/panels/InventoryPanel";
 import WorkbenchPanel from "@/components/panels/WorkbenchPanel";
@@ -56,6 +58,8 @@ function PlayInner() {
       <NpcPanel />
       <NpcContextMenu />
       <ObstacleContextMenu />
+      <PlacedStructureContextMenu />
+      <BuildModePalette />
       <RegionPanel />
       <InventoryPanel />
       <WorkbenchPanel />

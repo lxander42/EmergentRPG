@@ -8,6 +8,7 @@ import {
   INTERIOR_W,
   INTERIOR_H,
   addLoot,
+  addPlacedStructure,
   globalToLocal,
   isLocalObstacle,
   localToGlobal,
@@ -15,15 +16,22 @@ import {
   removeLoot,
   regionKey,
   removeResource,
+  removePlacedStructure,
   resourceAtLocal,
   obstacleKindAt,
   clearObstacle,
+  placeObstacle,
+  placedStructureById,
+  STRUCTURE_USES_OBSTACLE_GRID,
+  tileOccupied,
   type BiomeInterior,
   type LootPile,
   type ObstacleKind,
   type OreTier,
+  type PlacedStructure,
 } from "@/lib/sim/biome-interior";
-import { recipeForStructure } from "@/content/recipes";
+import { recipeForStructure, type StructureKind } from "@/content/recipes";
+import { affordable, spendRecipe } from "@/lib/sim/weapons";
 import {
   addToInventory,
   inventoryCapFromBaskets,
@@ -211,6 +219,11 @@ export function tickPlayer(input: PlayerTickInput): PlayerTickOutput {
       interiors = result.interiors;
       inventory = result.inventory;
       for (const p of result.pickups) pickups.push(p);
+    } else if (action.kind === "place") {
+      const result = tryPlace(player, interiors, inventory, action, ticks);
+      player = result.player;
+      interiors = result.interiors;
+      inventory = result.inventory;
     } else if (action.kind === "attack") {
       const targetIdx = npcs.findIndex((n) => n.id === action.npcId);
       if (targetIdx >= 0) {
@@ -548,14 +561,31 @@ function tryDeconstruct(
   const k = regionKey(action.rx, action.ry);
   const interior = interiors[k];
   if (!interior) return { player: nextPlayer, interiors, inventory, pickups: [] };
-  const stillThere = obstacleKindAt(interior, action.lx, action.ly);
-  if (stillThere !== action.obstacle) {
+
+  let kind: StructureKind | null = null;
+  let placedId: string | null = null;
+  if (action.structureId) {
+    const found = placedStructureById(interior, action.structureId);
+    if (!found) return { player: nextPlayer, interiors, inventory, pickups: [] };
+    if (found.lx !== action.lx || found.ly !== action.ly) {
+      return { player: nextPlayer, interiors, inventory, pickups: [] };
+    }
+    kind = found.kind;
+    placedId = found.id;
+  } else if (action.obstacle) {
+    const stillThere = obstacleKindAt(interior, action.lx, action.ly);
+    if (stillThere !== action.obstacle) {
+      return { player: nextPlayer, interiors, inventory, pickups: [] };
+    }
+    if (action.obstacle !== "workbench") {
+      return { player: nextPlayer, interiors, inventory, pickups: [] };
+    }
+    kind = "workbench";
+  } else {
     return { player: nextPlayer, interiors, inventory, pickups: [] };
   }
-  if (action.obstacle !== "workbench") {
-    return { player: nextPlayer, interiors, inventory, pickups: [] };
-  }
-  const recipe = recipeForStructure(action.obstacle);
+
+  const recipe = recipeForStructure(kind);
   if (!recipe) return { player: nextPlayer, interiors, inventory, pickups: [] };
 
   const cap = inventoryCapFromBaskets(basketCount(nextPlayer.tools));
@@ -565,14 +595,20 @@ function tryDeconstruct(
   for (const key of Object.keys(recipe.inputs) as ResourceKind[]) {
     const need = recipe.inputs[key] ?? 0;
     if (need <= 0) continue;
-    const result = addToInventory(nextInventory, key, need, cap);
+    // Refund half (rounded up) so single-unit inputs still come back instead
+    // of being silently lost.
+    const refund = Math.ceil(need / 2);
+    const result = addToInventory(nextInventory, key, refund, cap);
     nextInventory = result.inv;
     if (result.added > 0) pickups.push({ kind: key, amount: result.added });
-    const leftover = need - result.added;
+    const leftover = refund - result.added;
     if (leftover > 0) overflow[key] = (overflow[key] ?? 0) + leftover;
   }
 
-  let updatedInterior = clearObstacle(interior, action.lx, action.ly);
+  let updatedInterior =
+    placedId != null
+      ? removePlacedStructure(interior, placedId)
+      : clearObstacle(interior, action.lx, action.ly);
   if (Object.keys(overflow).length > 0) {
     const pile: LootPile = {
       id: `dec-${ticks}-${action.rx}-${action.ry}-${action.lx}-${action.ly}`,
@@ -587,6 +623,64 @@ function tryDeconstruct(
     interiors: { ...interiors, [k]: updatedInterior },
     inventory: nextInventory,
     pickups,
+  };
+}
+
+function tryPlace(
+  player: Player,
+  interiors: Record<string, BiomeInterior>,
+  inventory: Inventory,
+  action: Extract<PendingAction, { kind: "place" }>,
+  ticks: number,
+): {
+  player: Player;
+  interiors: Record<string, BiomeInterior>;
+  inventory: Inventory;
+} {
+  const nextPlayer: Player = { ...player, pendingAction: null };
+  const here = globalToLocal(player.gx, player.gy);
+  if (here.rx !== action.rx || here.ry !== action.ry) {
+    return { player: nextPlayer, interiors, inventory };
+  }
+  if (chebyshev(here.lx, here.ly, action.lx, action.ly) > 1) {
+    return { player: nextPlayer, interiors, inventory };
+  }
+  const k = regionKey(action.rx, action.ry);
+  const interior = interiors[k];
+  if (!interior) return { player: nextPlayer, interiors, inventory };
+  if (tileOccupied(interior, action.lx, action.ly)) {
+    return { player: nextPlayer, interiors, inventory };
+  }
+  const recipe = recipeForStructure(action.structureKind);
+  if (!recipe) return { player: nextPlayer, interiors, inventory };
+  if (!affordable(inventory, recipe)) {
+    return { player: nextPlayer, interiors, inventory };
+  }
+  const spent = spendRecipe(inventory, recipe);
+  if (!spent) return { player: nextPlayer, interiors, inventory };
+
+  let updatedInterior: BiomeInterior;
+  if (STRUCTURE_USES_OBSTACLE_GRID.has(action.structureKind)) {
+    updatedInterior = placeObstacle(
+      interior,
+      action.lx,
+      action.ly,
+      action.structureKind as ObstacleKind,
+    );
+  } else {
+    const id = `s-${ticks}-${action.rx}-${action.ry}-${action.lx}-${action.ly}`;
+    const structure: PlacedStructure = {
+      id,
+      kind: action.structureKind,
+      lx: action.lx,
+      ly: action.ly,
+    };
+    updatedInterior = addPlacedStructure(interior, structure);
+  }
+  return {
+    player: nextPlayer,
+    interiors: { ...interiors, [k]: updatedInterior },
+    inventory: spent,
   };
 }
 
