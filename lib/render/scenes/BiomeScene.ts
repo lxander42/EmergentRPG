@@ -106,6 +106,7 @@ export class BiomeScene extends Phaser.Scene {
   private selectionRing!: Phaser.GameObjects.Graphics;
   private projectileLayer!: Phaser.GameObjects.Graphics;
   private ghostLayer!: Phaser.GameObjects.Graphics;
+  private ghostSprite: Phaser.GameObjects.Image | null = null;
 
   private chunks = new Map<string, ChunkEntry>();
   private visitorViews = new Map<string, VisitorView>();
@@ -218,6 +219,10 @@ export class BiomeScene extends Phaser.Scene {
     this.visitorHits = [];
     for (const entry of this.chunks.values()) entry.container.destroy(true);
     this.chunks.clear();
+    if (this.ghostSprite) {
+      this.ghostSprite.destroy();
+      this.ghostSprite = null;
+    }
     this.prevPlayerHealth = -1;
     this.prevNpcHealth.clear();
     this.seenPickupIds.clear();
@@ -295,7 +300,10 @@ export class BiomeScene extends Phaser.Scene {
   private drawBuildGhost(world: { biomeInteriors: Record<string, BiomeInterior> }) {
     this.ghostLayer.clear();
     const bm = useGameStore.getState().buildMode;
-    if (!bm.active || !bm.selectedTile) return;
+    if (!bm.active || !bm.selectedTile || !bm.selectedKind) {
+      if (this.ghostSprite) this.ghostSprite.setVisible(false);
+      return;
+    }
     const { rx, ry, lx, ly } = bm.selectedTile;
     const interior = world.biomeInteriors[regionKey(rx, ry)];
     const valid = interior ? !tileOccupied(interior, lx, ly) : false;
@@ -305,10 +313,29 @@ export class BiomeScene extends Phaser.Scene {
     const x = gx * CELL;
     const y = gy * CELL;
     const pulse = 0.7 + 0.3 * Math.sin(this.time.now * 0.005);
-    this.ghostLayer.fillStyle(color, 0.28 * pulse);
+    this.ghostLayer.fillStyle(color, 0.18 * pulse);
     this.ghostLayer.fillRect(x + 2, y + 2, CELL - 4, CELL - 4);
-    this.ghostLayer.lineStyle(2, color, 0.85);
+    this.ghostLayer.lineStyle(2, color, 0.9);
     this.ghostLayer.strokeRect(x + 1, y + 1, CELL - 2, CELL - 2);
+
+    const frame = placedStructureFrame(bm.selectedKind);
+    if (!frame) {
+      if (this.ghostSprite) this.ghostSprite.setVisible(false);
+      return;
+    }
+    if (!this.ghostSprite) {
+      this.ghostSprite = this.add.image(0, 0, ATLAS_KEY, frameKey(frame));
+      this.ghostSprite.setOrigin(0.5, 0.5);
+      this.ghostSprite.setDisplaySize(CELL, CELL);
+      this.ghostSprite.setDepth(1);
+    } else {
+      this.ghostSprite.setTexture(ATLAS_KEY, frameKey(frame));
+      this.ghostSprite.setDisplaySize(CELL, CELL);
+    }
+    this.ghostSprite.setPosition(x + CELL / 2, y + CELL / 2);
+    this.ghostSprite.setAngle(bm.rotation * 90);
+    this.ghostSprite.setAlpha(valid ? 0.65 : 0.45);
+    this.ghostSprite.setVisible(true);
   }
 
   private computeFog(

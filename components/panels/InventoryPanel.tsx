@@ -30,7 +30,9 @@ export default function InventoryPanel() {
   );
   const cap = player ? inventoryCapFromBaskets(basketCount(player.tools)) : 20;
   const total = inventoryTotal(inventory);
-  const handRecipes = RECIPES.filter((r) => r.station === "hand");
+  const handRecipes = RECIPES.filter(
+    (r) => r.station === "hand" && r.result.kind !== "structure",
+  );
 
   return (
     <aside

@@ -83,6 +83,14 @@ export default function ObstacleContextMenu() {
     if (drag) return drag;
     const vw = typeof window === "undefined" ? 1024 : window.innerWidth;
     const vh = typeof window === "undefined" ? 768 : window.innerHeight;
+    // Player-built structures (workbench today) get a stable top-right
+    // anchor so the deconstruct / craft actions don't crowd the tap point.
+    if (ctx.kind === "workbench") {
+      return {
+        left: vw - MENU_WIDTH - MENU_PADDING,
+        top: MENU_PADDING + 72,
+      };
+    }
     const placeBelow = ctx.y < vh / 2;
     let left = ctx.x + MENU_OFFSET;
     let top = placeBelow ? ctx.y + MENU_OFFSET : ctx.y - MENU_HEIGHT_EST - MENU_OFFSET;

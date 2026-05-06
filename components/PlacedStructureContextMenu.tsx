@@ -7,7 +7,6 @@ import type { StructureKind } from "@/content/recipes";
 
 const MENU_WIDTH = 220;
 const MENU_HEIGHT_EST = 180;
-const MENU_OFFSET = 16;
 const MENU_PADDING = 12;
 
 const STRUCTURE_LABEL: Record<StructureKind, string> = {
@@ -68,13 +67,12 @@ export default function PlacedStructureContextMenu() {
     if (!ctx) return null;
     if (drag) return drag;
     const vw = typeof window === "undefined" ? 1024 : window.innerWidth;
-    const vh = typeof window === "undefined" ? 768 : window.innerHeight;
-    const placeBelow = ctx.y < vh / 2;
-    let left = ctx.x + MENU_OFFSET;
-    let top = placeBelow ? ctx.y + MENU_OFFSET : ctx.y - MENU_HEIGHT_EST - MENU_OFFSET;
-    left = clamp(left, MENU_PADDING, vw - MENU_WIDTH - MENU_PADDING);
-    top = clamp(top, MENU_PADDING, vh - MENU_HEIGHT_EST - MENU_PADDING);
-    return { left, top };
+    // Player-built structures get a stable top-right anchor so actions like
+    // deconstruct don't crowd the tap point.
+    return {
+      left: vw - MENU_WIDTH - MENU_PADDING,
+      top: MENU_PADDING + 72,
+    };
   }, [ctx, drag]);
 
   if (!ctx || !pos) return null;

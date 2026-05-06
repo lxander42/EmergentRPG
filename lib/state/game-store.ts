@@ -72,10 +72,16 @@ export type ObstacleContextMenuState = {
   remembered: boolean;
 };
 
+// Rotation index `0..3` maps to 0°, 90°, 180°, 270° clockwise. Persisted on
+// PlacedStructure via `orientation`; workbench (obstacle-grid) ignores it
+// since the only kind there is symmetric.
+export type BuildRotation = 0 | 1 | 2 | 3;
+
 export type BuildModeState = {
   active: boolean;
   selectedKind: StructureKind | null;
   selectedTile: { rx: number; ry: number; lx: number; ly: number } | null;
+  rotation: BuildRotation;
 };
 
 export type PlacedStructureContextMenuState = {
@@ -186,6 +192,7 @@ type GameStore = {
   exitBuildMode: () => void;
   selectBuildKind: (kind: StructureKind | null) => void;
   selectBuildTile: (rx: number, ry: number, lx: number, ly: number) => void;
+  cycleBuildRotation: () => void;
   confirmPlaceStructure: () => void;
   eatFood: (kind: import("@/content/resources").ResourceKind) => void;
   teleportToRegion: (rx: number, ry: number) => void;
@@ -241,7 +248,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   npcContextMenu: null,
   obstacleContextMenu: null,
   placedStructureContextMenu: null,
-  buildMode: { active: false, selectedKind: null, selectedTile: null },
+  buildMode: { active: false, selectedKind: null, selectedTile: null, rotation: 0 },
   pendingMarker: null,
   statusMessages: [],
   cameraPanned: false,
@@ -349,7 +356,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       selectedRegion: null,
       obstacleContextMenu: null,
       placedStructureContextMenu: null,
-      buildMode: { active: false, selectedKind: null, selectedTile: null },
+      buildMode: { active: false, selectedKind: null, selectedTile: null, rotation: 0 },
       workbenchOpen: false,
     });
     bus.emit("npc:deselected");
@@ -527,7 +534,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       npcContextMenu: null,
       obstacleContextMenu: null,
       placedStructureContextMenu: null,
-      buildMode: { active: false, selectedKind: null, selectedTile: null },
+      buildMode: { active: false, selectedKind: null, selectedTile: null, rotation: 0 },
       // Resume auto-follow so the camera centres on the respawned player
       // instead of holding wherever the previous life died.
       cameraPanned: false,
@@ -708,7 +715,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   enterBuildMode: () => {
     if (get().view !== "biome") return;
     set({
-      buildMode: { active: true, selectedKind: null, selectedTile: null },
+      buildMode: { active: true, selectedKind: null, selectedTile: null, rotation: 0 },
       inventoryOpen: false,
       workbenchOpen: false,
       pastLivesOpen: false,
@@ -720,11 +727,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
     });
   },
   exitBuildMode: () =>
-    set({ buildMode: { active: false, selectedKind: null, selectedTile: null } }),
+    set({
+      buildMode: { active: false, selectedKind: null, selectedTile: null, rotation: 0 },
+    }),
   selectBuildKind: (kind) => {
     const bm = get().buildMode;
     if (!bm.active) return;
     set({ buildMode: { ...bm, selectedKind: kind, selectedTile: null } });
+  },
+  cycleBuildRotation: () => {
+    const bm = get().buildMode;
+    if (!bm.active) return;
+    const next = ((bm.rotation + 1) % 4) as BuildRotation;
+    set({ buildMode: { ...bm, rotation: next } });
   },
   selectBuildTile: (rx, ry, lx, ly) => {
     const bm = get().buildMode;
@@ -804,7 +819,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!next) return;
     set({
       world: next,
-      buildMode: { active: false, selectedKind: null, selectedTile: null },
+      buildMode: { active: false, selectedKind: null, selectedTile: null, rotation: 0 },
     });
   },
 

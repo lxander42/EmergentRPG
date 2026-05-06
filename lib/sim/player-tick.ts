@@ -595,13 +595,10 @@ function tryDeconstruct(
   for (const key of Object.keys(recipe.inputs) as ResourceKind[]) {
     const need = recipe.inputs[key] ?? 0;
     if (need <= 0) continue;
-    // Refund half (rounded up) so single-unit inputs still come back instead
-    // of being silently lost.
-    const refund = Math.ceil(need / 2);
-    const result = addToInventory(nextInventory, key, refund, cap);
+    const result = addToInventory(nextInventory, key, need, cap);
     nextInventory = result.inv;
     if (result.added > 0) pickups.push({ kind: key, amount: result.added });
-    const leftover = refund - result.added;
+    const leftover = need - result.added;
     if (leftover > 0) overflow[key] = (overflow[key] ?? 0) + leftover;
   }
 
