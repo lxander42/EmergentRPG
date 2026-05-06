@@ -21,6 +21,7 @@ import {
   type BiomeInterior,
   type LootPile,
   type ObstacleKind,
+  type OreTier,
 } from "@/lib/sim/biome-interior";
 import { recipeForStructure } from "@/content/recipes";
 import {
@@ -85,6 +86,23 @@ export function tickPlayer(input: PlayerTickInput): PlayerTickOutput {
 
   if (player.combatCooldown > 0) {
     player = { ...player, combatCooldown: player.combatCooldown - 1 };
+  }
+
+  // Mining progress is tied to a live harvest action staged at one tile.
+  // Drop it when the action changed, the player is still walking, or the
+  // saved target doesn't match the current action target. Step-arrival
+  // is handled below by tryHarvest itself.
+  if (player.actionProgress) {
+    const act = player.pendingAction;
+    const ap = player.actionProgress;
+    const valid =
+      act?.kind === "harvest" &&
+      (player.route === null || player.route.length === 0) &&
+      ap.rx === act.rx &&
+      ap.ry === act.ry &&
+      ap.lx === act.lx &&
+      ap.ly === act.ly;
+    if (!valid) player = { ...player, actionProgress: null };
   }
 
   // Attack pending: keep chasing the NPC until they die, leave the region,
@@ -377,6 +395,17 @@ function tryCollect(
   };
 }
 
+// Mining ticks per pickaxe target. Trees stay instant — only pickaxe targets
+// are timed. Tuned so the player has time to see the progress arc but coal
+// (rarest tier) doesn't feel punishing.
+const MINE_TICKS_ROCK = 6;
+const MINE_TICKS_BY_TIER: Record<OreTier, number> = {
+  copper: 10,
+  tin: 14,
+  iron: 18,
+  coal: 22,
+};
+
 function tryHarvest(
   player: Player,
   interiors: Record<string, BiomeInterior>,
@@ -389,44 +418,89 @@ function tryHarvest(
   inventory: Inventory;
   pickup: PickupNotice | null;
 } {
-  let nextPlayer: Player = { ...player, pendingAction: null };
+  const cancel = (p: Player): Player => ({ ...p, pendingAction: null, actionProgress: null });
   const here = globalToLocal(player.gx, player.gy);
   if (here.rx !== action.rx || here.ry !== action.ry) {
-    return { player: nextPlayer, interiors, inventory, pickup: null };
+    return { player: cancel(player), interiors, inventory, pickup: null };
   }
   if (chebyshev(here.lx, here.ly, action.lx, action.ly) > 1) {
-    return { player: nextPlayer, interiors, inventory, pickup: null };
+    return { player: cancel(player), interiors, inventory, pickup: null };
   }
   const k = regionKey(action.rx, action.ry);
   const interior = interiors[k];
-  if (!interior) return { player: nextPlayer, interiors, inventory, pickup: null };
+  if (!interior) return { player: cancel(player), interiors, inventory, pickup: null };
   const stillThere = obstacleKindAt(interior, action.lx, action.ly);
   if (stillThere !== action.obstacle) {
-    return { player: nextPlayer, interiors, inventory, pickup: null };
+    return { player: cancel(player), interiors, inventory, pickup: null };
   }
 
   let toolKind: ToolKind | null = null;
   let drop: ResourceKind | null = null;
+  let timed = false;
+  let required = 1;
+  const idx = action.ly * INTERIOR_W + action.lx;
+  const tier: OreTier | undefined = interior.oreDeposits[idx];
   if (action.obstacle === "tree") {
     toolKind = "axe";
     drop = "wood";
   } else if (action.obstacle === "rock") {
     toolKind = "pickaxe";
     drop = interior.biome === "stone" && rng.chance(0.25) ? "ore" : "stone";
+    timed = true;
+    required = MINE_TICKS_ROCK;
+  } else if (action.obstacle === "ore_deposit") {
+    toolKind = "pickaxe";
+    drop = tier ? oreDropForTier(tier) : "stone";
+    timed = true;
+    required = tier ? MINE_TICKS_BY_TIER[tier] : MINE_TICKS_ROCK;
   } else {
-    // Cactus, bush, workbench: nothing to harvest.
-    return { player: nextPlayer, interiors, inventory, pickup: null };
+    return { player: cancel(player), interiors, inventory, pickup: null };
   }
-  if (!hasTool(nextPlayer.tools, toolKind)) {
-    return { player: nextPlayer, interiors, inventory, pickup: null };
+  if (!hasTool(player.tools, toolKind)) {
+    return { player: cancel(player), interiors, inventory, pickup: null };
   }
 
-  const cap = inventoryCapFromBaskets(basketCount(nextPlayer.tools));
+  if (timed) {
+    const prev = player.actionProgress;
+    const elapsed =
+      prev &&
+      prev.rx === action.rx &&
+      prev.ry === action.ry &&
+      prev.lx === action.lx &&
+      prev.ly === action.ly
+        ? prev.elapsed + 1
+        : 1;
+    if (elapsed < required) {
+      return {
+        player: {
+          ...player,
+          actionProgress: {
+            rx: action.rx,
+            ry: action.ry,
+            lx: action.lx,
+            ly: action.ly,
+            required,
+            elapsed,
+          },
+        },
+        interiors,
+        inventory,
+        pickup: null,
+      };
+    }
+  }
+
+  const cap = inventoryCapFromBaskets(basketCount(player.tools));
   const added = addToInventory(inventory, drop, 1, cap);
   if (added.added <= 0) {
-    return { player: nextPlayer, interiors, inventory, pickup: null };
+    return { player: cancel(player), interiors, inventory, pickup: null };
   }
-  nextPlayer = { ...nextPlayer, tools: consumeToolUse(nextPlayer.tools, toolKind) };
+  let nextPlayer: Player = {
+    ...player,
+    tools: consumeToolUse(player.tools, toolKind),
+    pendingAction: null,
+    actionProgress: null,
+  };
   const updatedInterior = clearObstacle(interior, action.lx, action.ly);
   const updatedInteriors = { ...interiors, [k]: updatedInterior };
 
@@ -436,6 +510,19 @@ function tryHarvest(
     inventory: added.inv,
     pickup: { kind: drop, amount: added.added },
   };
+}
+
+function oreDropForTier(tier: OreTier): ResourceKind {
+  switch (tier) {
+    case "copper":
+      return "copper_ore";
+    case "tin":
+      return "tin_ore";
+    case "iron":
+      return "iron_ore";
+    case "coal":
+      return "coal";
+  }
 }
 
 function tryDeconstruct(

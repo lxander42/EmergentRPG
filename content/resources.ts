@@ -10,7 +10,11 @@ export type ResourceKind =
   | "wood"
   | "reed"
   | "stone"
-  | "ore";
+  | "ore"
+  | "copper_ore"
+  | "tin_ore"
+  | "iron_ore"
+  | "coal";
 
 export type ResourceMeta = {
   label: string;
@@ -30,6 +34,10 @@ export const RESOURCES: Record<ResourceKind, ResourceMeta> = {
   reed: { label: "Reed", swatch: "#a8b878", food: false, energy: 0, frame: "res_reed" },
   stone: { label: "Stone", swatch: "#9c9588", food: false, energy: 0, frame: "res_stone" },
   ore: { label: "Ore", swatch: "#6f7a8e", food: false, energy: 0, frame: "res_ore" },
+  copper_ore: { label: "Copper Ore", swatch: "#b66a3a", food: false, energy: 0, frame: "res_copper_ore" },
+  tin_ore: { label: "Tin Ore", swatch: "#c8c4bc", food: false, energy: 0, frame: "res_tin_ore" },
+  iron_ore: { label: "Iron Ore", swatch: "#6e6a64", food: false, energy: 0, frame: "res_iron_ore" },
+  coal: { label: "Coal", swatch: "#2a2622", food: false, energy: 0, frame: "res_coal" },
 };
 
 export type BiomeResourceLists = { food: ResourceKind[]; materials: ResourceKind[] };
@@ -42,7 +50,7 @@ export const BIOME_RESOURCES: Record<Biome, BiomeResourceLists> = {
   grass: { food: ["berry", "grain"], materials: ["reed"] },
   forest: { food: ["berry", "herb"], materials: ["wood", "wood", "wood", "stone"] },
   sand: { food: ["shellfish"], materials: ["reed"] },
-  stone: { food: ["tubers"], materials: ["stone", "stone", "ore"] },
+  stone: { food: ["tubers"], materials: ["stone"] },
   water: { food: [], materials: [] },
 };
 

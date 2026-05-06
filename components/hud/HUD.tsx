@@ -23,6 +23,7 @@ import type { GameOverReason } from "@/lib/sim/world";
 import type { Legacy } from "@/lib/sim/legacy";
 import { FACTIONS } from "@/content/factions";
 import { findFaction } from "@/lib/sim/faction";
+import { TOOL_KINDS, TOOLS, type ToolKind } from "@/lib/sim/tools";
 import ShapeBadge from "@/components/panels/ShapeBadge";
 import {
   inventoryCapFromBaskets,
@@ -307,6 +308,7 @@ function DebugStrip() {
   const world = useGameStore((s) => s.world);
   const minimized = useGameStore((s) => s.debugMinimized);
   const toggleMinimized = useGameStore((s) => s.toggleDebugMinimized);
+  const grantTool = useGameStore((s) => s.debugGrantTool);
   if (!world) return null;
   const player = world.life?.player ?? null;
   const here = player ? globalToLocal(player.gx, player.gy) : null;
@@ -374,6 +376,24 @@ function DebugStrip() {
           </div>
         ))}
       </div>
+      {player && (
+        <div className="mt-1 border-t border-[var(--color-border)] pt-1">
+          <div className="text-[var(--color-fg-muted)] uppercase tracking-wider mb-1">
+            grant tool
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {TOOL_KINDS.map((kind: ToolKind) => (
+              <button
+                key={kind}
+                onClick={() => grantTool(kind)}
+                className="tactile rounded-md border border-[var(--color-border)] bg-[var(--color-surface-warm)] px-2 py-0.5 text-[10px] uppercase tracking-wider hover:bg-[var(--color-surface)]"
+              >
+                {TOOLS[kind].label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

@@ -43,6 +43,18 @@ export type Player = {
   route: Array<{ gx: number; gy: number }> | null;
   stepCooldown: number;
   pendingAction: PendingAction | null;
+  // Multi-tick mining progress. Set when the player starts swinging a pickaxe
+  // at a rock or ore deposit; cleared on completion, cancellation, or when
+  // the staged action target moves out of reach. Target coordinates are
+  // tracked so re-targeting (player taps a new tile) resets progress.
+  actionProgress: {
+    rx: number;
+    ry: number;
+    lx: number;
+    ly: number;
+    required: number;
+    elapsed: number;
+  } | null;
 };
 
 export const ENERGY_MAX = 10;
@@ -86,5 +98,6 @@ export function createPlayer(
     route: null,
     stepCooldown: 0,
     pendingAction: null,
+    actionProgress: null,
   };
 }

@@ -10,7 +10,15 @@ export const INTERIOR_W = 20;
 export const INTERIOR_H = 20;
 export const OBSTACLE_DENSITY = 0.10;
 
-export type ObstacleKind = "tree" | "rock" | "cactus" | "bush" | "workbench";
+export type ObstacleKind =
+  | "tree"
+  | "rock"
+  | "cactus"
+  | "bush"
+  | "workbench"
+  | "ore_deposit";
+
+export type OreTier = "copper" | "tin" | "iron" | "coal";
 
 export type InteriorResource = {
   id: string;
@@ -38,6 +46,9 @@ export type BiomeInterior = {
   obstacles: (ObstacleKind | null)[];
   resources: InteriorResource[];
   loot: LootPile[];
+  // Per-cell tier for cells where obstacles[idx] === "ore_deposit". The map
+  // is sparse and only kept in stone biomes; cleared alongside the obstacle.
+  oreDeposits: Record<number, OreTier>;
 };
 
 export function regionKey(rx: number, ry: number): string {
@@ -99,12 +110,15 @@ export function generateInterior(worldSeed: number, rx: number, ry: number): Bio
       obstacles: new Array<ObstacleKind | null>(INTERIOR_W * INTERIOR_H).fill("rock"),
       resources: [],
       loot: [],
+      oreDeposits: {},
     };
   }
 
   const obstacles = scatterObstacles(rng, biome);
+  const oreDeposits: Record<number, OreTier> = {};
+  if (biome === "stone") scatterOreDeposits(rng, obstacles, oreDeposits);
   const resources = scatterResources(rng, biome, obstacles);
-  return { rx, ry, biome, obstacles, resources, loot: [] };
+  return { rx, ry, biome, obstacles, resources, loot: [], oreDeposits };
 }
 
 export function isLocalObstacle(interior: BiomeInterior, lx: number, ly: number): boolean {
@@ -131,7 +145,12 @@ export function clearObstacle(
   if (interior.obstacles[idx] == null) return interior;
   const next = interior.obstacles.slice();
   next[idx] = null;
-  return { ...interior, obstacles: next };
+  let oreDeposits = interior.oreDeposits;
+  if (oreDeposits[idx] != null) {
+    oreDeposits = { ...oreDeposits };
+    delete oreDeposits[idx];
+  }
+  return { ...interior, obstacles: next, oreDeposits };
 }
 
 // Place a workbench on the interior at a passable tile near `near`. Picks
@@ -303,6 +322,144 @@ function scatterObstacles(rng: Rng, biome: Biome): (ObstacleKind | null)[] {
     placed++;
   }
   return obstacles;
+}
+
+// Grow a few contiguous ore-deposit clusters in a stone-biome region. Each
+// cluster has one tier picked by weighted draw and is grown via flood from a
+// random seed cell over currently-empty obstacle slots. Tier weights bias
+// toward copper (common) and away from coal (rare).
+const TIER_WEIGHTS: ReadonlyArray<readonly [OreTier, number]> = [
+  ["copper", 6],
+  ["tin", 3],
+  ["iron", 2],
+  ["coal", 1],
+];
+
+const TIER_SIZE_RANGE: Record<OreTier, readonly [number, number]> = {
+  copper: [14, 22],
+  tin: [12, 19],
+  iron: [10, 16],
+  coal: [8, 13],
+};
+
+function pickTier(rng: Rng): OreTier {
+  let total = 0;
+  for (const [, w] of TIER_WEIGHTS) total += w;
+  let r = rng.next() * total;
+  for (const [tier, w] of TIER_WEIGHTS) {
+    r -= w;
+    if (r <= 0) return tier;
+  }
+  return TIER_WEIGHTS[0]![0];
+}
+
+function scatterOreDeposits(
+  rng: Rng,
+  obstacles: (ObstacleKind | null)[],
+  oreDeposits: Record<number, OreTier>,
+): void {
+  const cells = INTERIOR_W * INTERIOR_H;
+  const deposits = rng.int(2, 4);
+  for (let d = 0; d < deposits; d++) {
+    const primaryTier = pickTier(rng);
+    const placedIndices: number[] = [];
+
+    let primarySeed = -1;
+    for (let attempt = 0; attempt < 24; attempt++) {
+      const idx = rng.int(0, cells);
+      if (obstacles[idx] == null) {
+        primarySeed = idx;
+        break;
+      }
+    }
+    if (primarySeed < 0) continue;
+
+    floodOre(rng, obstacles, oreDeposits, placedIndices, primaryTier, primarySeed);
+
+    if (rng.chance(0.35)) {
+      const secondaryTier = pickSecondaryTier(rng, primaryTier);
+      const secondarySeed = pickAdjacentEmpty(rng, obstacles, placedIndices);
+      if (secondarySeed >= 0) {
+        floodOre(rng, obstacles, oreDeposits, placedIndices, secondaryTier, secondarySeed);
+      }
+    }
+  }
+}
+
+// Random-walk flood from `seed` over empty cells, marking each as an
+// ore_deposit of `tier`, until the per-tier size target is reached or the
+// frontier dries up. Appends every placed index to `placedIndices` so the
+// caller can later attach a secondary tier flush against this cluster.
+function floodOre(
+  rng: Rng,
+  obstacles: (ObstacleKind | null)[],
+  oreDeposits: Record<number, OreTier>,
+  placedIndices: number[],
+  tier: OreTier,
+  seed: number,
+): void {
+  const [minSize, maxSize] = TIER_SIZE_RANGE[tier];
+  const target = rng.int(minSize, maxSize);
+  obstacles[seed] = "ore_deposit";
+  oreDeposits[seed] = tier;
+  placedIndices.push(seed);
+  let placed = 1;
+  let frontier: number[] = neighborIndices(seed);
+
+  while (placed < target && frontier.length > 0) {
+    const fi = rng.int(0, frontier.length);
+    const next = frontier[fi]!;
+    frontier = frontier.filter((_, i) => i !== fi);
+    if (obstacles[next] != null) continue;
+    obstacles[next] = "ore_deposit";
+    oreDeposits[next] = tier;
+    placedIndices.push(next);
+    placed++;
+    for (const n of neighborIndices(next)) {
+      if (obstacles[n] == null && !frontier.includes(n)) frontier.push(n);
+    }
+  }
+}
+
+function pickSecondaryTier(rng: Rng, primary: OreTier): OreTier {
+  const filtered = TIER_WEIGHTS.filter(([tier]) => tier !== primary);
+  let total = 0;
+  for (const [, w] of filtered) total += w;
+  let r = rng.next() * total;
+  for (const [tier, w] of filtered) {
+    r -= w;
+    if (r <= 0) return tier;
+  }
+  return filtered[0]![0];
+}
+
+function pickAdjacentEmpty(
+  rng: Rng,
+  obstacles: (ObstacleKind | null)[],
+  cluster: number[],
+): number {
+  const candidates: number[] = [];
+  const seen = new Set<number>(cluster);
+  for (const idx of cluster) {
+    for (const n of neighborIndices(idx)) {
+      if (seen.has(n)) continue;
+      seen.add(n);
+      if (obstacles[n] == null) candidates.push(n);
+    }
+  }
+  if (candidates.length === 0) return -1;
+  return candidates[rng.int(0, candidates.length)]!;
+}
+
+function neighborIndices(idx: number): number[] {
+  const lx = idx % INTERIOR_W;
+  const ly = Math.floor(idx / INTERIOR_W);
+  const out: number[] = [];
+  if (lx > 0) out.push(idx - 1);
+  if (lx < INTERIOR_W - 1) out.push(idx + 1);
+  if (ly > 0) out.push(idx - INTERIOR_W);
+  if (ly < INTERIOR_H - 1) out.push(idx + INTERIOR_W);
+  return out;
 }
 
 function scatterResources(

@@ -271,6 +271,7 @@ export class BiomeScene extends Phaser.Scene {
     this.refreshChunks(world);
     this.drawFog(fog);
     this.drawRoute(player);
+    this.drawMiningProgress(player);
     this.drawPlayer();
     this.drawVisitors(world.npcs, world, fog);
     this.detectHits(world.npcs, player.health);
@@ -404,7 +405,7 @@ export class BiomeScene extends Phaser.Scene {
         if (!kind) continue;
         const gx = rx * INTERIOR_W + lx;
         const gy = ry * INTERIOR_H + ly;
-        const frame = obstacleFrame(kind, gx, gy);
+        const frame = obstacleFrame(kind, gx, gy, interior, lx, ly);
         const sprite = this.add.image(0, 0, ATLAS_KEY, frameKey(frame));
         sprite.setOrigin(0, 0);
         sprite.setPosition(lx * CELL, ly * CELL);
@@ -625,6 +626,28 @@ export class BiomeScene extends Phaser.Scene {
     const last = points[points.length - 1]!;
     this.routeLayer.fillStyle(COLORS.routeDot, 0.35 + 0.2 * pulse);
     this.routeLayer.fillCircle(last.x, last.y, 4);
+  }
+
+  private drawMiningProgress(player: Player) {
+    const ap = player.actionProgress;
+    if (!ap) return;
+    if (player.pendingAction?.kind !== "harvest") return;
+    const center = tileCenter(
+      ap.rx * INTERIOR_W + ap.lx,
+      ap.ry * INTERIOR_H + ap.ly,
+    );
+    const ratio = Math.min(1, ap.elapsed / Math.max(1, ap.required));
+    const radius = CELL * 0.42;
+    const start = -Math.PI / 2;
+    const end = start + Math.PI * 2 * ratio;
+    const now = this.time.now;
+    const pulse = 0.6 + 0.4 * Math.sin(now * 0.012);
+    this.routeLayer.lineStyle(3, 0xd96846, 0.7 * pulse);
+    this.routeLayer.beginPath();
+    this.routeLayer.arc(center.x, center.y, radius, start, end, false);
+    this.routeLayer.strokePath();
+    this.routeLayer.lineStyle(1, 0xd96846, 0.25);
+    this.routeLayer.strokeCircle(center.x, center.y, radius);
   }
 
   private drawPlayer() {
@@ -993,6 +1016,7 @@ function defaultObstacleAction(
   switch (kind) {
     case "tree":
     case "rock":
+    case "ore_deposit":
       return "harvest";
     case "workbench":
       return "workbench";
@@ -1006,7 +1030,14 @@ function needArticle(tool: "axe" | "pickaxe"): string {
   return tool === "axe" ? "an axe" : "a pickaxe";
 }
 
-function obstacleFrame(kind: ObstacleKind, gx: number, gy: number): TileName {
+function obstacleFrame(
+  kind: ObstacleKind,
+  gx: number,
+  gy: number,
+  interior: BiomeInterior,
+  lx: number,
+  ly: number,
+): TileName {
   switch (kind) {
     case "tree":
       return pickVariant(["tree_oak", "tree_pine"] as const, gx, gy);
@@ -1018,6 +1049,32 @@ function obstacleFrame(kind: ObstacleKind, gx: number, gy: number): TileName {
       return "bush";
     case "workbench":
       return "workbench";
+    case "ore_deposit": {
+      // A deposit cell shows tier only on the eroded exterior — i.e. when at
+      // least one cardinal neighbor is non-deposit. Cells fully surrounded
+      // by other deposit cells stay plain rock until mining opens a face.
+      // Mining only ever adds non-deposit neighbors so reveals are stable.
+      const hasOpenFace =
+        obstacleKindAt(interior, lx, ly - 1) !== "ore_deposit" ||
+        obstacleKindAt(interior, lx + 1, ly) !== "ore_deposit" ||
+        obstacleKindAt(interior, lx, ly + 1) !== "ore_deposit" ||
+        obstacleKindAt(interior, lx - 1, ly) !== "ore_deposit";
+      if (!hasOpenFace) return "ore_deposit_outer";
+      const idx = ly * INTERIOR_W + lx;
+      const tier = interior.oreDeposits[idx];
+      switch (tier) {
+        case "copper":
+          return "ore_interior_copper";
+        case "tin":
+          return "ore_interior_tin";
+        case "iron":
+          return "ore_interior_iron";
+        case "coal":
+          return "ore_interior_coal";
+        default:
+          return "ore_deposit_outer";
+      }
+    }
   }
 }
 

@@ -134,6 +134,15 @@ const PAL = {
   reed: hex("#9bbe6c"),
   stoneRes: hex("#7e7c78"),
   ore: hex("#5e6e88"),
+  // ore deposit tiers — exterior is the same neutral rock palette as the
+  // single-cell rock; tier tints only show on interior (fully-enclosed) cells.
+  depositOuter: hex("#7a7368"),
+  depositOuterShade: hex("#564f48"),
+  depositOuterHi: hex("#9a9388"),
+  copperTier: hex("#b66a3a"),
+  tinTier: hex("#c8c4bc"),
+  ironTier: hex("#6e6a64"),
+  coalTier: hex("#2a2622"),
 };
 
 // ---- ground tiles ----------------------------------------------------------
@@ -700,6 +709,102 @@ function character(set) {
   for (const x of [4, 5, 6, 7, 8, 9, 10, 11]) set(x, 15, [0, 0, 0, 90]);
 }
 
+// ---- ore deposit cells -----------------------------------------------------
+//
+// Cells are tiled flush so adjacent deposit cells form one boulder. Outer
+// frame is neutral grey rock; interior frames keep the same shape but speckle
+// tier color across the body so the tier is legible only after the player
+// chips through the surrounding shell.
+
+function depositCellBase(set) {
+  for (let y = 0; y < TILE; y++) {
+    for (let x = 0; x < TILE; x++) {
+      set(x, y, PAL.depositOuter);
+    }
+  }
+  // dark fissure lines and shade so the surface reads as cracked stone
+  for (const [x, y] of [
+    [2, 3], [3, 3], [4, 3],
+    [10, 5], [11, 5], [12, 5],
+    [3, 9], [4, 9],
+    [9, 11], [10, 11], [11, 11],
+    [6, 13], [7, 13],
+    [1, 7], [14, 7],
+  ]) set(x, y, PAL.depositOuterShade);
+  for (const [x, y] of [
+    [5, 5], [6, 5],
+    [11, 8], [12, 8],
+    [3, 12], [4, 12],
+    [13, 13],
+  ]) set(x, y, PAL.depositOuterHi);
+}
+
+function depositOuter(set) {
+  depositCellBase(set);
+}
+
+function depositInterior(set, tier) {
+  depositCellBase(set);
+  // tier flecks scattered through the body so tinted cells feel like exposed
+  // ore matrix. Deterministic per tier for stable visuals across regions.
+  const seedByTier = { copper: 211, tin: 233, iron: 257, coal: 281 };
+  const r = rng(seedByTier[tier] ?? 211);
+  const tint = PAL[`${tier}Tier`];
+  if (!tint) return;
+  for (let i = 0; i < 26; i++) {
+    const x = Math.floor(r() * TILE);
+    const y = Math.floor(r() * TILE);
+    set(x, y, tint);
+  }
+  // a few brighter highlights so the tier color is legible at a glance
+  const hi = shade(tint, 0.35);
+  for (let i = 0; i < 8; i++) {
+    const x = Math.floor(r() * TILE);
+    const y = Math.floor(r() * TILE);
+    set(x, y, hi);
+  }
+}
+
+function depositInteriorCopper(set) { depositInterior(set, "copper"); }
+function depositInteriorTin(set) { depositInterior(set, "tin"); }
+function depositInteriorIron(set) { depositInterior(set, "iron"); }
+function depositInteriorCoal(set) { depositInterior(set, "coal"); }
+
+// Inventory icons — one tinted nugget per tier, drawn over the same halo +
+// shadow scaffolding as the other resource sprites so they pop on any biome.
+function tierNugget(set, tier) {
+  halo(set, [
+    [4, 6], [5, 6], [6, 6], [7, 6], [8, 6], [9, 6], [10, 6], [11, 6],
+    [3, 7], [12, 7],
+    [3, 8], [12, 8],
+    [3, 9], [12, 9],
+    [4, 10], [11, 10],
+    [5, 11], [10, 11],
+  ]);
+  shadowDot(set, [[6, 12], [7, 12], [8, 12], [9, 12]]);
+  const body = [
+    [7, 5], [8, 5],
+    [6, 6], [7, 6], [8, 6], [9, 6],
+    [5, 7], [6, 7], [7, 7], [8, 7], [9, 7], [10, 7],
+    [4, 8], [5, 8], [6, 8], [7, 8], [8, 8], [9, 8], [10, 8], [11, 8],
+    [5, 9], [6, 9], [7, 9], [8, 9], [9, 9], [10, 9],
+    [6, 10], [7, 10], [8, 10], [9, 10],
+    [7, 11], [8, 11],
+  ];
+  const base = PAL[`${tier}Tier`];
+  if (!base) return;
+  for (const [x, y] of body) set(x, y, base);
+  for (const [x, y] of [[6, 7], [8, 6], [7, 8], [9, 9]])
+    set(x, y, shade(base, 0.35));
+  for (const [x, y] of [[10, 8], [9, 10], [8, 11], [5, 9]])
+    set(x, y, shade(base, -0.35));
+}
+
+function copperOre(set) { tierNugget(set, "copper"); }
+function tinOre(set) { tierNugget(set, "tin"); }
+function ironOre(set) { tierNugget(set, "iron"); }
+function coalOre(set) { tierNugget(set, "coal"); }
+
 // ---- atlas layout ----------------------------------------------------------
 //
 // Frame index = row * COLS + col. Keep this in sync with content/tiles.ts.
@@ -746,6 +851,15 @@ const FRAMES = [
   ["res_ore", ore],
   ["loot_pile", lootPile],
   ["char", character],
+  ["ore_deposit_outer", depositOuter],
+  ["ore_interior_copper", depositInteriorCopper],
+  ["ore_interior_tin", depositInteriorTin],
+  ["ore_interior_iron", depositInteriorIron],
+  ["ore_interior_coal", depositInteriorCoal],
+  ["res_copper_ore", copperOre],
+  ["res_tin_ore", tinOre],
+  ["res_iron_ore", ironOre],
+  ["res_coal", coalOre],
 ];
 
 for (let i = 0; i < FRAMES.length; i++) {
