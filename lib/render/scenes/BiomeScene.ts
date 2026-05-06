@@ -1050,11 +1050,17 @@ function obstacleFrame(
     case "workbench":
       return "workbench";
     case "ore_deposit": {
-      // Tier tint reveals once a neighbor cell has been chipped out — until
-      // then the deposit reads as plain rock. exposedOre is populated by
-      // clearObstacle whenever a deposit cell is mined.
+      // A deposit cell shows tier only on the eroded exterior — i.e. when at
+      // least one cardinal neighbor is non-deposit. Cells fully surrounded
+      // by other deposit cells stay plain rock until mining opens a face.
+      // Mining only ever adds non-deposit neighbors so reveals are stable.
+      const hasOpenFace =
+        obstacleKindAt(interior, lx, ly - 1) !== "ore_deposit" ||
+        obstacleKindAt(interior, lx + 1, ly) !== "ore_deposit" ||
+        obstacleKindAt(interior, lx, ly + 1) !== "ore_deposit" ||
+        obstacleKindAt(interior, lx - 1, ly) !== "ore_deposit";
+      if (!hasOpenFace) return "ore_deposit_outer";
       const idx = ly * INTERIOR_W + lx;
-      if (!interior.exposedOre[idx]) return "ore_deposit_outer";
       const tier = interior.oreDeposits[idx];
       switch (tier) {
         case "copper":
