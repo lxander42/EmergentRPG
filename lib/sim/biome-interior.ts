@@ -5,6 +5,7 @@ import {
   RESOURCE_DENSITY,
   type ResourceKind,
 } from "@/content/resources";
+import type { StructureKind } from "@/content/recipes";
 
 export const INTERIOR_W = 20;
 export const INTERIOR_H = 20;
@@ -39,6 +40,23 @@ export type LootPile = {
   fromDeath?: boolean;
 };
 
+export type StructureContents = {
+  items?: Partial<Record<ResourceKind, number>>;
+  weapons?: import("@/lib/sim/weapons").WeaponInstance[];
+  tools?: import("@/lib/sim/tools").ToolInstance[];
+};
+
+export type PlacedStructure = {
+  id: string;
+  kind: StructureKind;
+  lx: number;
+  ly: number;
+  hp?: number;
+  tier?: number;
+  contents?: StructureContents;
+  label?: string;
+};
+
 export type BiomeInterior = {
   rx: number;
   ry: number;
@@ -49,6 +67,7 @@ export type BiomeInterior = {
   // Per-cell tier for cells where obstacles[idx] === "ore_deposit". The map
   // is sparse and only kept in stone biomes; cleared alongside the obstacle.
   oreDeposits: Record<number, OreTier>;
+  placedStructures: PlacedStructure[];
 };
 
 export function regionKey(rx: number, ry: number): string {
@@ -111,6 +130,7 @@ export function generateInterior(worldSeed: number, rx: number, ry: number): Bio
       resources: [],
       loot: [],
       oreDeposits: {},
+      placedStructures: [],
     };
   }
 
@@ -118,7 +138,16 @@ export function generateInterior(worldSeed: number, rx: number, ry: number): Bio
   const oreDeposits: Record<number, OreTier> = {};
   if (biome === "stone") scatterOreDeposits(rng, obstacles, oreDeposits);
   const resources = scatterResources(rng, biome, obstacles);
-  return { rx, ry, biome, obstacles, resources, loot: [], oreDeposits };
+  return {
+    rx,
+    ry,
+    biome,
+    obstacles,
+    resources,
+    loot: [],
+    oreDeposits,
+    placedStructures: [],
+  };
 }
 
 export function isLocalObstacle(interior: BiomeInterior, lx: number, ly: number): boolean {
