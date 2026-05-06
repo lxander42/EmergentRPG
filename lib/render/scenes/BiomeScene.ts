@@ -1181,16 +1181,24 @@ function placedStructureFrame(
   kind: StructureKind,
   rotation: 0 | 1 | 2 | 3,
 ): TileName | null {
-  // Rotation swaps to a distinct atlas frame instead of transforming the
-  // existing sprite. Most kinds (furnace/anvil/walls/door/chest/bed/campfire/
-  // cosmetics) ship their atlas frames in their own sub-issue. Until then the
-  // renderer falls back to a coloured rectangle so placement is still visible.
+  // Each rotation pins the structure against a different edge of its tile.
+  // 0 = south, 1 = east, 2 = north, 3 = west (clockwise to match the
+  // rotate-clockwise icon). Most kinds (furnace/anvil/walls/door/chest/bed/
+  // campfire/cosmetics) ship their atlas frames in their own sub-issue;
+  // until then the renderer falls back to a coloured rectangle.
   switch (kind) {
     case "workbench":
-      // Workbench is rotationally symmetric: 0/2 share the horizontal frame,
-      // 1/3 share the vertical one. Future asymmetric kinds (door, fence) can
-      // ship four distinct frames.
-      return rotation === 1 || rotation === 3 ? "workbench_v" : "workbench";
+      switch (rotation) {
+        case 0:
+          return "workbench";
+        case 1:
+          return "workbench_e";
+        case 2:
+          return "workbench_n";
+        case 3:
+          return "workbench_w";
+      }
+      return "workbench";
     default:
       return null;
   }

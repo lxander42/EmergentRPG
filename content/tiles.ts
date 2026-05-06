@@ -75,7 +75,11 @@ export const TILE_FRAMES = {
   res_tin_ore: F(12, 2),
   res_iron_ore: F(13, 2),
   res_coal: F(14, 2),
-  workbench_v: F(15, 2),
+  // Row 2 col 15 + row 3: structure rotation variants. `workbench` (row 1
+  // col 10) is the south-edge / rotation-0 default.
+  workbench_n: F(15, 2),
+  workbench_w: F(0, 3),
+  workbench_e: F(1, 3),
 } as const;
 
 export type TileName = keyof typeof TILE_FRAMES;
