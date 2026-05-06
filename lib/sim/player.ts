@@ -1,6 +1,6 @@
 import type { WeaponInstance } from "@/lib/sim/weapons";
 import type { ToolInstance } from "@/lib/sim/tools";
-import type { ObstacleKind } from "@/lib/sim/biome-interior";
+import type { ObstacleKind, Rotation } from "@/lib/sim/biome-interior";
 import type { StructureKind } from "@/content/recipes";
 
 export type PlayerStats = {
@@ -24,6 +24,7 @@ export type PendingAction =
       lx: number;
       ly: number;
       structureKind: StructureKind;
+      rotation: Rotation;
     }
   | {
       // Either obstacle (workbench, lives on obstacle grid) or structureId

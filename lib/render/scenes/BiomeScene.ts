@@ -6,6 +6,7 @@ import {
   INTERIOR_H,
   lootAtLocal,
   obstacleKindAt,
+  obstacleRotationAt,
   placedStructureAt,
   regionKey,
   resourceAtLocal,
@@ -13,6 +14,7 @@ import {
   type BiomeInterior,
   type ObstacleKind,
   type PlacedStructure,
+  type Rotation,
 } from "@/lib/sim/biome-interior";
 import type { StructureKind } from "@/content/recipes";
 import { hasTool } from "@/lib/sim/tools";
@@ -94,6 +96,7 @@ type ChunkEntry = {
   resources: BiomeInterior["resources"] | null;
   loot: BiomeInterior["loot"] | null;
   placedStructures: PlacedStructure[] | null;
+  obstacleRotations: BiomeInterior["obstacleRotations"] | null;
   lastUsedTick: number;
 };
 
@@ -397,7 +400,8 @@ export class BiomeScene extends Phaser.Scene {
       (entry.obstacles !== (interior?.obstacles ?? null) ||
         entry.resources !== (interior?.resources ?? null) ||
         entry.loot !== (interior?.loot ?? null) ||
-        entry.placedStructures !== (interior?.placedStructures ?? null));
+        entry.placedStructures !== (interior?.placedStructures ?? null) ||
+        entry.obstacleRotations !== (interior?.obstacleRotations ?? null));
     if (!entry) {
       const container = this.add.container(rx * CHUNK_PX, ry * CHUNK_PX);
       this.chunkLayer.add(container);
@@ -407,6 +411,7 @@ export class BiomeScene extends Phaser.Scene {
         resources: null,
         loot: null,
         placedStructures: null,
+        obstacleRotations: null,
         lastUsedTick: world.ticks,
       };
       this.chunks.set(key, entry);
@@ -455,6 +460,7 @@ export class BiomeScene extends Phaser.Scene {
       entry.resources = null;
       entry.loot = null;
       entry.placedStructures = null;
+      entry.obstacleRotations = null;
       return;
     }
 
@@ -465,7 +471,8 @@ export class BiomeScene extends Phaser.Scene {
         if (!kind) continue;
         const gx = rx * INTERIOR_W + lx;
         const gy = ry * INTERIOR_H + ly;
-        const frame = obstacleFrame(kind, gx, gy, interior, lx, ly);
+        const rotation = obstacleRotationAt(interior, lx, ly);
+        const frame = obstacleFrame(kind, gx, gy, interior, lx, ly, rotation);
         const sprite = this.add.image(0, 0, ATLAS_KEY, frameKey(frame));
         sprite.setOrigin(0, 0);
         sprite.setPosition(lx * CELL, ly * CELL);
@@ -493,10 +500,7 @@ export class BiomeScene extends Phaser.Scene {
     }
 
     for (const s of interior.placedStructures) {
-      // Rotation persistence on PlacedStructure ships with the first kind
-      // that needs it (door/wall/fence in DS1/DS2/L3); for now placed
-      // structures render in the default rotation.
-      const frame = placedStructureFrame(s.kind, 0);
+      const frame = placedStructureFrame(s.kind, s.orientation ?? 0);
       if (frame) {
         const sprite = this.add.image(0, 0, ATLAS_KEY, frameKey(frame));
         sprite.setOrigin(0, 0);
@@ -523,6 +527,7 @@ export class BiomeScene extends Phaser.Scene {
     entry.resources = interior.resources;
     entry.loot = interior.loot;
     entry.placedStructures = interior.placedStructures;
+    entry.obstacleRotations = interior.obstacleRotations ?? null;
   }
 
   private drawFog(fog: FogContext) {
@@ -1211,6 +1216,7 @@ function obstacleFrame(
   interior: BiomeInterior,
   lx: number,
   ly: number,
+  rotation: Rotation = 0,
 ): TileName {
   switch (kind) {
     case "tree":
@@ -1222,6 +1228,16 @@ function obstacleFrame(
     case "bush":
       return "bush";
     case "workbench":
+      switch (rotation) {
+        case 0:
+          return "workbench";
+        case 1:
+          return "workbench_e";
+        case 2:
+          return "workbench_n";
+        case 3:
+          return "workbench_w";
+      }
       return "workbench";
     case "ore_deposit": {
       // A deposit cell shows tier only on the eroded exterior — i.e. when at

@@ -663,6 +663,7 @@ function tryPlace(
       action.lx,
       action.ly,
       action.structureKind as ObstacleKind,
+      action.rotation,
     );
   } else {
     const id = `s-${ticks}-${action.rx}-${action.ry}-${action.lx}-${action.ly}`;
@@ -671,6 +672,7 @@ function tryPlace(
       kind: action.structureKind,
       lx: action.lx,
       ly: action.ly,
+      ...(action.rotation !== 0 ? { orientation: action.rotation } : {}),
     };
     updatedInterior = addPlacedStructure(interior, structure);
   }

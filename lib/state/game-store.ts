@@ -33,6 +33,7 @@ import {
   INTERIOR_W,
   INTERIOR_H,
   type ObstacleKind,
+  type Rotation,
 } from "@/lib/sim/biome-interior";
 import { bfsPredicate } from "@/lib/sim/path";
 import { chebyshev } from "@/lib/sim/combat";
@@ -72,10 +73,11 @@ export type ObstacleContextMenuState = {
   remembered: boolean;
 };
 
-// Rotation index `0..3` maps to 0°, 90°, 180°, 270° clockwise. Persisted on
-// PlacedStructure via `orientation`; workbench (obstacle-grid) ignores it
-// since the only kind there is symmetric.
-export type BuildRotation = 0 | 1 | 2 | 3;
+// Rotation index 0..3 cycles south, east, north, west (clockwise) and
+// pins the placed structure against that tile edge. Persisted on
+// PlacedStructure via `orientation` and on obstacle-grid kinds (workbench)
+// via `obstacleRotations`.
+export type BuildRotation = Rotation;
 
 export type BuildModeState = {
   active: boolean;
@@ -813,7 +815,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ...startingPlayer,
       route: bestPath.length === 0 ? null : bestPath,
       stepCooldown: bestPath.length === 0 ? 0 : Math.max(1, startingPlayer.stats.speed),
-      pendingAction: { kind: "place", rx, ry, lx, ly, structureKind: kind },
+      pendingAction: {
+        kind: "place",
+        rx,
+        ry,
+        lx,
+        ly,
+        structureKind: kind,
+        rotation: bm.rotation,
+      },
     };
     const next = withPlayer(world, player);
     if (!next) return;
