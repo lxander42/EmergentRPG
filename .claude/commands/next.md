@@ -98,7 +98,7 @@ Print:
 - The sub-issue closed and the epic it belongs to.
 - The remaining open sub-issues under that epic, with their ready/blocked status.
 
-If anything is still ready, suggest re-running `/next-epic-issue <epic>` to take the next one.
+If anything is still ready, suggest re-running `/next <epic>` to take the next one.
 
 ## Constraints
 
