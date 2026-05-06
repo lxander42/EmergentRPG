@@ -35,7 +35,7 @@ import {
 
 export { biomeAt, isPassable, type Biome } from "@/lib/sim/biome";
 
-export const WORLD_VERSION = 14;
+export const WORLD_VERSION = 15;
 export const MAP_W = 32;
 export const MAP_H = 32;
 export const NPC_COUNT = 200;

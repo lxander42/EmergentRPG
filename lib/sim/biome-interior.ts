@@ -49,6 +49,10 @@ export type BiomeInterior = {
   // Per-cell tier for cells where obstacles[idx] === "ore_deposit". The map
   // is sparse and only kept in stone biomes; cleared alongside the obstacle.
   oreDeposits: Record<number, OreTier>;
+  // Deposit cells whose tier has been visually exposed by mining a 4-neighbor
+  // cell. Initially empty: the cluster looks like plain rock until the player
+  // chips into it. Subset of oreDeposits keys.
+  exposedOre: Record<number, true>;
 };
 
 export function regionKey(rx: number, ry: number): string {
@@ -111,6 +115,7 @@ export function generateInterior(worldSeed: number, rx: number, ry: number): Bio
       resources: [],
       loot: [],
       oreDeposits: {},
+      exposedOre: {},
     };
   }
 
@@ -118,7 +123,7 @@ export function generateInterior(worldSeed: number, rx: number, ry: number): Bio
   const oreDeposits: Record<number, OreTier> = {};
   if (biome === "stone") scatterOreDeposits(rng, obstacles, oreDeposits);
   const resources = scatterResources(rng, biome, obstacles);
-  return { rx, ry, biome, obstacles, resources, loot: [], oreDeposits };
+  return { rx, ry, biome, obstacles, resources, loot: [], oreDeposits, exposedOre: {} };
 }
 
 export function isLocalObstacle(interior: BiomeInterior, lx: number, ly: number): boolean {
@@ -142,15 +147,40 @@ export function clearObstacle(
 ): BiomeInterior {
   if (lx < 0 || ly < 0 || lx >= INTERIOR_W || ly >= INTERIOR_H) return interior;
   const idx = ly * INTERIOR_W + lx;
-  if (interior.obstacles[idx] == null) return interior;
+  const wasKind = interior.obstacles[idx];
+  if (wasKind == null) return interior;
   const next = interior.obstacles.slice();
   next[idx] = null;
   let oreDeposits = interior.oreDeposits;
+  let exposedOre = interior.exposedOre;
   if (oreDeposits[idx] != null) {
     oreDeposits = { ...oreDeposits };
     delete oreDeposits[idx];
+    if (exposedOre[idx]) {
+      exposedOre = { ...exposedOre };
+      delete exposedOre[idx];
+    }
   }
-  return { ...interior, obstacles: next, oreDeposits };
+  if (wasKind === "ore_deposit") {
+    let exposedDirty = false;
+    for (const [nx, ny] of [
+      [lx, ly - 1],
+      [lx + 1, ly],
+      [lx, ly + 1],
+      [lx - 1, ly],
+    ] as const) {
+      if (nx < 0 || ny < 0 || nx >= INTERIOR_W || ny >= INTERIOR_H) continue;
+      const nIdx = ny * INTERIOR_W + nx;
+      if (next[nIdx] !== "ore_deposit") continue;
+      if (exposedOre[nIdx]) continue;
+      if (!exposedDirty) {
+        exposedOre = { ...exposedOre };
+        exposedDirty = true;
+      }
+      exposedOre[nIdx] = true;
+    }
+  }
+  return { ...interior, obstacles: next, oreDeposits, exposedOre };
 }
 
 // Place a workbench on the interior at a passable tile near `near`. Picks
@@ -336,10 +366,10 @@ const TIER_WEIGHTS: ReadonlyArray<readonly [OreTier, number]> = [
 ];
 
 const TIER_SIZE_RANGE: Record<OreTier, readonly [number, number]> = {
-  copper: [6, 11],
-  tin: [5, 9],
-  iron: [4, 7],
-  coal: [3, 6],
+  copper: [14, 22],
+  tin: [12, 19],
+  iron: [10, 16],
+  coal: [8, 13],
 };
 
 function pickTier(rng: Rng): OreTier {
@@ -359,7 +389,7 @@ function scatterOreDeposits(
   oreDeposits: Record<number, OreTier>,
 ): void {
   const cells = INTERIOR_W * INTERIOR_H;
-  const clusters = rng.int(4, 8);
+  const clusters = rng.int(2, 4);
   for (let c = 0; c < clusters; c++) {
     const tier = pickTier(rng);
     const [minSize, maxSize] = TIER_SIZE_RANGE[tier];
