@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { useGameStore } from "@/lib/state/game-store";
+import { keysAllowed } from "@/lib/render/keys-allowed";
 import {
   globalToLocal,
   INTERIOR_W,
@@ -137,6 +138,12 @@ export class BiomeScene extends Phaser.Scene {
   private dpr = 1;
   private longPressTimer: Phaser.Time.TimerEvent | null = null;
   private longPressFired = false;
+  private panKeys: {
+    W: Phaser.Input.Keyboard.Key;
+    A: Phaser.Input.Keyboard.Key;
+    S: Phaser.Input.Keyboard.Key;
+    D: Phaser.Input.Keyboard.Key;
+  } | null = null;
 
   constructor() {
     super("Biome");
@@ -209,6 +216,13 @@ export class BiomeScene extends Phaser.Scene {
     this.input.on("wheel", this.onWheel, this);
     this.scale.on("resize", this.handleResize, this);
     this.game.events.on("dprchange", this.onDprChange, this);
+
+    this.panKeys = this.input.keyboard?.addKeys("W,A,S,D", false) as {
+      W: Phaser.Input.Keyboard.Key;
+      A: Phaser.Input.Keyboard.Key;
+      S: Phaser.Input.Keyboard.Key;
+      D: Phaser.Input.Keyboard.Key;
+    } | null;
   }
 
   shutdown() {
@@ -245,7 +259,23 @@ export class BiomeScene extends Phaser.Scene {
         store.tick();
       }
     }
+    this.applyKeyboardPan(delta, store);
     this.renderFrame();
+  }
+
+  private applyKeyboardPan(delta: number, store: ReturnType<typeof useGameStore.getState>) {
+    const keys = this.panKeys;
+    if (!keys) return;
+    if (!keysAllowed(store)) return;
+    const ax = (keys.D.isDown ? 1 : 0) - (keys.A.isDown ? 1 : 0);
+    const ay = (keys.S.isDown ? 1 : 0) - (keys.W.isDown ? 1 : 0);
+    if (ax === 0 && ay === 0) return;
+    const cam = this.cameras.main;
+    const screenPxPerSec = 600;
+    const step = (screenPxPerSec * delta) / 1000 / cam.zoom;
+    cam.scrollX += ax * step;
+    cam.scrollY += ay * step;
+    if (!store.cameraPanned) store.setCameraPanned(true);
   }
 
   private renderFrame() {
@@ -1029,6 +1059,16 @@ export class BiomeScene extends Phaser.Scene {
     if (this.gameOver()) {
       this.dragStart = null;
       this.dragMoved = false;
+      this.pinchInitial = null;
+      return;
+    }
+
+    if (useGameStore.getState().swallowNextWorldTap) {
+      useGameStore.getState().setSwallowNextWorldTap(false);
+      this.cancelLongPress();
+      this.dragStart = null;
+      this.dragMoved = false;
+      this.longPressFired = false;
       this.pinchInitial = null;
       return;
     }

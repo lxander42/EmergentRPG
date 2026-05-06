@@ -11,6 +11,12 @@ import { affordable } from "@/lib/sim/weapons";
 import { inventoryCapFromBaskets, inventoryTotal } from "@/lib/sim/inventory";
 import { basketCount } from "@/lib/sim/tools";
 import { useOutsideClose } from "@/lib/ui/use-outside-close";
+import { useLongPress } from "@/lib/ui/use-long-press";
+
+// Stacks at or above this size open a confirmation modal before dropping.
+// Smaller stacks drop immediately so the typical "drop one stick" path
+// stays one tap.
+const DROP_CONFIRM_THRESHOLD = 5;
 
 export default function InventoryPanel() {
   const open = useGameStore((s) => s.inventoryOpen);
@@ -18,6 +24,8 @@ export default function InventoryPanel() {
   const world = useGameStore((s) => s.world);
   const craftRecipe = useGameStore((s) => s.craftRecipe);
   const eatFood = useGameStore((s) => s.eatFood);
+  const dropInventoryItem = useGameStore((s) => s.dropInventoryItem);
+  const requestDropConfirm = useGameStore((s) => s.requestDropConfirm);
   const ref = useOutsideClose(open, close);
 
   if (!open || !world) return null;
@@ -34,12 +42,21 @@ export default function InventoryPanel() {
     (r) => r.station === "hand" && r.result.kind !== "structure",
   );
 
+  const dropOrConfirm = (kind: ResourceKind, count: number) => {
+    if (gameOver || !player || count <= 0) return;
+    if (count >= DROP_CONFIRM_THRESHOLD) {
+      requestDropConfirm(kind, count);
+    } else {
+      dropInventoryItem(kind, count);
+    }
+  };
+
   return (
     <aside
       ref={ref}
       role="dialog"
       aria-label="Inventory"
-      className="pointer-events-auto absolute inset-x-2 bottom-2 z-20 max-h-[68dvh] overflow-y-auto rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[0_20px_48px_-20px_rgba(44,40,32,0.25)]"
+      className="pointer-events-auto absolute inset-x-2 bottom-2 z-20 max-h-[68dvh] overflow-y-auto rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[0_20px_48px_-20px_rgba(44,40,32,0.25)] sm:left-1/2 sm:right-auto sm:bottom-4 sm:w-[520px] sm:-translate-x-1/2 sm:max-h-[80dvh]"
     >
       <div className="mx-auto max-w-2xl">
         <header className="mb-4 flex items-start justify-between gap-3">
@@ -78,40 +95,23 @@ export default function InventoryPanel() {
               the biome to collect them.
             </p>
           ) : (
-            <ul className="mt-3 flex flex-col gap-2">
-              {entries.map(([kind, count]) => {
-                const meta = RESOURCES[kind];
-                return (
-                  <li
+            <>
+              <p className="mt-2 font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
+                Long-press or right-click a row to drop it.
+              </p>
+              <ul className="mt-2 flex flex-col gap-2">
+                {entries.map(([kind, count]) => (
+                  <MaterialRow
                     key={kind}
-                    className="flex items-center gap-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-warm)] px-3 py-2"
-                  >
-                    <TileChip name={meta.frame} size={20} rounded="md" />
-                    <span className="flex-1 text-sm text-[var(--color-fg)]">
-                      {meta.label}
-                      {meta.food && (
-                        <span className="ml-2 font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
-                          food · +energy +hp
-                        </span>
-                      )}
-                    </span>
-                    <span className="font-mono text-[11px] tabular-nums text-[var(--color-fg-muted)]">
-                      {count}
-                    </span>
-                    {meta.food && (
-                      <button
-                        onClick={() => eatFood(kind)}
-                        disabled={!player || gameOver}
-                        className="tactile inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg)] disabled:opacity-50"
-                      >
-                        <ForkKnife size={12} weight="fill" className="text-[var(--color-accent)]" />
-                        Eat
-                      </button>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
+                    kind={kind}
+                    count={count}
+                    canEat={Boolean(player) && !gameOver}
+                    onEat={() => eatFood(kind)}
+                    onDrop={() => dropOrConfirm(kind, count)}
+                  />
+                ))}
+              </ul>
+            </>
           )}
         </section>
 
@@ -242,6 +242,62 @@ export default function InventoryPanel() {
         </section>
       </div>
     </aside>
+  );
+}
+
+function MaterialRow({
+  kind,
+  count,
+  canEat,
+  onEat,
+  onDrop,
+}: {
+  kind: ResourceKind;
+  count: number;
+  canEat: boolean;
+  onEat: () => void;
+  onDrop: () => void;
+}) {
+  const meta = RESOURCES[kind];
+  const longPress = useLongPress(onDrop);
+  return (
+    <li
+      className="flex items-center gap-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-warm)] px-3 py-2 select-none"
+      onContextMenu={(e) => {
+        longPress.onContextMenu(e);
+        if (e.defaultPrevented) return;
+        e.preventDefault();
+        onDrop();
+      }}
+      onPointerDown={longPress.onPointerDown}
+      onPointerMove={longPress.onPointerMove}
+      onPointerUp={longPress.onPointerUp}
+      onPointerLeave={longPress.onPointerLeave}
+      onPointerCancel={longPress.onPointerCancel}
+    >
+      <TileChip name={meta.frame} size={20} rounded="md" />
+      <span className="flex-1 text-sm text-[var(--color-fg)]">
+        {meta.label}
+        {meta.food && (
+          <span className="ml-2 font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
+            food · +energy +hp
+          </span>
+        )}
+      </span>
+      <span className="font-mono text-[11px] tabular-nums text-[var(--color-fg-muted)]">
+        {count}
+      </span>
+      {meta.food && (
+        <button
+          onClick={onEat}
+          disabled={!canEat}
+          className="tactile inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg)] disabled:opacity-50"
+        >
+          <ForkKnife size={12} weight="fill" className="text-[var(--color-accent)]" />
+          Eat
+        </button>
+      )}
+    </li>
   );
 }
 

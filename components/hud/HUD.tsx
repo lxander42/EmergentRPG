@@ -1,24 +1,12 @@
 "use client";
 
-import Link from "next/link";
-import { useState } from "react";
 import {
   Bug,
-  Eye,
-  EyeSlash,
-  Hammer,
-  House,
-  Pause,
-  Play,
-  FastForward,
-  MapTrifold,
-  Heart,
   ForkKnife,
+  Heart,
   Skull,
-  TreasureChest,
 } from "@phosphor-icons/react/dist/ssr";
 import { useGameStore } from "@/lib/state/game-store";
-import type { ResourceKind } from "@/content/resources";
 import { globalToLocal } from "@/lib/sim/biome-interior";
 import type { GameOverReason } from "@/lib/sim/world";
 import type { Legacy } from "@/lib/sim/legacy";
@@ -26,28 +14,10 @@ import { FACTIONS } from "@/content/factions";
 import { findFaction } from "@/lib/sim/faction";
 import { TOOL_KINDS, TOOLS, type ToolKind } from "@/lib/sim/tools";
 import ShapeBadge from "@/components/panels/ShapeBadge";
-import {
-  inventoryCapFromBaskets,
-  inventoryTotal,
-} from "@/lib/sim/inventory";
-import { basketCount, type ToolInstance } from "@/lib/sim/tools";
-
-const SPEEDS = [1, 2, 4] as const;
-const EMPTY_INVENTORY: Partial<Record<ResourceKind, number>> = {};
+import HudButtons from "@/components/hud/HudButtons";
 
 export default function HUD() {
-  const paused = useGameStore((s) => s.paused);
-  const speed = useGameStore((s) => s.speed);
-  const ticks = useGameStore((s) => s.world?.ticks ?? 0);
-  const togglePause = useGameStore((s) => s.togglePause);
-  const setSpeed = useGameStore((s) => s.setSpeed);
-  const view = useGameStore((s) => s.view);
-  const setView = useGameStore((s) => s.setView);
-  const hasHome = useGameStore((s) => Boolean(s.world?.home));
   const player = useGameStore((s) => s.world?.life?.player ?? null);
-  const inventory = useGameStore(
-    (s) => s.world?.life?.inventory ?? EMPTY_INVENTORY,
-  );
   const gameOver = useGameStore((s) => s.world?.life?.gameOver ?? false);
   const gameOverReason = useGameStore((s) => s.world?.life?.gameOverReason ?? null);
   const lastLegacy = useGameStore((s) => {
@@ -74,137 +44,11 @@ export default function HUD() {
     return findFaction(w.factions, reason.factionId)?.name ?? null;
   });
   const resetAfterDeath = useGameStore((s) => s.resetAfterDeath);
-  const openInventory = useGameStore((s) => s.openInventory);
   const openPastLives = useGameStore((s) => s.openPastLives);
   const debugMode = useGameStore((s) => s.debugMode);
-  const toggleDebug = useGameStore((s) => s.toggleDebug);
-  const mapShowFactions = useGameStore((s) => s.mapShowFactions);
-  const toggleMapFactions = useGameStore((s) => s.toggleMapFactions);
-  const buildModeActive = useGameStore((s) => s.buildMode.active);
-  const enterBuildMode = useGameStore((s) => s.enterBuildMode);
-  const exitBuildMode = useGameStore((s) => s.exitBuildMode);
 
   return (
     <>
-      <header className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between p-3">
-        <Link
-          href="/"
-          aria-label="Back to menu"
-          className="tactile pointer-events-auto inline-flex h-10 w-10 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
-        >
-          <House size={18} weight="duotone" className="text-[var(--color-fg)]" />
-        </Link>
-
-        <div className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] py-1 pl-3.5 pr-1.5 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]">
-          <span className="select-none font-mono text-xs tabular-nums text-[var(--color-fg-muted)]">
-            {ticks.toString().padStart(4, "0")}
-          </span>
-
-          <span className="mx-1 h-4 w-px bg-[var(--color-border)]" aria-hidden />
-
-          <button
-            aria-label={paused ? "Resume" : "Pause"}
-            aria-pressed={paused}
-            onClick={togglePause}
-            className="tactile inline-flex h-8 w-8 items-center justify-center rounded-full text-[var(--color-fg)] hover:bg-[var(--color-surface-warm)]"
-          >
-            {paused ? <Play size={16} weight="fill" /> : <Pause size={16} weight="fill" />}
-          </button>
-
-          <button
-            aria-label={`Speed ${speed}x, tap to cycle`}
-            onClick={() => {
-              const idx = SPEEDS.indexOf(speed as (typeof SPEEDS)[number]);
-              const next = SPEEDS[(idx + 1) % SPEEDS.length] ?? 1;
-              setSpeed(next);
-            }}
-            className="tactile inline-flex h-8 items-center gap-1 rounded-full px-2.5 text-[var(--color-fg)] hover:bg-[var(--color-surface-warm)]"
-          >
-            <FastForward size={14} weight="fill" />
-            <span className="font-mono text-[11px] tabular-nums">{speed}x</span>
-          </button>
-
-          {hasHome && (
-            <>
-              <span className="mx-1 h-4 w-px bg-[var(--color-border)]" aria-hidden />
-              <button
-                aria-label={view === "biome" ? "Switch to world map" : "Enter biome"}
-                onClick={() => setView(view === "biome" ? "world" : "biome")}
-                className="tactile inline-flex h-8 w-8 items-center justify-center rounded-full text-[var(--color-fg)] hover:bg-[var(--color-surface-warm)]"
-              >
-                {view === "biome" ? (
-                  <MapTrifold size={16} weight="duotone" />
-                ) : (
-                  <House size={16} weight="duotone" />
-                )}
-              </button>
-            </>
-          )}
-
-          {hasHome && view === "biome" && (
-            <button
-              aria-label={buildModeActive ? "Exit build mode" : "Enter build mode"}
-              aria-pressed={buildModeActive}
-              onClick={buildModeActive ? exitBuildMode : enterBuildMode}
-              className={`tactile inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-[var(--color-surface-warm)] ${
-                buildModeActive ? "text-[var(--color-accent)]" : "text-[var(--color-fg)]"
-              }`}
-            >
-              <Hammer size={16} weight={buildModeActive ? "fill" : "duotone"} />
-            </button>
-          )}
-
-          {view === "world" && (
-            <>
-              <span className="mx-1 h-4 w-px bg-[var(--color-border)]" aria-hidden />
-              <button
-                aria-label={
-                  mapShowFactions ? "Hide faction zones" : "Show faction zones"
-                }
-                aria-pressed={mapShowFactions}
-                onClick={toggleMapFactions}
-                className={`tactile inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-[var(--color-surface-warm)] ${
-                  mapShowFactions ? "text-[var(--color-fg)]" : "text-[var(--color-fg-muted)]"
-                }`}
-              >
-                {mapShowFactions ? (
-                  <Eye size={16} weight="duotone" />
-                ) : (
-                  <EyeSlash size={16} weight="duotone" />
-                )}
-              </button>
-            </>
-          )}
-
-          {legacyCount > 0 && (
-            <>
-              <span className="mx-1 h-4 w-px bg-[var(--color-border)]" aria-hidden />
-              <button
-                aria-label="Past lives"
-                onClick={openPastLives}
-                className="tactile inline-flex h-8 w-8 items-center justify-center rounded-full text-[var(--color-fg)] hover:bg-[var(--color-surface-warm)]"
-              >
-                <Skull size={16} weight="duotone" />
-              </button>
-            </>
-          )}
-
-          <span className="mx-1 h-4 w-px bg-[var(--color-border)]" aria-hidden />
-          <button
-            aria-label={debugMode ? "Hide debug overlay" : "Show debug overlay"}
-            aria-pressed={debugMode}
-            onClick={toggleDebug}
-            className={`tactile inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-[var(--color-surface-warm)] ${
-              debugMode ? "text-[var(--color-accent)]" : "text-[var(--color-fg-muted)]"
-            }`}
-          >
-            <Bug size={16} weight={debugMode ? "fill" : "regular"} />
-          </button>
-        </div>
-      </header>
-
-      {debugMode && <DebugStrip />}
-
       {player && (
         <IdentityBadge
           name={player.name}
@@ -217,15 +61,9 @@ export default function HUD() {
         />
       )}
 
-      {player && (
-        <div className="pointer-events-none absolute inset-x-2 top-16 z-10 flex flex-wrap items-center justify-end gap-2">
-          <InventoryStrip
-            inventory={inventory}
-            tools={player.tools}
-            onOpen={openInventory}
-          />
-        </div>
-      )}
+      <HudButtons />
+
+      {debugMode && <DebugStrip />}
 
       {gameOver && (
         <div className="pointer-events-auto absolute inset-0 z-30 flex items-center justify-center bg-[rgba(44,40,32,0.55)] p-6">
@@ -441,7 +279,7 @@ function IdentityBadge({
   const lowEnergy = energy > 0 && energy <= 3;
   const empty = energy === 0;
   return (
-    <div className="pointer-events-auto absolute left-2 top-16 z-20 flex flex-col items-start gap-1.5">
+    <div className="pointer-events-auto absolute left-2 top-2 z-20 flex flex-col items-start gap-1.5">
       <div
         className="inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] py-1 pl-1 pr-3 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
         title={`${name} · ${factionName}`}
@@ -505,33 +343,3 @@ function IdentityBadge({
     </div>
   );
 }
-
-function InventoryStrip({
-  inventory,
-  tools,
-  onOpen,
-}: {
-  inventory: Partial<Record<ResourceKind, number>>;
-  tools: ToolInstance[];
-  onOpen: () => void;
-}) {
-  const cap = inventoryCapFromBaskets(basketCount(tools));
-  const total = inventoryTotal(inventory);
-  const full = total >= cap;
-  return (
-    <button
-      onClick={onOpen}
-      aria-label="Open inventory"
-      className="tactile pointer-events-auto relative inline-flex h-10 w-10 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-fg)] shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
-    >
-      <TreasureChest size={20} weight="duotone" />
-      {full && (
-        <span
-          aria-hidden
-          className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-[var(--color-accent)]"
-        />
-      )}
-    </button>
-  );
-}
-

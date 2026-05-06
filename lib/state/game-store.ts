@@ -18,20 +18,24 @@ import { bus } from "@/lib/render/bus";
 import type { WorldEvent } from "@/lib/sim/events";
 import { gainPlayerRep } from "@/lib/sim/faction";
 import {
+  addLoot,
   findAdjacentPassable,
   findWorkbenchTile,
   globalToLocal,
   isLocalObstacle,
   localToGlobal,
+  lootAtLocal,
   obstacleKindAt,
   placeObstacle,
   placedStructureAt,
   placedStructureById,
   regionCenterGlobal,
   regionKey,
+  removeLoot,
   tileOccupied,
   INTERIOR_W,
   INTERIOR_H,
+  type LootPile,
   type ObstacleKind,
   type Rotation,
 } from "@/lib/sim/biome-interior";
@@ -117,8 +121,14 @@ type GameStore = {
   placedStructureContextMenu: PlacedStructureContextMenuState | null;
   buildMode: BuildModeState;
   pendingMarker: { rx: number; ry: number } | null;
+  pendingDrop: { kind: ResourceKind; max: number } | null;
   statusMessages: StatusMessage[];
   cameraPanned: boolean;
+  // One-shot guard: when an overlay is dismissed by tapping outside it, the
+  // same DOM tap would otherwise reach Phaser's pointerup handler and walk
+  // the player. The outside-close hook sets this true; BiomeScene/WorldScene
+  // consume it on the next pointerup.
+  swallowNextWorldTap: boolean;
 
   startNew: () => void;
   loadFromDisk: (slot: string) => Promise<void>;
@@ -157,7 +167,13 @@ type GameStore = {
   openTutorial: () => void;
   closeTutorial: () => void;
   toggleDebug: () => void;
+  setDebugMode: (on: boolean) => void;
   toggleDebugMinimized: () => void;
+  requestDropConfirm: (kind: ResourceKind, max: number) => void;
+  cancelDrop: () => void;
+  confirmDrop: (qty: number) => void;
+  dropInventoryItem: (kind: ResourceKind, qty: number) => void;
+  setSwallowNextWorldTap: (v: boolean) => void;
   debugGrantTool: (kind: ToolKind) => void;
   toggleMapFactions: () => void;
   openNpcContextMenu: (id: string, x: number, y: number) => void;
@@ -252,8 +268,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
   placedStructureContextMenu: null,
   buildMode: { active: false, selectedKind: null, selectedTile: null, rotation: 0 },
   pendingMarker: null,
+  pendingDrop: null,
   statusMessages: [],
   cameraPanned: false,
+  swallowNextWorldTap: false,
 
   startNew: () => {
     const fresh = createWorld();
@@ -667,7 +685,76 @@ export const useGameStore = create<GameStore>((set, get) => ({
   openTutorial: () => set({ tutorialOpen: true }),
   closeTutorial: () => set({ tutorialOpen: false }),
   toggleDebug: () => set({ debugMode: !get().debugMode }),
+  setDebugMode: (on) => {
+    if (get().debugMode === on) return;
+    set({ debugMode: on });
+  },
   toggleDebugMinimized: () => set({ debugMinimized: !get().debugMinimized }),
+
+  requestDropConfirm: (kind, max) => {
+    if (max <= 0) return;
+    set({ pendingDrop: { kind, max } });
+  },
+  cancelDrop: () => set({ pendingDrop: null }),
+  confirmDrop: (qty) => {
+    const pending = get().pendingDrop;
+    if (!pending) return;
+    set({ pendingDrop: null });
+    get().dropInventoryItem(pending.kind, qty);
+  },
+  dropInventoryItem: (kind, qty) => {
+    if (qty <= 0) return;
+    const current = get().world;
+    if (!current?.life || current.life.gameOver) return;
+    const life = current.life;
+    const have = life.inventory[kind] ?? 0;
+    if (have <= 0) return;
+    const drop = Math.min(qty, have);
+    const remainder = have - drop;
+    const inventory = { ...life.inventory };
+    if (remainder > 0) inventory[kind] = remainder;
+    else delete inventory[kind];
+
+    const here = globalToLocal(life.player.gx, life.player.gy);
+    let world = ensureInteriorsForRegion(current, here.rx, here.ry);
+    const interior = world.biomeInteriors[regionKey(here.rx, here.ry)];
+    if (!interior) return;
+    const existing = lootAtLocal(interior, here.lx, here.ly);
+    let nextInterior;
+    if (existing) {
+      const merged: LootPile = {
+        ...existing,
+        items: { ...existing.items, [kind]: (existing.items[kind] ?? 0) + drop },
+      };
+      const without = removeLoot(interior, existing.id);
+      nextInterior = addLoot(without, merged);
+    } else {
+      const id = `drop-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      const pile: LootPile = {
+        id,
+        lx: here.lx,
+        ly: here.ly,
+        items: { [kind]: drop },
+      };
+      nextInterior = addLoot(interior, pile);
+    }
+    world = {
+      ...world,
+      biomeInteriors: {
+        ...world.biomeInteriors,
+        [regionKey(here.rx, here.ry)]: nextInterior,
+      },
+    };
+    set({
+      world: { ...world, life: { ...life, inventory } },
+    });
+    const label = RESOURCES[kind].label;
+    get().pushStatus(`Dropped ${drop} ${label}.`);
+  },
+  setSwallowNextWorldTap: (v) => {
+    if (get().swallowNextWorldTap === v) return;
+    set({ swallowNextWorldTap: v });
+  },
   debugGrantTool: (kind) => {
     const current = get().world;
     if (!current?.life || current.life.gameOver) return;
