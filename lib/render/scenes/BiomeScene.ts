@@ -318,7 +318,7 @@ export class BiomeScene extends Phaser.Scene {
     this.ghostLayer.lineStyle(2, color, 0.9);
     this.ghostLayer.strokeRect(x + 1, y + 1, CELL - 2, CELL - 2);
 
-    const frame = placedStructureFrame(bm.selectedKind);
+    const frame = placedStructureFrame(bm.selectedKind, bm.rotation);
     if (!frame) {
       if (this.ghostSprite) this.ghostSprite.setVisible(false);
       return;
@@ -333,7 +333,6 @@ export class BiomeScene extends Phaser.Scene {
       this.ghostSprite.setDisplaySize(CELL, CELL);
     }
     this.ghostSprite.setPosition(x + CELL / 2, y + CELL / 2);
-    this.ghostSprite.setAngle(bm.rotation * 90);
     this.ghostSprite.setAlpha(valid ? 0.65 : 0.45);
     this.ghostSprite.setVisible(true);
   }
@@ -494,7 +493,10 @@ export class BiomeScene extends Phaser.Scene {
     }
 
     for (const s of interior.placedStructures) {
-      const frame = placedStructureFrame(s.kind);
+      // Rotation persistence on PlacedStructure ships with the first kind
+      // that needs it (door/wall/fence in DS1/DS2/L3); for now placed
+      // structures render in the default rotation.
+      const frame = placedStructureFrame(s.kind, 0);
       if (frame) {
         const sprite = this.add.image(0, 0, ATLAS_KEY, frameKey(frame));
         sprite.setOrigin(0, 0);
@@ -1082,20 +1084,26 @@ export class BiomeScene extends Phaser.Scene {
         store.closeObstacleContextMenu();
         store.closePlacedStructureContextMenu();
         if (kind) {
-          const action = defaultObstacleAction(kind);
-          if (action === "harvest" && player) {
-            const need: "axe" | "pickaxe" =
-              kind === "tree" ? "axe" : "pickaxe";
-            if (!hasTool(player.tools, need)) {
-              store.pushStatus(`You need ${needArticle(need)}.`);
-              store.walkPlayerTo(gx, gy);
-            } else {
-              store.interactWithObstacle(rx, ry, lx, ly, action);
-            }
-          } else if (action) {
-            store.interactWithObstacle(rx, ry, lx, ly, action);
+          // Player-built structures (workbench today) open the top-right
+          // context menu on tap so Craft and Deconstruct are both visible.
+          if (kind === "workbench") {
+            store.openObstacleContextMenu(rx, ry, lx, ly, kind, pointer.x, pointer.y, false);
           } else {
-            store.walkPlayerTo(gx, gy);
+            const action = defaultObstacleAction(kind);
+            if (action === "harvest" && player) {
+              const need: "axe" | "pickaxe" =
+                kind === "tree" ? "axe" : "pickaxe";
+              if (!hasTool(player.tools, need)) {
+                store.pushStatus(`You need ${needArticle(need)}.`);
+                store.walkPlayerTo(gx, gy);
+              } else {
+                store.interactWithObstacle(rx, ry, lx, ly, action);
+              }
+            } else if (action) {
+              store.interactWithObstacle(rx, ry, lx, ly, action);
+            } else {
+              store.walkPlayerTo(gx, gy);
+            }
           }
         } else if (placed) {
           store.openPlacedStructureContextMenu(
@@ -1169,13 +1177,20 @@ function needArticle(tool: "axe" | "pickaxe"): string {
   return tool === "axe" ? "an axe" : "a pickaxe";
 }
 
-function placedStructureFrame(kind: StructureKind): TileName | null {
-  // Most kinds (furnace/anvil/walls/door/chest/bed/campfire/cosmetics) ship
-  // their atlas frame in their own sub-issue. Until then the renderer falls
-  // back to a coloured rectangle so placement is still visible.
+function placedStructureFrame(
+  kind: StructureKind,
+  rotation: 0 | 1 | 2 | 3,
+): TileName | null {
+  // Rotation swaps to a distinct atlas frame instead of transforming the
+  // existing sprite. Most kinds (furnace/anvil/walls/door/chest/bed/campfire/
+  // cosmetics) ship their atlas frames in their own sub-issue. Until then the
+  // renderer falls back to a coloured rectangle so placement is still visible.
   switch (kind) {
     case "workbench":
-      return "workbench";
+      // Workbench is rotationally symmetric: 0/2 share the horizontal frame,
+      // 1/3 share the vertical one. Future asymmetric kinds (door, fence) can
+      // ship four distinct frames.
+      return rotation === 1 || rotation === 3 ? "workbench_v" : "workbench";
     default:
       return null;
   }

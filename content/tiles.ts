@@ -75,6 +75,7 @@ export const TILE_FRAMES = {
   res_tin_ore: F(12, 2),
   res_iron_ore: F(13, 2),
   res_coal: F(14, 2),
+  workbench_v: F(15, 2),
 } as const;
 
 export type TileName = keyof typeof TILE_FRAMES;

@@ -404,6 +404,19 @@ function workbench(set) {
   for (let x = 4; x <= 11; x++) set(x, 13, [0, 0, 0, 60]);
 }
 
+function workbenchV(set) {
+  for (let x = 9; x <= 12; x++) {
+    set(x, 4, PAL.workbenchLeg);
+    set(x, 11, PAL.workbenchLeg);
+  }
+  for (let x = 6; x <= 8; x++) {
+    for (let y = 3; y <= 12; y++) set(x, y, PAL.workbench);
+  }
+  for (let y = 3; y <= 12; y++) set(6, y, shade(PAL.workbench, 0.18));
+  for (let y = 4; y <= 11; y++) set(9, y, shade(PAL.workbench, -0.25));
+  for (let y = 4; y <= 11; y++) set(13, y, [0, 0, 0, 60]);
+}
+
 // ---- resources -------------------------------------------------------------
 //
 // Each resource is drawn over a soft cream halo + dark base shadow so the
@@ -860,6 +873,8 @@ const FRAMES = [
   ["res_tin_ore", tinOre],
   ["res_iron_ore", ironOre],
   ["res_coal", coalOre],
+  // Row 2 (col 15) onward: rotation variants and structure overflow
+  ["workbench_v", workbenchV],
 ];
 
 for (let i = 0; i < FRAMES.length; i++) {
