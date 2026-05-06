@@ -405,16 +405,19 @@ function workbench(set) {
 }
 
 function workbenchV(set) {
-  for (let x = 9; x <= 12; x++) {
-    set(x, 4, PAL.workbenchLeg);
-    set(x, 11, PAL.workbenchLeg);
+  // Vertical workbench: tabletop runs north-south. Legs still descend from
+  // the south end so the perspective matches the character's 3/4 view --
+  // legs always face the camera, regardless of rotation.
+  for (let y = 2; y <= 10; y++) {
+    for (let x = 6; x <= 9; x++) set(x, y, PAL.workbench);
   }
-  for (let x = 6; x <= 8; x++) {
-    for (let y = 3; y <= 12; y++) set(x, y, PAL.workbench);
+  for (let x = 6; x <= 9; x++) set(x, 2, shade(PAL.workbench, 0.18));
+  for (let x = 6; x <= 9; x++) set(x, 10, shade(PAL.workbench, -0.25));
+  for (let y = 11; y <= 13; y++) {
+    set(6, y, PAL.workbenchLeg);
+    set(9, y, PAL.workbenchLeg);
   }
-  for (let y = 3; y <= 12; y++) set(6, y, shade(PAL.workbench, 0.18));
-  for (let y = 4; y <= 11; y++) set(9, y, shade(PAL.workbench, -0.25));
-  for (let y = 4; y <= 11; y++) set(13, y, [0, 0, 0, 60]);
+  for (let x = 6; x <= 9; x++) set(x, 14, [0, 0, 0, 60]);
 }
 
 // ---- resources -------------------------------------------------------------
