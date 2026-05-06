@@ -69,6 +69,41 @@ The game is in early but functional shape. The current loop on the `main` branch
 
 Bigger features intentionally not built yet: a workbench / tool-gated crafting graph, sword / bow / armour, status effects, group combat, dialogue trees, multiplayer, cloud sync. See [`CLAUDE.md`](./CLAUDE.md) for the contributor-facing scope list.
 
+## Roadmap
+
+The list below is what we believe the project needs to feel like a complete, playable experience — the minimum set of systems where survival, society, and story reinforce each other. Phases 1–3 (the current loop above) are merged. Everything here is open work, grouped by what each phase unlocks rather than strict sequencing.
+
+### Phase 4 — Survival, deepened
+
+The current loop tops out at crafting a sling. The next layer is enough depth in crafting and building to make a settled life feel intentional.
+
+- **Crafting and resource gathering expansion.** Build out the recipe graph: more materials, multi-stage chains, tool-gated tiers, durability and upgrade paths. Ground the existing recipe stubs (workbench, sword, bow in `content/recipes.ts`) into shipped mechanics.
+- **Basic building.** Place persistent structures on the world. Workbench first, then walls, doors, storage, beds. Structures bind to a region, survive saves, and gate the higher-tier recipes from the previous bullet.
+
+### Phase 5 — NPCs as an ecosystem
+
+NPCs today are a fixed pool of 200 wanderers. To support emergent politics, they need to behave like a population — born, raised, settled, replaced.
+
+- **Birth, death, and homesteading.** NPCs age, die of old age, have children, and pass faction membership down. Tribes claim regions and develop them: farms, planted fields, stockpiles, herd animals. Resource management becomes a faction-level concern rather than a player-only one.
+- **Goal and state refactor for density.** The current five goal kinds (`wander / gather / patrol / raid / trade` in `lib/sim/goal.ts`) read fine when NPCs are spread out and feel chaotic when ten of them share a region. Rework the goal/state system around longer arcs and social context so a busy village reads as a village instead of a swarm.
+
+### Phase 6 — A living world
+
+- **Animals and PvE.** Wildlife, predator/prey loops, neutral creatures, and dangerous beasts. Reuses the tile-level combat system and adds the first non-political reason to leave home.
+
+### Phase 7 — Story you can talk to
+
+Emergence only matters if the player can read the story coming out of it. These two systems give the world a voice without leaning on per-token LLM cost for every line.
+
+- **NPC ↔ player communication.** A dialogue layer that surfaces NPC values, goals, and history without sending every utterance through an LLM. Likely a hybrid: deterministic templates and structured pickers driven by NPC state, with optional cached or batched LLM passes for flavour where the budget allows.
+- **History simulation.** Record what happens — births, deaths, battles, betrayals, faction shifts — into a queryable chronicle. The player (and NPCs) can refer to it, the world remembers, and emergent lore stops vanishing into the tick stream.
+
+### Phase 8 — Shared world
+
+- **Multiplayer and persistent world.** Move authoritative state off the device. Multiple players inhabit one continuously-running world; the simulation keeps ticking when nobody is logged in. This is the last MVP milestone because every system before it has to be stable under a single-player save first.
+
+When all eight milestones land, the project is what we'd call a minimum viable game: a world worth surviving in, a society worth living among, a story worth telling, and other people to tell it to.
+
 ## Inspirations
 
 - **Skyrim** – Open world, factions, reputation, story depth
