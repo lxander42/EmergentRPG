@@ -17,6 +17,7 @@ const OBSTACLE_LABEL: Record<ObstacleKind, string> = {
   cactus: "Cactus",
   bush: "Bush",
   workbench: "Workbench",
+  ore_deposit: "Ore Deposit",
 };
 
 const OBSTACLE_BLURB: Record<ObstacleKind, string> = {
@@ -25,6 +26,7 @@ const OBSTACLE_BLURB: Record<ObstacleKind, string> = {
   cactus: "Spiny. Best to walk around.",
   bush: "Low growth. Nothing to harvest.",
   workbench: "A bench for tools and advanced weapons.",
+  ore_deposit: "A boulder of mineral matrix. Mine through the shell to find what's inside.",
 };
 
 type ActionDef = {
@@ -127,6 +129,20 @@ export default function ObstacleContextMenu() {
       id: "mine",
       label: "Mine",
       description: have ? "drops stone · rare ore" : "needs pickaxe",
+      primary: true,
+      disabled: !have,
+      icon: "hammer",
+      onClick: () => {
+        if (!have) return;
+        interact(rx, ry, lx, ly, "harvest");
+      },
+    });
+  } else if (!remembered && kind === "ore_deposit") {
+    const have = hasTool(player.tools, "pickaxe");
+    actions.push({
+      id: "mine",
+      label: "Mine",
+      description: have ? "chip away to find ore" : "needs pickaxe",
       primary: true,
       disabled: !have,
       icon: "hammer",
@@ -249,11 +265,13 @@ function ObstacleSwatch({ kind }: { kind: ObstacleKind }) {
       ? "#5d8055"
       : kind === "rock"
         ? "#8a8474"
-        : kind === "cactus"
-          ? "#7aa05c"
-          : kind === "bush"
-            ? "#6b9a55"
-            : "#d96846";
+        : kind === "ore_deposit"
+          ? "#7a7368"
+          : kind === "cactus"
+            ? "#7aa05c"
+            : kind === "bush"
+              ? "#6b9a55"
+              : "#d96846";
   return (
     <span
       aria-hidden
