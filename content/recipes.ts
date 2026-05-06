@@ -4,7 +4,20 @@ import type { ToolKind } from "@/lib/sim/tools";
 
 export type RecipeStation = "hand" | "workbench";
 
-export type StructureKind = "workbench";
+export type StructureKind =
+  | "workbench"
+  | "furnace"
+  | "anvil"
+  | "wall_wood"
+  | "wall_stone"
+  | "wall_iron"
+  | "door"
+  | "chest"
+  | "bed"
+  | "campfire"
+  | "floor_tile"
+  | "sign"
+  | "fence";
 
 export type RecipeResult =
   | { kind: "weapon"; id: WeaponKind }

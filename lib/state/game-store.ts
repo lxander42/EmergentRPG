@@ -528,10 +528,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
       const wb = findWorkbenchTile(interior);
       if (!wb || chebyshev(here.lx, here.ly, wb.lx, wb.ly) > 1) return false;
     }
-    // Structures must place into the world before we spend inputs.
+    // Structures must place into the world before we spend inputs. Only
+    // the workbench currently lives in the obstacle grid; other structure
+    // kinds in StructureKind land via the build-mode placement UI in B2.
     let placedInteriors: Record<string, import("@/lib/sim/biome-interior").BiomeInterior> | null = null;
     if (recipe.result.kind === "structure") {
       if (!interior) return false;
+      if (recipe.result.id !== "workbench") return false;
       const slot = findAdjacentPassable(interior, here.lx, here.ly, 2);
       if (!slot) return false;
       const nextInterior = placeObstacle(interior, slot.lx, slot.ly, recipe.result.id);
