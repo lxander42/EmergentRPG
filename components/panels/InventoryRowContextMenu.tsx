@@ -41,16 +41,21 @@ function Inner({
     const el = ref.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
+    // Default: open with top-left at the anchor (right-click cursor or
+    // long-press point). Flip horizontally if it would overflow the right
+    // edge so the menu opens to the LEFT of the anchor instead, and flip
+    // vertically if it would overflow the bottom. Final clamp keeps it
+    // inside the viewport even after the flip.
     let left = x;
     let top = y;
-    if (left + rect.width + MARGIN > window.innerWidth) {
-      left = window.innerWidth - rect.width - MARGIN;
+    if (x + rect.width + MARGIN > window.innerWidth) {
+      left = x - rect.width;
     }
-    if (top + rect.height + MARGIN > window.innerHeight) {
-      top = window.innerHeight - rect.height - MARGIN;
+    if (y + rect.height + MARGIN > window.innerHeight) {
+      top = y - rect.height;
     }
-    if (left < MARGIN) left = MARGIN;
-    if (top < MARGIN) top = MARGIN;
+    left = Math.max(MARGIN, Math.min(left, window.innerWidth - rect.width - MARGIN));
+    top = Math.max(MARGIN, Math.min(top, window.innerHeight - rect.height - MARGIN));
     setPos({ left, top });
   }, [x, y]);
 

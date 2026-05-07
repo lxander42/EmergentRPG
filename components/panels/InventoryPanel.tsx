@@ -26,20 +26,34 @@ export default function InventoryPanel() {
   const ref = useOutsideClose(open, close);
   const boundsRef = useReportPopoverBounds(open);
 
-  // Document-level capture-phase listener that backs up the per-row
-  // listener: even if a particular browser dispatches contextmenu in a way
-  // that our row-level handler doesn't see in time, this one catches every
-  // right-click inside the panel before the browser commits to its menu.
+  // Triple-defense capture-phase contextmenu suppressor. We've seen browsers
+  // (specifically Chrome on some setups) commit to the native menu before
+  // bubble-phase listeners fire, so we attach in the very first capture
+  // phase on window AND document AND the panel root. The closure captures
+  // the panel element directly to avoid any ref-churn race during
+  // re-renders. The handler is intentionally lenient about what counts as
+  // "inside the panel" — anything inside the bounding rect of the panel
+  // element is suppressed, so the user can't trigger Chrome's menu via a
+  // child element that happens to mount/unmount mid-gesture either.
   useEffect(() => {
     if (!open) return;
-    const handler = (e: MouseEvent) => {
-      const root = ref.current;
-      if (!root || !root.contains(e.target as Node)) return;
-      if ((e.target as HTMLElement | null)?.closest("[data-no-drop]")) return;
+    const root = ref.current;
+    if (!root) return;
+    const handler = (e: Event) => {
+      const target = e.target as HTMLElement | null;
+      if (!target || !root.contains(target)) return;
+      if (target.closest("[data-no-drop]")) return;
       e.preventDefault();
+      e.stopImmediatePropagation();
     };
+    window.addEventListener("contextmenu", handler, { capture: true });
     document.addEventListener("contextmenu", handler, { capture: true });
-    return () => document.removeEventListener("contextmenu", handler, { capture: true });
+    root.addEventListener("contextmenu", handler, { capture: true });
+    return () => {
+      window.removeEventListener("contextmenu", handler, { capture: true });
+      document.removeEventListener("contextmenu", handler, { capture: true });
+      root.removeEventListener("contextmenu", handler, { capture: true });
+    };
   }, [open, ref]);
 
   if (!open || !world) return null;
@@ -66,6 +80,10 @@ export default function InventoryPanel() {
       ref={mergeRefs(ref, boundsRef)}
       role="dialog"
       aria-label="Inventory"
+      onContextMenu={(e) => {
+        if ((e.target as HTMLElement | null)?.closest("[data-no-drop]")) return;
+        e.preventDefault();
+      }}
       className="pointer-events-auto absolute inset-x-2 bottom-2 z-20 max-h-[68dvh] overflow-y-auto rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[0_20px_48px_-20px_rgba(44,40,32,0.25)] sm:inset-x-auto sm:left-auto sm:right-3 sm:bottom-16 sm:w-[420px] sm:max-h-[78dvh]"
     >
       <div className="mx-auto max-w-2xl">
@@ -276,16 +294,17 @@ function MaterialRow({
   useEffect(() => {
     const el = liRef.current;
     if (!el) return;
-    const handler = (e: MouseEvent) => {
+    const handler = (e: Event) => {
       e.preventDefault();
-      e.stopPropagation();
+      e.stopImmediatePropagation();
       const target = e.target as HTMLElement | null;
       if (target?.closest("[data-no-drop]")) return;
       if (Date.now() - longPress.firedAt.current < 800) return;
-      onContextMenuAt(e.clientX, e.clientY);
+      const me = e as MouseEvent;
+      onContextMenuAt(me.clientX, me.clientY);
     };
-    el.addEventListener("contextmenu", handler);
-    return () => el.removeEventListener("contextmenu", handler);
+    el.addEventListener("contextmenu", handler, { capture: true });
+    return () => el.removeEventListener("contextmenu", handler, { capture: true });
   }, [onContextMenuAt, longPress.firedAt]);
   return (
     <li
