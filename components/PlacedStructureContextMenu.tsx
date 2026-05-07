@@ -125,7 +125,7 @@ export default function PlacedStructureContextMenu() {
       {isExamined && (
         <>
           <p className="px-2.5 pb-1 pt-0.5 text-xs leading-snug text-[var(--color-fg-muted)]">
-            A structure you built. Deconstruct to recover half of its materials.
+            A structure you built. Deconstruct to recover its materials.
           </p>
           <div className="my-0.5 h-px bg-[var(--color-border)]" aria-hidden />
         </>
@@ -167,7 +167,7 @@ export default function PlacedStructureContextMenu() {
         <span className="min-w-0 flex-1">
           <span className="block leading-tight">Deconstruct</span>
           <span className="mt-0.5 block font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
-            recover half materials
+            recover full materials
           </span>
         </span>
       </button>
