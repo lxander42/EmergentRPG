@@ -80,6 +80,10 @@ export const TILE_FRAMES = {
   workbench_n: F(15, 2),
   workbench_w: F(0, 3),
   workbench_e: F(1, 3),
+  furnace: F(2, 3),
+  furnace_n: F(3, 3),
+  furnace_w: F(4, 3),
+  furnace_e: F(5, 3),
 } as const;
 
 export type TileName = keyof typeof TILE_FRAMES;

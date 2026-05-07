@@ -1308,9 +1308,8 @@ function placedStructureFrame(
 ): TileName | null {
   // Each rotation pins the structure against a different edge of its tile.
   // 0 = south, 1 = east, 2 = north, 3 = west (clockwise to match the
-  // rotate-clockwise icon). Most kinds (furnace/anvil/walls/door/chest/bed/
-  // campfire/cosmetics) ship their atlas frames in their own sub-issue;
-  // until then the renderer falls back to a coloured rectangle.
+  // rotate-clockwise icon). Kinds without atlas frames yet (anvil/walls/
+  // door/chest/bed/campfire/cosmetics) fall back to a coloured rectangle.
   switch (kind) {
     case "workbench":
       switch (rotation) {
@@ -1324,6 +1323,18 @@ function placedStructureFrame(
           return "workbench_w";
       }
       return "workbench";
+    case "furnace":
+      switch (rotation) {
+        case 0:
+          return "furnace";
+        case 1:
+          return "furnace_e";
+        case 2:
+          return "furnace_n";
+        case 3:
+          return "furnace_w";
+      }
+      return "furnace";
     default:
       return null;
   }

@@ -114,6 +114,10 @@ const PAL = {
   bush: hex("#86a06d"),
   workbench: hex("#d96846"),
   workbenchLeg: hex("#7a3d28"),
+  furnace: hex("#7a6b62"),
+  furnaceCap: hex("#5b4f48"),
+  furnaceMouth: hex("#2a201a"),
+  furnaceEmber: hex("#e69248"),
   loot: hex("#c0a878"),
   fg: hex("#2c2820"),
   body: hex("#ffffff"),
@@ -451,6 +455,84 @@ function workbenchE(set) {
     set(15, y, PAL.workbenchLeg);
   }
   for (let x = 12; x <= 15; x++) set(x, 14, [0, 0, 0, 60]);
+}
+
+function furnace(set) {
+  // South-edge / rotation 0: stone block hugs the south edge of the tile;
+  // the mouth opens on the north face so the player reads the orientation
+  // by where the dark opening sits.
+  for (let y = 4; y <= 13; y++) {
+    for (let x = 3; x <= 12; x++) set(x, y, PAL.furnace);
+  }
+  for (let x = 3; x <= 12; x++) set(x, 4, shade(PAL.furnace, 0.22));
+  for (let x = 3; x <= 12; x++) set(x, 13, shade(PAL.furnace, -0.28));
+  for (let y = 5; y <= 12; y++) {
+    set(3, y, PAL.furnaceCap);
+    set(12, y, PAL.furnaceCap);
+  }
+  for (let y = 6; y <= 8; y++) {
+    for (let x = 6; x <= 9; x++) set(x, y, PAL.furnaceMouth);
+  }
+  set(7, 7, PAL.furnaceEmber);
+  set(8, 7, PAL.furnaceEmber);
+  for (let x = 4; x <= 11; x++) set(x, 14, [0, 0, 0, 60]);
+}
+
+function furnaceN(set) {
+  // North-edge / rotation 2: block hugs the north edge; mouth opens south.
+  for (let y = 2; y <= 11; y++) {
+    for (let x = 3; x <= 12; x++) set(x, y, PAL.furnace);
+  }
+  for (let x = 3; x <= 12; x++) set(x, 2, shade(PAL.furnace, 0.22));
+  for (let x = 3; x <= 12; x++) set(x, 11, shade(PAL.furnace, -0.28));
+  for (let y = 3; y <= 10; y++) {
+    set(3, y, PAL.furnaceCap);
+    set(12, y, PAL.furnaceCap);
+  }
+  for (let y = 7; y <= 9; y++) {
+    for (let x = 6; x <= 9; x++) set(x, y, PAL.furnaceMouth);
+  }
+  set(7, 8, PAL.furnaceEmber);
+  set(8, 8, PAL.furnaceEmber);
+  for (let x = 4; x <= 11; x++) set(x, 12, [0, 0, 0, 60]);
+}
+
+function furnaceW(set) {
+  // West-edge / rotation 3: block hugs the west edge; mouth opens east.
+  for (let y = 3; y <= 12; y++) {
+    for (let x = 2; x <= 9; x++) set(x, y, PAL.furnace);
+  }
+  for (let x = 2; x <= 9; x++) set(x, 3, shade(PAL.furnace, 0.22));
+  for (let x = 2; x <= 9; x++) set(x, 12, shade(PAL.furnace, -0.28));
+  for (let y = 4; y <= 11; y++) {
+    set(2, y, PAL.furnaceCap);
+    set(9, y, PAL.furnaceCap);
+  }
+  for (let y = 6; y <= 9; y++) {
+    for (let x = 6; x <= 8; x++) set(x, y, PAL.furnaceMouth);
+  }
+  set(7, 7, PAL.furnaceEmber);
+  set(7, 8, PAL.furnaceEmber);
+  for (let x = 3; x <= 8; x++) set(x, 13, [0, 0, 0, 60]);
+}
+
+function furnaceE(set) {
+  // East-edge / rotation 1: block hugs the east edge; mouth opens west.
+  for (let y = 3; y <= 12; y++) {
+    for (let x = 6; x <= 13; x++) set(x, y, PAL.furnace);
+  }
+  for (let x = 6; x <= 13; x++) set(x, 3, shade(PAL.furnace, 0.22));
+  for (let x = 6; x <= 13; x++) set(x, 12, shade(PAL.furnace, -0.28));
+  for (let y = 4; y <= 11; y++) {
+    set(6, y, PAL.furnaceCap);
+    set(13, y, PAL.furnaceCap);
+  }
+  for (let y = 6; y <= 9; y++) {
+    for (let x = 7; x <= 9; x++) set(x, y, PAL.furnaceMouth);
+  }
+  set(8, 7, PAL.furnaceEmber);
+  set(8, 8, PAL.furnaceEmber);
+  for (let x = 7; x <= 12; x++) set(x, 13, [0, 0, 0, 60]);
 }
 
 // ---- resources -------------------------------------------------------------
@@ -915,6 +997,10 @@ const FRAMES = [
   // Row 3: rotation overflow.
   ["workbench_w", workbenchW],
   ["workbench_e", workbenchE],
+  ["furnace", furnace],
+  ["furnace_n", furnaceN],
+  ["furnace_w", furnaceW],
+  ["furnace_e", furnaceE],
 ];
 
 for (let i = 0; i < FRAMES.length; i++) {

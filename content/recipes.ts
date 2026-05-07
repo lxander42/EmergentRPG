@@ -67,6 +67,14 @@ export const RECIPES: Recipe[] = [
     station: "hand",
   },
   {
+    id: "furnace",
+    name: "Furnace",
+    result: { kind: "structure", id: "furnace" },
+    inputs: { stone: 8 },
+    time: 5,
+    station: "hand",
+  },
+  {
     id: "axe",
     name: "Axe",
     result: { kind: "tool", id: "axe" },

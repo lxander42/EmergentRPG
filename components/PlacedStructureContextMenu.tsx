@@ -1,6 +1,6 @@
 "use client";
 
-import { Eye, Hammer } from "@phosphor-icons/react/dist/ssr";
+import { Eye, Flame, Hammer } from "@phosphor-icons/react/dist/ssr";
 import { useMemo, useRef, useState } from "react";
 import { useGameStore } from "@/lib/state/game-store";
 import type { StructureKind } from "@/content/recipes";
@@ -33,6 +33,7 @@ export default function PlacedStructureContextMenu() {
   const interact = useGameStore((s) => s.interactWithPlacedStructure);
   const examineKind = useGameStore((s) => s.examineKind);
   const examined = useGameStore((s) => s.world?.examinedKinds ?? null);
+  const pushToast = useGameStore((s) => s.pushToast);
 
   const ref = useRef<HTMLDivElement | null>(null);
   const closeRef = useOutsideClose(Boolean(ctx), close);
@@ -128,6 +129,24 @@ export default function PlacedStructureContextMenu() {
           </p>
           <div className="my-0.5 h-px bg-[var(--color-border)]" aria-hidden />
         </>
+      )}
+      {kind === "furnace" && (
+        <button
+          type="button"
+          onClick={() => {
+            pushToast("Smelting will arrive with the smelt loop.");
+            close();
+          }}
+          className="tactile inline-flex items-center gap-2 rounded-xl px-2 py-2 text-left text-sm text-[var(--color-fg)] hover:bg-[var(--color-surface-warm)]"
+        >
+          <Flame size={14} weight="duotone" className="text-[var(--color-accent)]" />
+          <span className="min-w-0 flex-1">
+            <span className="block leading-tight">Smelt</span>
+            <span className="mt-0.5 block font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
+              coming soon
+            </span>
+          </span>
+        </button>
       )}
       <button
         type="button"
