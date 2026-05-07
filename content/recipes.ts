@@ -2,7 +2,7 @@ import type { ResourceKind } from "@/content/resources";
 import type { WeaponKind } from "@/content/weapons";
 import type { ToolKind } from "@/lib/sim/tools";
 
-export type RecipeStation = "hand" | "workbench";
+export type RecipeStation = "hand" | "workbench" | "furnace";
 
 export type StructureKind =
   | "workbench"
@@ -22,7 +22,8 @@ export type StructureKind =
 export type RecipeResult =
   | { kind: "weapon"; id: WeaponKind }
   | { kind: "tool"; id: ToolKind }
-  | { kind: "structure"; id: StructureKind };
+  | { kind: "structure"; id: StructureKind }
+  | { kind: "resource"; id: ResourceKind; count: number };
 
 export type Recipe = {
   id: string;
@@ -31,6 +32,10 @@ export type Recipe = {
   inputs: Partial<Record<ResourceKind, number>>;
   time: number;
   station: RecipeStation;
+  // Furnace recipes only: how many ticks the smelt takes once started.
+  smeltTimeTicks?: number;
+  // Furnace recipes only: which input is treated as fuel for UI grouping.
+  fuel?: ResourceKind;
 };
 
 export const RECIPES: Recipe[] = [
@@ -121,6 +126,46 @@ export const RECIPES: Recipe[] = [
     inputs: { wood: 3, reed: 2 },
     time: 5,
     station: "workbench",
+  },
+  {
+    id: "smelt_copper",
+    name: "Copper Ingot",
+    result: { kind: "resource", id: "copper_ingot", count: 1 },
+    inputs: { copper_ore: 1, coal: 1 },
+    time: 0,
+    station: "furnace",
+    smeltTimeTicks: 30,
+    fuel: "coal",
+  },
+  {
+    id: "smelt_bronze",
+    name: "Bronze Ingot",
+    result: { kind: "resource", id: "bronze_ingot", count: 1 },
+    inputs: { copper_ore: 1, tin_ore: 1, coal: 1 },
+    time: 0,
+    station: "furnace",
+    smeltTimeTicks: 45,
+    fuel: "coal",
+  },
+  {
+    id: "smelt_iron",
+    name: "Iron Ingot",
+    result: { kind: "resource", id: "iron_ingot", count: 1 },
+    inputs: { iron_ore: 1, coal: 2 },
+    time: 0,
+    station: "furnace",
+    smeltTimeTicks: 60,
+    fuel: "coal",
+  },
+  {
+    id: "smelt_steel",
+    name: "Steel Ingot",
+    result: { kind: "resource", id: "steel_ingot", count: 1 },
+    inputs: { iron_ore: 2, coal: 3 },
+    time: 0,
+    station: "furnace",
+    smeltTimeTicks: 90,
+    fuel: "coal",
   },
 ];
 

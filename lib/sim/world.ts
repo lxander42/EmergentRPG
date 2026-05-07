@@ -20,6 +20,7 @@ import { tickPlayer } from "@/lib/sim/player-tick";
 import type { Inventory } from "@/lib/sim/inventory";
 import { biomeAt, isPassable, type Biome } from "@/lib/sim/biome";
 import { tickCombat } from "@/lib/sim/combat";
+import { tickFurnaces } from "@/lib/sim/structure-tick";
 import {
   decayReputation,
   pickFactionOfOrigin,
@@ -35,7 +36,7 @@ import {
 
 export { biomeAt, isPassable, type Biome } from "@/lib/sim/biome";
 
-export const WORLD_VERSION = 17;
+export const WORLD_VERSION = 18;
 export const MAP_W = 32;
 export const MAP_H = 32;
 export const NPC_COUNT = 200;
@@ -612,6 +613,8 @@ export function tickWorld(world: World): {
     // Remove dead NPCs from the canonical list.
     npcs = npcs.filter((n) => n.combatHealth > 0);
   }
+
+  interiors = tickFurnaces(interiors);
 
   const built = updatePresence(
     world.regionPresence,

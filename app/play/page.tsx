@@ -14,6 +14,7 @@ import InventoryPanel from "@/components/panels/InventoryPanel";
 import InventoryRowContextMenu from "@/components/panels/InventoryRowContextMenu";
 import DropConfirmModal from "@/components/panels/DropConfirmModal";
 import WorkbenchPanel from "@/components/panels/WorkbenchPanel";
+import FurnacePanel from "@/components/panels/FurnacePanel";
 import PastLivesPanel from "@/components/PastLivesPanel";
 import TutorialModal from "@/components/TutorialModal";
 import RecenterButton from "@/components/RecenterButton";
@@ -77,6 +78,7 @@ function PlayInner() {
       <InventoryRowContextMenu />
       <DropConfirmModal />
       <WorkbenchPanel />
+      <FurnacePanel />
       <PastLivesPanel />
       <StatusLog />
       <MarkerNameModal />

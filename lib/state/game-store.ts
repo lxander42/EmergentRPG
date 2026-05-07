@@ -49,7 +49,11 @@ import {
   spendRecipe,
 } from "@/lib/sim/weapons";
 import { makeTool, type ToolKind } from "@/lib/sim/tools";
-import { RECIPES_BY_ID, type StructureKind } from "@/content/recipes";
+import {
+  inventoryCapFromBaskets,
+  inventoryTotal,
+} from "@/lib/sim/inventory";
+import { RECIPES_BY_ID, type Recipe, type StructureKind } from "@/content/recipes";
 import { RESOURCES, type ResourceKind } from "@/content/resources";
 import { EAT_ENERGY_PER_FOOD, EAT_HEALTH_PER_FOOD } from "@/lib/sim/player";
 
@@ -90,6 +94,12 @@ export type BuildModeState = {
   rotation: BuildRotation;
 };
 
+export type FurnaceOpenState = {
+  rx: number;
+  ry: number;
+  structureId: string;
+};
+
 export type PlacedStructureContextMenuState = {
   rx: number;
   ry: number;
@@ -111,6 +121,7 @@ type GameStore = {
   view: View;
   inventoryOpen: boolean;
   workbenchOpen: boolean;
+  furnaceOpen: FurnaceOpenState | null;
   pastLivesOpen: boolean;
   tutorialOpen: boolean;
   debugMode: boolean;
@@ -221,6 +232,10 @@ type GameStore = {
   closeInventory: () => void;
   openWorkbench: () => void;
   closeWorkbench: () => void;
+  openFurnacePanel: (rx: number, ry: number, structureId: string) => void;
+  closeFurnacePanel: () => void;
+  startSmelt: (recipeId: string) => boolean;
+  collectFurnaceOutput: (kind: ResourceKind) => boolean;
   openPastLives: () => void;
   closePastLives: () => void;
   openTutorial: () => void;
@@ -315,6 +330,20 @@ type GameStore = {
   setCameraPanned: (panned: boolean) => void;
 };
 
+function describeMissing(
+  inventory: Partial<Record<ResourceKind, number>>,
+  recipe: Recipe,
+): string {
+  for (const k of Object.keys(recipe.inputs) as ResourceKind[]) {
+    const need = recipe.inputs[k] ?? 0;
+    const have = inventory[k] ?? 0;
+    if (have < need) {
+      return `Need ${need - have} more ${RESOURCES[k].label}.`;
+    }
+  }
+  return "Insufficient inputs.";
+}
+
 function withLife(world: World, life: LifeState): World {
   return { ...world, life };
 }
@@ -334,6 +363,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   view: "world",
   inventoryOpen: false,
   workbenchOpen: false,
+  furnaceOpen: null,
   pastLivesOpen: false,
   tutorialOpen: false,
   debugMode: false,
@@ -367,6 +397,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       view: claimed.home ? "biome" : "world",
       inventoryOpen: false,
       workbenchOpen: false,
+      furnaceOpen: null,
       pastLivesOpen: false,
       tutorialOpen: true,
       npcContextMenu: null,
@@ -453,6 +484,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       selectedRegion: id ? null : get().selectedRegion,
       obstacleContextMenu: id ? null : get().obstacleContextMenu,
       workbenchOpen: id ? false : get().workbenchOpen,
+      furnaceOpen: id ? null : get().furnaceOpen,
       pastLivesOpen: id ? false : get().pastLivesOpen,
     });
     if (!id) bus.emit("npc:deselected");
@@ -463,6 +495,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       selectedNpcId: region ? null : get().selectedNpcId,
       obstacleContextMenu: region ? null : get().obstacleContextMenu,
       workbenchOpen: region ? false : get().workbenchOpen,
+      furnaceOpen: region ? null : get().furnaceOpen,
       pastLivesOpen: region ? false : get().pastLivesOpen,
     });
     if (region) bus.emit("npc:deselected");
@@ -478,6 +511,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       placedStructureContextMenu: null,
       buildMode: { active: false, selectedKind: null, selectedTile: null, rotation: 0 },
       workbenchOpen: false,
+      furnaceOpen: null,
     });
     bus.emit("npc:deselected");
   },
@@ -539,6 +573,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       selectedRegion: null,
       obstacleContextMenu: null,
       workbenchOpen: false,
+      furnaceOpen: null,
     });
     bus.emit("npc:deselected");
     const seeded = ensureInteriorsForRegion(w, rx, ry);
@@ -649,6 +684,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       view: next.home ? "biome" : "world",
       inventoryOpen: false,
       workbenchOpen: false,
+      furnaceOpen: null,
       pastLivesOpen: false,
       tutorialOpen: false,
       npcContextMenu: null,
@@ -753,6 +789,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({
       inventoryOpen: true,
       workbenchOpen: false,
+      furnaceOpen: null,
       pastLivesOpen: false,
       selectedNpcId: null,
       selectedRegion: null,
@@ -763,6 +800,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   openWorkbench: () =>
     set({
       workbenchOpen: true,
+      furnaceOpen: null,
       inventoryOpen: false,
       pastLivesOpen: false,
       selectedNpcId: null,
@@ -771,11 +809,153 @@ export const useGameStore = create<GameStore>((set, get) => ({
       npcContextMenu: null,
     }),
   closeWorkbench: () => set({ workbenchOpen: false }),
+  openFurnacePanel: (rx, ry, structureId) =>
+    set({
+      furnaceOpen: { rx, ry, structureId },
+      workbenchOpen: false,
+      inventoryOpen: false,
+      pastLivesOpen: false,
+      selectedNpcId: null,
+      selectedRegion: null,
+      obstacleContextMenu: null,
+      placedStructureContextMenu: null,
+      npcContextMenu: null,
+    }),
+  closeFurnacePanel: () => set({ furnaceOpen: null }),
+  startSmelt: (recipeId) => {
+    const current = get().world;
+    if (!current?.life || current.life.gameOver) return false;
+    const open = get().furnaceOpen;
+    if (!open) return false;
+    const recipe = RECIPES_BY_ID[recipeId];
+    if (!recipe || recipe.station !== "furnace" || recipe.result.kind !== "resource") {
+      return false;
+    }
+    const required = recipe.smeltTimeTicks ?? 0;
+    if (required <= 0) return false;
+    const interior = current.biomeInteriors[regionKey(open.rx, open.ry)];
+    if (!interior) return false;
+    const target = placedStructureById(interior, open.structureId);
+    if (!target || target.kind !== "furnace") {
+      set({ furnaceOpen: null });
+      return false;
+    }
+    const here = globalToLocal(current.life.player.gx, current.life.player.gy);
+    if (here.rx !== open.rx || here.ry !== open.ry) {
+      get().pushToast("Stand next to the furnace to smelt.");
+      return false;
+    }
+    if (chebyshev(here.lx, here.ly, target.lx, target.ly) > 1) {
+      get().pushToast("Stand next to the furnace to smelt.");
+      return false;
+    }
+    if (target.smelt) {
+      get().pushToast("The furnace is already smelting.");
+      return false;
+    }
+    if (!affordable(current.life.inventory, recipe)) {
+      const missing = describeMissing(current.life.inventory, recipe);
+      get().pushToast(missing);
+      return false;
+    }
+    const nextInventory = spendRecipe(current.life.inventory, recipe);
+    if (!nextInventory) return false;
+    const updated: typeof target = {
+      ...target,
+      smelt: { recipeId, required, elapsed: 0 },
+    };
+    const nextStructures = interior.placedStructures.map((s) =>
+      s.id === target.id ? updated : s,
+    );
+    const nextInterior = { ...interior, placedStructures: nextStructures };
+    set({
+      world: {
+        ...current,
+        biomeInteriors: {
+          ...current.biomeInteriors,
+          [regionKey(open.rx, open.ry)]: nextInterior,
+        },
+        life: { ...current.life, inventory: nextInventory },
+      },
+    });
+    return true;
+  },
+  collectFurnaceOutput: (kind) => {
+    const current = get().world;
+    if (!current?.life || current.life.gameOver) return false;
+    const open = get().furnaceOpen;
+    if (!open) return false;
+    const interior = current.biomeInteriors[regionKey(open.rx, open.ry)];
+    if (!interior) return false;
+    const target = placedStructureById(interior, open.structureId);
+    if (!target || target.kind !== "furnace") {
+      set({ furnaceOpen: null });
+      return false;
+    }
+    const items = target.contents?.items;
+    const have = items?.[kind] ?? 0;
+    if (have <= 0) return false;
+    const here = globalToLocal(current.life.player.gx, current.life.player.gy);
+    if (here.rx !== open.rx || here.ry !== open.ry || chebyshev(here.lx, here.ly, target.lx, target.ly) > 1) {
+      get().pushToast("Stand next to the furnace to collect.");
+      return false;
+    }
+    const cap = inventoryCapFromBaskets(current.life.player.tools.filter((t) => t.kind === "basket").length);
+    const total = inventoryTotal(current.life.inventory);
+    if (total >= cap) {
+      get().pushToast("Inventory full.");
+      return false;
+    }
+    const room = cap - total;
+    const moved = Math.min(have, room);
+    const nextItems = { ...(items ?? {}) };
+    const remaining = have - moved;
+    if (remaining > 0) nextItems[kind] = remaining;
+    else delete nextItems[kind];
+    const nextContents =
+      Object.keys(nextItems).length > 0
+        ? { ...(target.contents ?? {}), items: nextItems }
+        : (() => {
+            const c = { ...(target.contents ?? {}) };
+            delete c.items;
+            return Object.keys(c).length > 0 ? c : undefined;
+          })();
+    const stillReady = Object.keys(nextItems).length > 0;
+    const nextSmelt = stillReady ? target.smelt : undefined;
+    const updated: typeof target = {
+      ...target,
+      contents: nextContents,
+      smelt: nextSmelt,
+    };
+    const nextStructures = interior.placedStructures.map((s) =>
+      s.id === target.id ? updated : s,
+    );
+    const nextInterior = { ...interior, placedStructures: nextStructures };
+    const inventoryNext = {
+      ...current.life.inventory,
+      [kind]: (current.life.inventory[kind] ?? 0) + moved,
+    };
+    set({
+      world: {
+        ...current,
+        biomeInteriors: {
+          ...current.biomeInteriors,
+          [regionKey(open.rx, open.ry)]: nextInterior,
+        },
+        life: { ...current.life, inventory: inventoryNext },
+      },
+    });
+    if (moved < have) {
+      get().pushToast(`Inventory full. Collected ${moved} of ${have}.`);
+    }
+    return true;
+  },
   openPastLives: () =>
     set({
       pastLivesOpen: true,
       inventoryOpen: false,
       workbenchOpen: false,
+      furnaceOpen: null,
       selectedNpcId: null,
       selectedRegion: null,
       obstacleContextMenu: null,
@@ -899,6 +1079,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       selectedNpcId: null,
       selectedRegion: null,
       workbenchOpen: false,
+      furnaceOpen: null,
     }),
   closeNpcContextMenu: () => set({ npcContextMenu: null }),
 
@@ -911,6 +1092,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       selectedRegion: null,
       inventoryOpen: false,
       workbenchOpen: false,
+      furnaceOpen: null,
     }),
   closeObstacleContextMenu: () => set({ obstacleContextMenu: null }),
 
@@ -923,6 +1105,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       selectedRegion: null,
       inventoryOpen: false,
       workbenchOpen: false,
+      furnaceOpen: null,
     }),
   closePlacedStructureContextMenu: () => set({ placedStructureContextMenu: null }),
 
@@ -932,6 +1115,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       buildMode: { active: true, selectedKind: null, selectedTile: null, rotation: 0 },
       inventoryOpen: false,
       workbenchOpen: false,
+      furnaceOpen: null,
       pastLivesOpen: false,
       obstacleContextMenu: null,
       placedStructureContextMenu: null,
@@ -1160,6 +1344,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       selectedRegion: null,
       obstacleContextMenu: null,
       workbenchOpen: false,
+      furnaceOpen: null,
     });
     bus.emit("npc:deselected");
   },

@@ -33,7 +33,7 @@ export default function PlacedStructureContextMenu() {
   const interact = useGameStore((s) => s.interactWithPlacedStructure);
   const examineKind = useGameStore((s) => s.examineKind);
   const examined = useGameStore((s) => s.world?.examinedKinds ?? null);
-  const pushToast = useGameStore((s) => s.pushToast);
+  const openFurnacePanel = useGameStore((s) => s.openFurnacePanel);
 
   const ref = useRef<HTMLDivElement | null>(null);
   const closeRef = useOutsideClose(Boolean(ctx), close);
@@ -134,8 +134,7 @@ export default function PlacedStructureContextMenu() {
         <button
           type="button"
           onClick={() => {
-            pushToast("Smelting will arrive with the smelt loop.");
-            close();
+            openFurnacePanel(rx, ry, structureId);
           }}
           className="tactile inline-flex items-center gap-2 rounded-xl px-2 py-2 text-left text-sm text-[var(--color-fg)] hover:bg-[var(--color-surface-warm)]"
         >
@@ -143,7 +142,7 @@ export default function PlacedStructureContextMenu() {
           <span className="min-w-0 flex-1">
             <span className="block leading-tight">Smelt</span>
             <span className="mt-0.5 block font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
-              coming soon
+              ore + fuel into ingots
             </span>
           </span>
         </button>

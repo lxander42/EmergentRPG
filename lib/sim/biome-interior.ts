@@ -51,6 +51,13 @@ export type StructureContents = {
 // and for persisted placement orientation.
 export type Rotation = 0 | 1 | 2 | 3;
 
+export type SmeltState = {
+  recipeId: string;
+  required: number;
+  elapsed: number;
+  ready?: true;
+};
+
 export type PlacedStructure = {
   id: string;
   kind: StructureKind;
@@ -61,6 +68,7 @@ export type PlacedStructure = {
   orientation?: Rotation;
   contents?: StructureContents;
   label?: string;
+  smelt?: SmeltState;
 };
 
 export type BiomeInterior = {
