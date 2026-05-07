@@ -14,7 +14,11 @@ export type ResourceKind =
   | "copper_ore"
   | "tin_ore"
   | "iron_ore"
-  | "coal";
+  | "coal"
+  | "copper_ingot"
+  | "bronze_ingot"
+  | "iron_ingot"
+  | "steel_ingot";
 
 export type ResourceMeta = {
   label: string;
@@ -38,6 +42,10 @@ export const RESOURCES: Record<ResourceKind, ResourceMeta> = {
   tin_ore: { label: "Tin Ore", swatch: "#c8c4bc", food: false, energy: 0, frame: "res_tin_ore" },
   iron_ore: { label: "Iron Ore", swatch: "#6e6a64", food: false, energy: 0, frame: "res_iron_ore" },
   coal: { label: "Coal", swatch: "#2a2622", food: false, energy: 0, frame: "res_coal" },
+  copper_ingot: { label: "Copper Ingot", swatch: "#d18852", food: false, energy: 0, frame: "res_copper_ingot" },
+  bronze_ingot: { label: "Bronze Ingot", swatch: "#a47545", food: false, energy: 0, frame: "res_bronze_ingot" },
+  iron_ingot: { label: "Iron Ingot", swatch: "#8a8c92", food: false, energy: 0, frame: "res_iron_ingot" },
+  steel_ingot: { label: "Steel Ingot", swatch: "#9aa3ae", food: false, energy: 0, frame: "res_steel_ingot" },
 };
 
 export type BiomeResourceLists = { food: ResourceKind[]; materials: ResourceKind[] };

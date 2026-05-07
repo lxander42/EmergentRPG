@@ -147,6 +147,8 @@ const PAL = {
   tinTier: hex("#c8c4bc"),
   ironTier: hex("#6e6a64"),
   coalTier: hex("#2a2622"),
+  bronzeTier: hex("#a47545"),
+  steelTier: hex("#9aa3ae"),
 };
 
 // ---- ground tiles ----------------------------------------------------------
@@ -936,6 +938,36 @@ function tinOre(set) { tierNugget(set, "tin"); }
 function ironOre(set) { tierNugget(set, "iron"); }
 function coalOre(set) { tierNugget(set, "coal"); }
 
+// Ingots — squat horizontal bar, distinct from nuggets so the player reads
+// "smelted" at a glance. Bevelled with a top highlight strip and a bottom
+// shadow strip, plus a halo + shadow dot to match the nugget treatment.
+function ingotBar(set, tier) {
+  halo(set, [
+    [2, 7], [3, 7], [4, 7], [5, 7], [6, 7], [7, 7], [8, 7], [9, 7],
+    [10, 7], [11, 7], [12, 7], [13, 7],
+    [2, 8], [13, 8],
+    [2, 9], [13, 9],
+    [2, 10], [13, 10],
+    [3, 11], [4, 11], [5, 11], [6, 11], [7, 11], [8, 11], [9, 11],
+    [10, 11], [11, 11], [12, 11],
+  ]);
+  shadowDot(set, [[5, 12], [6, 12], [7, 12], [8, 12], [9, 12], [10, 12]]);
+  const base = PAL[`${tier}Tier`];
+  if (!base) return;
+  for (let x = 3; x <= 12; x++) {
+    for (let y = 8; y <= 10; y++) set(x, y, base);
+  }
+  for (let x = 3; x <= 12; x++) set(x, 8, shade(base, 0.35));
+  for (let x = 3; x <= 12; x++) set(x, 10, shade(base, -0.3));
+  set(3, 9, shade(base, 0.2));
+  set(12, 9, shade(base, -0.2));
+}
+
+function copperIngot(set) { ingotBar(set, "copper"); }
+function bronzeIngot(set) { ingotBar(set, "bronze"); }
+function ironIngot(set) { ingotBar(set, "iron"); }
+function steelIngot(set) { ingotBar(set, "steel"); }
+
 // ---- atlas layout ----------------------------------------------------------
 //
 // Frame index = row * COLS + col. Keep this in sync with content/tiles.ts.
@@ -1001,6 +1033,10 @@ const FRAMES = [
   ["furnace_n", furnaceN],
   ["furnace_w", furnaceW],
   ["furnace_e", furnaceE],
+  ["res_copper_ingot", copperIngot],
+  ["res_bronze_ingot", bronzeIngot],
+  ["res_iron_ingot", ironIngot],
+  ["res_steel_ingot", steelIngot],
 ];
 
 for (let i = 0; i < FRAMES.length; i++) {

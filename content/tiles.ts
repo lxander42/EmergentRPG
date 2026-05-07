@@ -84,6 +84,10 @@ export const TILE_FRAMES = {
   furnace_n: F(3, 3),
   furnace_w: F(4, 3),
   furnace_e: F(5, 3),
+  res_copper_ingot: F(6, 3),
+  res_bronze_ingot: F(7, 3),
+  res_iron_ingot: F(8, 3),
+  res_steel_ingot: F(9, 3),
 } as const;
 
 export type TileName = keyof typeof TILE_FRAMES;
