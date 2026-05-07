@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bug,
   ClipboardText,
@@ -33,80 +33,107 @@ export default function DebugOverlay() {
     if (typeof window === "undefined") return null;
     return { x: 12, y: window.innerHeight - BUBBLE_SIZE - 12 };
   });
+  const [pointerDown, setPointerDown] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [overTarget, setOverTarget] = useState(false);
   const dragState = useRef<{
+    pointerId: number;
     startPointerX: number;
     startPointerY: number;
     startPosX: number;
     startPosY: number;
     moved: boolean;
   } | null>(null);
+  const overTargetRef = useRef(false);
+  const posRef = useRef(pos);
+  useEffect(() => {
+    posRef.current = pos;
+  }, [pos]);
+
+  // Window-level pointermove/pointerup listeners run while a drag is active.
+  // Using the window (rather than React's setPointerCapture) keeps Phaser's
+  // own canvas pointer state coherent: capturing on the bubble would prevent
+  // the canvas from ever seeing the pointer-up, leaving Phaser's pointer1
+  // stuck "down" — which then makes the next single-finger drag look like
+  // a pinch and zoom the camera.
+  useEffect(() => {
+    if (!pointerDown) return;
+    const onMove = (e: PointerEvent) => {
+      const ds = dragState.current;
+      if (!ds || ds.pointerId !== e.pointerId) return;
+      const dx = e.clientX - ds.startPointerX;
+      const dy = e.clientY - ds.startPointerY;
+      if (!ds.moved && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD_PX) {
+        ds.moved = true;
+        setDragging(true);
+      }
+      if (!ds.moved) return;
+      const nextX = clamp(ds.startPosX + dx, 4, window.innerWidth - BUBBLE_SIZE - 4);
+      const nextY = clamp(ds.startPosY + dy, 4, window.innerHeight - BUBBLE_SIZE - 4);
+      setLocalPos({ x: nextX, y: nextY });
+      const tc = targetCenter();
+      const bubbleCx = nextX + BUBBLE_SIZE / 2;
+      const bubbleCy = nextY + BUBBLE_SIZE / 2;
+      const dist = Math.hypot(bubbleCx - tc.x, bubbleCy - tc.y);
+      const over = dist < TARGET_HIT_RADIUS;
+      overTargetRef.current = over;
+      setOverTarget(over);
+    };
+    const finishDrag = (e: PointerEvent, cancelled: boolean) => {
+      const ds = dragState.current;
+      if (!ds || ds.pointerId !== e.pointerId) return;
+      const wasMoved = ds.moved;
+      const wasOverTarget = overTargetRef.current;
+      const finalPos = posRef.current;
+      dragState.current = null;
+      overTargetRef.current = false;
+      setPointerDown(false);
+      setDragging(false);
+      setOverTarget(false);
+      if (cancelled || !wasMoved) return;
+      if (wasOverTarget) {
+        setDebugMode(false);
+      } else if (finalPos) {
+        setPos(finalPos.x, finalPos.y);
+      }
+    };
+    const onUp = (e: PointerEvent) => finishDrag(e, false);
+    const onCancel = (e: PointerEvent) => finishDrag(e, true);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+    };
+  }, [pointerDown, setDebugMode, setPos]);
 
   if (!debugMode || !pos) return null;
 
-  const targetCenter = () => {
-    if (typeof window === "undefined") return { x: 0, y: 0 };
-    return {
-      x: window.innerWidth / 2,
-      y: window.innerHeight - TARGET_SIZE / 2 - 16,
-    };
-  };
-
   const handlePointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
     if (e.button !== 0 && e.pointerType === "mouse") return;
-    e.currentTarget.setPointerCapture(e.pointerId);
     dragState.current = {
+      pointerId: e.pointerId,
       startPointerX: e.clientX,
       startPointerY: e.clientY,
       startPosX: pos.x,
       startPosY: pos.y,
       moved: false,
     };
+    setPointerDown(true);
   };
 
-  const handlePointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+  const handlePointerUpOnButton = (e: React.PointerEvent<HTMLButtonElement>) => {
     const ds = dragState.current;
-    if (!ds) return;
-    const dx = e.clientX - ds.startPointerX;
-    const dy = e.clientY - ds.startPointerY;
-    if (!ds.moved && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD_PX) {
-      ds.moved = true;
-      setDragging(true);
-    }
-    if (!ds.moved) return;
-    const nextX = clamp(ds.startPosX + dx, 4, window.innerWidth - BUBBLE_SIZE - 4);
-    const nextY = clamp(ds.startPosY + dy, 4, window.innerHeight - BUBBLE_SIZE - 4);
-    setLocalPos({ x: nextX, y: nextY });
-    const tc = targetCenter();
-    const bubbleCx = nextX + BUBBLE_SIZE / 2;
-    const bubbleCy = nextY + BUBBLE_SIZE / 2;
-    const dist = Math.hypot(bubbleCx - tc.x, bubbleCy - tc.y);
-    setOverTarget(dist < TARGET_HIT_RADIUS);
-  };
-
-  const handlePointerUp = (e: React.PointerEvent<HTMLButtonElement>) => {
-    const ds = dragState.current;
-    if (!ds) return;
-    e.currentTarget.releasePointerCapture(e.pointerId);
+    if (!ds || ds.pointerId !== e.pointerId) return;
+    if (ds.moved) return; // window pointerup will handle drag-end commit
     dragState.current = null;
-    if (ds.moved) {
-      if (overTarget) {
-        setDebugMode(false);
-      } else {
-        setPos(pos.x, pos.y);
-      }
-    } else {
-      toggleMinimized();
-    }
+    overTargetRef.current = false;
+    setPointerDown(false);
     setDragging(false);
     setOverTarget(false);
-  };
-
-  const handlePointerCancel = () => {
-    dragState.current = null;
-    setDragging(false);
-    setOverTarget(false);
+    toggleMinimized();
   };
 
   const panelStyle: React.CSSProperties = (() => {
@@ -131,9 +158,7 @@ export default function DebugOverlay() {
         type="button"
         aria-label={minimized ? "Open debug overlay" : "Move debug bubble"}
         onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerCancel}
+        onPointerUp={handlePointerUpOnButton}
         className={`tactile pointer-events-auto fixed z-30 inline-flex items-center justify-center rounded-full border bg-[var(--color-surface)] shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)] ${
           minimized
             ? "border-[var(--color-border)] text-[var(--color-fg)]"
@@ -367,4 +392,12 @@ function formatLog(log: StatusMessage[]): string {
 
 function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
+}
+
+function targetCenter(): { x: number; y: number } {
+  if (typeof window === "undefined") return { x: 0, y: 0 };
+  return {
+    x: window.innerWidth / 2,
+    y: window.innerHeight - TARGET_SIZE / 2 - 16,
+  };
 }

@@ -229,6 +229,7 @@ type GameStore = {
   addMapMarker: (rx: number, ry: number, name: string) => void;
   removeMapMarker: (id: string) => void;
   pushStatus: (text: string) => void;
+  pushToast: (text: string) => void;
   dismissStatus: (id: number) => void;
   clearStatusLog: () => void;
   collectResourceAt: (
@@ -349,6 +350,24 @@ export const useGameStore = create<GameStore>((set, get) => ({
       patch.pastLivesOpen = false;
       patch.npcContextMenu = null;
       patch.obstacleContextMenu = null;
+    }
+    // Append any new world events (kills, encounters, faction topics) to
+    // the persistent debug log. recentEvents is newest-first and capped at
+    // 8; iterate it in reverse so the log stays chronological.
+    const prevIds = new Set(current.recentEvents.map((e) => e.id));
+    const fresh: WorldEvent[] = [];
+    for (const e of world.recentEvents) {
+      if (prevIds.has(e.id)) break;
+      fresh.push(e);
+    }
+    if (fresh.length > 0) {
+      const now = Date.now();
+      const log = [...get().statusLog];
+      for (let i = fresh.length - 1; i >= 0; i--) {
+        const e = fresh[i]!;
+        log.push({ id: now + i, text: e.context, addedAt: now });
+      }
+      patch.statusLog = log.slice(-200);
     }
     set(patch);
     if (world.ticks % AUTOSAVE_EVERY_TICKS === 0) {
@@ -1108,6 +1127,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
       statusMessages: visible.slice(-6),
       statusLog: log.slice(-200),
     });
+  },
+  pushToast: (text) => {
+    const id = Date.now() + Math.floor(Math.random() * 1000);
+    const visible = [...get().statusMessages, { id, text, addedAt: Date.now() }];
+    set({ statusMessages: visible.slice(-6) });
   },
   dismissStatus: (id) => {
     set({ statusMessages: get().statusMessages.filter((m) => m.id !== id) });

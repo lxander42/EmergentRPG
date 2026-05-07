@@ -56,8 +56,9 @@ export default function StatusLog() {
           );
           const here = player ? globalToLocal(player.gx, player.gy) : null;
           if (npc && here && npc.rx === here.rx && npc.ry === here.ry) {
+            // Toast only — the event is already in statusLog via tick().
             const text = latestEvent.context;
-            queueMicrotask(() => useGameStore.getState().pushStatus(text));
+            queueMicrotask(() => useGameStore.getState().pushToast(text));
           }
         }
       }
