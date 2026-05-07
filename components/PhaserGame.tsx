@@ -53,6 +53,14 @@ export default function PhaserGame() {
       });
       gameRef.current = game;
 
+      // Suppress the browser's native context menu on the canvas. Without
+      // this, right-clicking a tile lands on the atlas image and the user
+      // gets Chrome's "Save image as / Copy image / Inspect" menu instead
+      // of the in-world long-press menu. Each scene wires right-click to
+      // the same openContextMenuAt path that long-press uses.
+      const onCanvasContextMenu = (e: MouseEvent) => e.preventDefault();
+      game.canvas.addEventListener("contextmenu", onCanvasContextMenu);
+
       // Phaser scales pointer events using canvas pixel size / CSS pixel size,
       // so pointer.x naturally lands in canvas-pixel coords. We CSS-size the
       // canvas to logical px and scale every scene's camera by DPR so 1
@@ -87,6 +95,7 @@ export default function PhaserGame() {
         window.removeEventListener("resize", onResize);
         window.removeEventListener("orientationchange", onResize);
         document.removeEventListener("visibilitychange", onVisibility);
+        game.canvas.removeEventListener("contextmenu", onCanvasContextMenu);
       };
     })();
 

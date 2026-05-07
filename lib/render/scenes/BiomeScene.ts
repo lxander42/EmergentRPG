@@ -937,6 +937,17 @@ export class BiomeScene extends Phaser.Scene {
       this.dragStart = null;
       return;
     }
+    // Right-click is the desktop equivalent of a touch long-press: open
+    // the in-world context menu immediately at the cursor and short-circuit
+    // the normal "tap = move player" path. The native browser context
+    // menu is suppressed in PhaserGame.tsx via canvas.oncontextmenu.
+    if (pointer.rightButtonDown()) {
+      this.openContextMenuAt(pointer.x, pointer.y);
+      this.longPressFired = true;
+      this.dragStart = null;
+      this.dragMoved = false;
+      return;
+    }
     this.dragStart = { x: pointer.x, y: pointer.y };
     this.dragMoved = false;
     this.pointerDownAt = this.time.now;
