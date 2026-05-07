@@ -21,6 +21,7 @@ import FactionLegend from "@/components/FactionLegend";
 import StatusLog from "@/components/StatusLog";
 import MarkerNameModal from "@/components/MarkerNameModal";
 import DebugOverlay from "@/components/DebugOverlay";
+import TileContextMenu from "@/components/TileContextMenu";
 import { useGameStore } from "@/lib/state/game-store";
 import { useKeybindings } from "@/lib/ui/use-keybindings";
 
@@ -69,6 +70,7 @@ function PlayInner() {
       <NpcContextMenu />
       <ObstacleContextMenu />
       <PlacedStructureContextMenu />
+      <TileContextMenu />
       <BuildModePalette />
       <RegionPanel />
       <InventoryPanel />

@@ -129,6 +129,47 @@ type GameStore = {
     x: number;
     y: number;
   } | null;
+  // In-world right-click menu for tiles that don't have a dedicated entity
+  // menu (loot pile, resource pickup, or empty walkable ground).
+  tileContextMenu:
+    | {
+        kind: "loot";
+        rx: number;
+        ry: number;
+        lx: number;
+        ly: number;
+        gx: number;
+        gy: number;
+        lootId: string;
+        items: Array<[ResourceKind, number]>;
+        x: number;
+        y: number;
+      }
+    | {
+        kind: "resource";
+        rx: number;
+        ry: number;
+        lx: number;
+        ly: number;
+        gx: number;
+        gy: number;
+        resourceId: string;
+        resourceKind: ResourceKind;
+        x: number;
+        y: number;
+      }
+    | {
+        kind: "empty";
+        rx: number;
+        ry: number;
+        lx: number;
+        ly: number;
+        gx: number;
+        gy: number;
+        x: number;
+        y: number;
+      }
+    | null;
   hudMenuOpen: boolean;
   // Distance in px from the bottom of the viewport to the top edge of the
   // currently-open right-side popover (inventory / build / past lives /
@@ -199,6 +240,10 @@ type GameStore = {
     y: number,
   ) => void;
   closeInventoryRowMenu: () => void;
+  openTileContextMenu: (
+    menu: NonNullable<GameStore["tileContextMenu"]>,
+  ) => void;
+  closeTileContextMenu: () => void;
   setSwallowNextWorldTap: (v: boolean) => void;
   setHudMenuOpen: (v: boolean) => void;
   setPopoverBottomPx: (px: number) => void;
@@ -301,6 +346,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   pendingMarker: null,
   pendingDrop: null,
   inventoryRowMenu: null,
+  tileContextMenu: null,
   hudMenuOpen: false,
   popoverBottomPx: 0,
   statusMessages: [],
@@ -810,6 +856,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({ inventoryRowMenu: { kind, count, x, y } });
   },
   closeInventoryRowMenu: () => set({ inventoryRowMenu: null }),
+  openTileContextMenu: (menu) => set({ tileContextMenu: menu }),
+  closeTileContextMenu: () => set({ tileContextMenu: null }),
   setSwallowNextWorldTap: (v) => {
     if (get().swallowNextWorldTap === v) return;
     set({ swallowNextWorldTap: v });

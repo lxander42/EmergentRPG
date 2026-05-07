@@ -1,10 +1,12 @@
 "use client";
 
 import { Eye, Hammer } from "@phosphor-icons/react/dist/ssr";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useGameStore } from "@/lib/state/game-store";
 import type { ObstacleKind } from "@/lib/sim/biome-interior";
 import { hasTool } from "@/lib/sim/tools";
+import { useOutsideClose } from "@/lib/ui/use-outside-close";
+import { mergeRefs } from "@/lib/ui/merge-refs";
 
 const MENU_WIDTH = 220;
 const MENU_HEIGHT_EST = 200;
@@ -48,6 +50,7 @@ export default function ObstacleContextMenu() {
   const player = useGameStore((s) => s.world?.life?.player ?? null);
 
   const ref = useRef<HTMLDivElement | null>(null);
+  const closeRef = useOutsideClose(Boolean(ctx), close);
   const dragOffset = useRef<{ dx: number; dy: number } | null>(null);
   const [drag, setDrag] = useState<{ left: number; top: number } | null>(null);
 
@@ -59,24 +62,6 @@ export default function ObstacleContextMenu() {
       Promise.resolve().then(() => setDrag(null));
     }
   }
-
-  useEffect(() => {
-    if (!ctx) return;
-    const handler = (e: MouseEvent | TouchEvent) => {
-      if (!ref.current) return;
-      if (ref.current.contains(e.target as Node)) return;
-      close();
-    };
-    const t = window.setTimeout(() => {
-      window.addEventListener("mousedown", handler);
-      window.addEventListener("touchstart", handler);
-    }, 0);
-    return () => {
-      window.clearTimeout(t);
-      window.removeEventListener("mousedown", handler);
-      window.removeEventListener("touchstart", handler);
-    };
-  }, [ctx, close]);
 
   const pos = useMemo(() => {
     if (!ctx) return null;
@@ -207,7 +192,7 @@ export default function ObstacleContextMenu() {
 
   return (
     <div
-      ref={ref}
+      ref={mergeRefs(ref, closeRef)}
       role="menu"
       aria-label={`${label} actions`}
       onPointerDown={onPointerDown}

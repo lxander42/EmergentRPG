@@ -1072,27 +1072,63 @@ export class BiomeScene extends Phaser.Scene {
       this.longPressFired = true;
       return;
     }
-    // Right-click on any other game object falls through to the same
-    // action a tap would take so the user always gets feedback. Loot →
-    // walk + pick up; resource → walk + collect; empty visible tile →
-    // walk there. The longPressFired flag suppresses the player-walk that
-    // pointer-up would otherwise also kick off after a right-click.
+    // Right-click on any other game object opens a tile context menu so
+    // the user always gets a list of actions instead of being immediately
+    // walked or pickedup-from. Loot piles list "Pick up" / "Walk here";
+    // resource pickups list "Gather" / "Walk here"; empty tiles list
+    // "Walk here" only.
     const loot = lootAtLocal(interior, lx, ly);
     if (loot) {
       this.flashTapRing(wp.x, wp.y, COLORS.outline);
-      store.pickupLootAt(rx, ry, lx, ly, loot.id);
+      const items = (Object.entries(loot.items) as Array<[ResourceKind, number]>)
+        .filter(([, n]) => (n ?? 0) > 0);
+      store.openTileContextMenu({
+        kind: "loot",
+        rx,
+        ry,
+        lx,
+        ly,
+        gx,
+        gy,
+        lootId: loot.id,
+        items,
+        x: cssX,
+        y: cssY,
+      });
       this.longPressFired = true;
       return;
     }
     const resource = resourceAtLocal(interior, lx, ly);
     if (resource) {
       this.flashTapRing(wp.x, wp.y, COLORS.outline);
-      store.collectResourceAt(rx, ry, lx, ly, resource.id);
+      store.openTileContextMenu({
+        kind: "resource",
+        rx,
+        ry,
+        lx,
+        ly,
+        gx,
+        gy,
+        resourceId: resource.id,
+        resourceKind: resource.kind,
+        x: cssX,
+        y: cssY,
+      });
       this.longPressFired = true;
       return;
     }
     this.flashTapRing(wp.x, wp.y, COLORS.routeDot);
-    store.walkPlayerTo(gx, gy);
+    store.openTileContextMenu({
+      kind: "empty",
+      rx,
+      ry,
+      lx,
+      ly,
+      gx,
+      gy,
+      x: cssX,
+      y: cssY,
+    });
     this.longPressFired = true;
   }
 
