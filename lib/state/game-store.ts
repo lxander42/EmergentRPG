@@ -115,6 +115,7 @@ type GameStore = {
   tutorialOpen: boolean;
   debugMode: boolean;
   debugMinimized: boolean;
+  debugBubblePos: { x: number; y: number } | null;
   mapShowFactions: boolean;
   npcContextMenu: NpcContextMenu | null;
   obstacleContextMenu: ObstacleContextMenuState | null;
@@ -122,6 +123,7 @@ type GameStore = {
   buildMode: BuildModeState;
   pendingMarker: { rx: number; ry: number } | null;
   pendingDrop: { kind: ResourceKind; max: number } | null;
+  hudMenuOpen: boolean;
   statusMessages: StatusMessage[];
   cameraPanned: boolean;
   // One-shot guard: when an overlay is dismissed by tapping outside it, the
@@ -169,11 +171,13 @@ type GameStore = {
   toggleDebug: () => void;
   setDebugMode: (on: boolean) => void;
   toggleDebugMinimized: () => void;
+  setDebugBubblePos: (x: number, y: number) => void;
   requestDropConfirm: (kind: ResourceKind, max: number) => void;
   cancelDrop: () => void;
   confirmDrop: (qty: number) => void;
   dropInventoryItem: (kind: ResourceKind, qty: number) => void;
   setSwallowNextWorldTap: (v: boolean) => void;
+  setHudMenuOpen: (v: boolean) => void;
   debugGrantTool: (kind: ToolKind) => void;
   toggleMapFactions: () => void;
   openNpcContextMenu: (id: string, x: number, y: number) => void;
@@ -261,7 +265,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   pastLivesOpen: false,
   tutorialOpen: false,
   debugMode: false,
-  debugMinimized: false,
+  debugMinimized: true,
+  debugBubblePos: null,
   mapShowFactions: true,
   npcContextMenu: null,
   obstacleContextMenu: null,
@@ -269,6 +274,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   buildMode: { active: false, selectedKind: null, selectedTile: null, rotation: 0 },
   pendingMarker: null,
   pendingDrop: null,
+  hudMenuOpen: false,
   statusMessages: [],
   cameraPanned: false,
   swallowNextWorldTap: false,
@@ -690,6 +696,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({ debugMode: on });
   },
   toggleDebugMinimized: () => set({ debugMinimized: !get().debugMinimized }),
+  setDebugBubblePos: (x, y) => set({ debugBubblePos: { x, y } }),
 
   requestDropConfirm: (kind, max) => {
     if (max <= 0) return;
@@ -754,6 +761,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setSwallowNextWorldTap: (v) => {
     if (get().swallowNextWorldTap === v) return;
     set({ swallowNextWorldTap: v });
+  },
+  setHudMenuOpen: (v) => {
+    if (get().hudMenuOpen === v) return;
+    set({ hudMenuOpen: v });
   },
   debugGrantTool: (kind) => {
     const current = get().world;

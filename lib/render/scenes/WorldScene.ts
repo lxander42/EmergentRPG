@@ -913,7 +913,7 @@ export class WorldScene extends Phaser.Scene {
     const ay = (keys.S.isDown ? 1 : 0) - (keys.W.isDown ? 1 : 0);
     if (ax === 0 && ay === 0) return;
     const cam = this.cameras.main;
-    const screenPxPerSec = 600;
+    const screenPxPerSec = 1500;
     const step = (screenPxPerSec * delta) / 1000 / cam.zoom;
     cam.scrollX += ax * step;
     cam.scrollY += ay * step;

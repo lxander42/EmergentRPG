@@ -1,6 +1,6 @@
 "use client";
 
-import { ForkKnife, Hammer, Knife, Package, X } from "@phosphor-icons/react/dist/ssr";
+import { ForkKnife, Hammer, Knife, Package, Trash, X } from "@phosphor-icons/react/dist/ssr";
 import { useGameStore } from "@/lib/state/game-store";
 import { RESOURCES, type ResourceKind } from "@/content/resources";
 import TileChip from "@/components/panels/TileChip";
@@ -56,7 +56,7 @@ export default function InventoryPanel() {
       ref={ref}
       role="dialog"
       aria-label="Inventory"
-      className="pointer-events-auto absolute inset-x-2 bottom-2 z-20 max-h-[68dvh] overflow-y-auto rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[0_20px_48px_-20px_rgba(44,40,32,0.25)] sm:left-1/2 sm:right-auto sm:bottom-4 sm:w-[520px] sm:-translate-x-1/2 sm:max-h-[80dvh]"
+      className="pointer-events-auto absolute inset-x-2 bottom-2 z-20 max-h-[68dvh] overflow-y-auto rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[0_20px_48px_-20px_rgba(44,40,32,0.25)] sm:inset-x-auto sm:left-auto sm:right-3 sm:bottom-16 sm:w-[420px] sm:max-h-[78dvh]"
     >
       <div className="mx-auto max-w-2xl">
         <header className="mb-4 flex items-start justify-between gap-3">
@@ -95,23 +95,18 @@ export default function InventoryPanel() {
               the biome to collect them.
             </p>
           ) : (
-            <>
-              <p className="mt-2 font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
-                Long-press or right-click a row to drop it.
-              </p>
-              <ul className="mt-2 flex flex-col gap-2">
-                {entries.map(([kind, count]) => (
-                  <MaterialRow
-                    key={kind}
-                    kind={kind}
-                    count={count}
-                    canEat={Boolean(player) && !gameOver}
-                    onEat={() => eatFood(kind)}
-                    onDrop={() => dropOrConfirm(kind, count)}
-                  />
-                ))}
-              </ul>
-            </>
+            <ul className="mt-3 flex flex-col gap-2">
+              {entries.map(([kind, count]) => (
+                <MaterialRow
+                  key={kind}
+                  kind={kind}
+                  count={count}
+                  canEat={Boolean(player) && !gameOver}
+                  onEat={() => eatFood(kind)}
+                  onDrop={() => dropOrConfirm(kind, count)}
+                />
+              ))}
+            </ul>
           )}
         </section>
 
@@ -289,7 +284,11 @@ function MaterialRow({
       </span>
       {meta.food && (
         <button
-          onClick={onEat}
+          onClick={(e) => {
+            e.stopPropagation();
+            onEat();
+          }}
+          onContextMenu={(e) => e.stopPropagation()}
           disabled={!canEat}
           className="tactile inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg)] disabled:opacity-50"
         >
@@ -297,6 +296,18 @@ function MaterialRow({
           Eat
         </button>
       )}
+      <button
+        type="button"
+        aria-label={`Drop ${meta.label}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onDrop();
+        }}
+        onContextMenu={(e) => e.stopPropagation()}
+        className="tactile inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-warm)] hover:text-[var(--color-fg)]"
+      >
+        <Trash size={12} weight="duotone" />
+      </button>
     </li>
   );
 }

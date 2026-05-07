@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
 import {
   Bug,
   House,
@@ -15,7 +14,8 @@ import { useGameStore } from "@/lib/state/game-store";
 import { useOutsideClose } from "@/lib/ui/use-outside-close";
 
 export default function HudMenu() {
-  const [open, setOpen] = useState(false);
+  const open = useGameStore((s) => s.hudMenuOpen);
+  const setOpen = useGameStore((s) => s.setHudMenuOpen);
   const close = () => setOpen(false);
   const ref = useOutsideClose(open, close);
   const paused = useGameStore((s) => s.paused);
@@ -29,7 +29,7 @@ export default function HudMenu() {
       <button
         aria-label={open ? "Close menu" : "Open menu"}
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpen(!open)}
         className="tactile inline-flex h-10 w-10 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-fg)] shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
       >
         {open ? <X size={18} weight="bold" /> : <List size={18} weight="bold" />}

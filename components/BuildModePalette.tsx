@@ -48,7 +48,7 @@ export default function BuildModePalette() {
     <aside
       role="dialog"
       aria-label="Build mode palette"
-      className="pointer-events-auto absolute inset-x-2 bottom-2 z-20 mx-auto flex max-w-[640px] flex-col gap-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-2 shadow-[0_16px_40px_-16px_rgba(44,40,32,0.45)]"
+      className="pointer-events-auto absolute inset-x-2 bottom-2 z-20 mx-auto flex max-w-[640px] flex-col gap-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-2 shadow-[0_16px_40px_-16px_rgba(44,40,32,0.45)] sm:inset-x-auto sm:left-auto sm:right-3 sm:bottom-16 sm:mx-0 sm:w-[480px]"
     >
       <div className="flex items-center justify-between gap-2 px-1.5">
         <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--color-fg)]">

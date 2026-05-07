@@ -14,7 +14,7 @@ export default function Landing() {
 
   return (
     <main className="grid min-h-[100dvh] grid-rows-[1fr_auto] px-6 py-8">
-      <section className="flex flex-col justify-center gap-10 pt-6">
+      <section className="mx-auto flex w-full max-w-md flex-col justify-center gap-10 pt-6 sm:items-center sm:text-center">
         <div className="flex items-center gap-3">
           <Logo />
           <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--color-fg-muted)]">
@@ -26,7 +26,7 @@ export default function Landing() {
           <h1 className="text-[2.75rem] font-medium leading-[1.05] tracking-tight text-[var(--color-fg)]">
             A small world, <br /> running on its own.
           </h1>
-          <p className="mt-5 text-base leading-relaxed text-[var(--color-fg-muted)] max-w-[34ch]">
+          <p className="mt-5 text-base leading-relaxed text-[var(--color-fg-muted)] max-w-[34ch] sm:mx-auto">
             Walk a tile-grid country of stubborn NPCs and three quietly competing factions. They
             keep moving whether you watch or not.
           </p>

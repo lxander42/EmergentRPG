@@ -271,7 +271,7 @@ export class BiomeScene extends Phaser.Scene {
     const ay = (keys.S.isDown ? 1 : 0) - (keys.W.isDown ? 1 : 0);
     if (ax === 0 && ay === 0) return;
     const cam = this.cameras.main;
-    const screenPxPerSec = 600;
+    const screenPxPerSec = 1500;
     const step = (screenPxPerSec * delta) / 1000 / cam.zoom;
     cam.scrollX += ax * step;
     cam.scrollY += ay * step;
@@ -1088,9 +1088,10 @@ export class BiomeScene extends Phaser.Scene {
       const gy = Math.floor(world.y / CELL);
       const { rx, ry, lx, ly } = globalToLocal(gx, gy);
 
-      // Build-mode taps only ever pick a target tile. Player movement,
-      // harvest, pickup, and context menus are all suppressed until the
-      // player exits build mode or confirms placement.
+      // Build-mode taps either pick a target tile (when a recipe is
+      // selected) or back out of build mode (tap-outside to dismiss).
+      // Player movement, harvest, pickup, and context menus are all
+      // suppressed in build mode.
       if (store.buildMode.active) {
         const player = store.world?.life?.player;
         const dxp = player ? gx - player.gx : 0;
@@ -1099,6 +1100,8 @@ export class BiomeScene extends Phaser.Scene {
         const visible = player ? dxp * dxp + dyp * dyp <= perception * perception : false;
         if (visible && store.buildMode.selectedKind) {
           store.selectBuildTile(rx, ry, lx, ly);
+        } else if (!store.buildMode.selectedKind) {
+          store.exitBuildMode();
         }
         this.cancelLongPress();
         this.dragStart = null;

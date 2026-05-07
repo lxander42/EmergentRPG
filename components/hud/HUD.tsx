@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Bug,
   ForkKnife,
   Heart,
   Skull,
@@ -12,7 +11,6 @@ import type { GameOverReason } from "@/lib/sim/world";
 import type { Legacy } from "@/lib/sim/legacy";
 import { FACTIONS } from "@/content/factions";
 import { findFaction } from "@/lib/sim/faction";
-import { TOOL_KINDS, TOOLS, type ToolKind } from "@/lib/sim/tools";
 import ShapeBadge from "@/components/panels/ShapeBadge";
 import HudButtons from "@/components/hud/HudButtons";
 
@@ -45,7 +43,6 @@ export default function HUD() {
   });
   const resetAfterDeath = useGameStore((s) => s.resetAfterDeath);
   const openPastLives = useGameStore((s) => s.openPastLives);
-  const debugMode = useGameStore((s) => s.debugMode);
 
   return (
     <>
@@ -62,8 +59,6 @@ export default function HUD() {
       )}
 
       <HudButtons />
-
-      {debugMode && <DebugStrip />}
 
       {gameOver && (
         <div className="pointer-events-auto absolute inset-0 z-30 flex items-center justify-center bg-[rgba(44,40,32,0.55)] p-6">
@@ -157,100 +152,6 @@ function gameOverBody(
     return `A blade of the ${factionName} ended this run. The world remembers; begin a new life.`;
   }
   return "The world remembers; begin a new life.";
-}
-
-function DebugStrip() {
-  const world = useGameStore((s) => s.world);
-  const minimized = useGameStore((s) => s.debugMinimized);
-  const toggleMinimized = useGameStore((s) => s.toggleDebugMinimized);
-  const grantTool = useGameStore((s) => s.debugGrantTool);
-  if (!world) return null;
-  const player = world.life?.player ?? null;
-  const here = player ? globalToLocal(player.gx, player.gy) : null;
-  const inRegion = here
-    ? world.npcs.filter((n) => n.rx === here.rx && n.ry === here.ry).length
-    : 0;
-  const factionLines = world.factions.map((f) => ({
-    id: f.id,
-    pwr: f.power,
-    rep: world.playerReputation[f.id] ?? 0,
-  }));
-
-  if (minimized) {
-    return (
-      <button
-        onClick={toggleMinimized}
-        aria-label="Expand debug overlay"
-        className="tactile pointer-events-auto absolute bottom-2 left-2 z-10 inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg)] shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
-      >
-        <Bug size={12} weight="fill" className="text-[var(--color-accent)]" />
-        Debug · {world.npcs.length} npcs
-      </button>
-    );
-  }
-
-  return (
-    <aside
-      role="status"
-      aria-label="Debug stats"
-      className="pointer-events-auto absolute bottom-2 left-2 z-10 max-w-[70vw] rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 font-mono text-[10px] leading-tight text-[var(--color-fg)] shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
-    >
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-[var(--color-fg-muted)] uppercase tracking-wider">Debug</span>
-        <button
-          onClick={toggleMinimized}
-          aria-label="Minimize debug overlay"
-          className="tactile -my-0.5 -mr-1 inline-flex h-5 w-5 items-center justify-center rounded-full text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-warm)] hover:text-[var(--color-fg)]"
-        >
-          –
-        </button>
-      </div>
-      <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
-        <span className="text-[var(--color-fg-muted)]">npcs</span>
-        <span className="tabular-nums">{world.npcs.length}</span>
-        <span className="text-[var(--color-fg-muted)]">tick</span>
-        <span className="tabular-nums">{world.ticks}</span>
-        {player && here && (
-          <>
-            <span className="text-[var(--color-fg-muted)]">player</span>
-            <span className="tabular-nums">
-              g({player.gx},{player.gy}) r({here.rx},{here.ry})
-            </span>
-            <span className="text-[var(--color-fg-muted)]">in-region</span>
-            <span className="tabular-nums">{inRegion}</span>
-          </>
-        )}
-      </div>
-      <div className="mt-1 border-t border-[var(--color-border)] pt-1">
-        {factionLines.map((f) => (
-          <div key={f.id} className="flex justify-between gap-4">
-            <span className="text-[var(--color-fg-muted)]">{f.id}</span>
-            <span className="tabular-nums">
-              pwr {f.pwr} · rep {f.rep}
-            </span>
-          </div>
-        ))}
-      </div>
-      {player && (
-        <div className="mt-1 border-t border-[var(--color-border)] pt-1">
-          <div className="text-[var(--color-fg-muted)] uppercase tracking-wider mb-1">
-            grant tool
-          </div>
-          <div className="flex flex-wrap gap-1">
-            {TOOL_KINDS.map((kind: ToolKind) => (
-              <button
-                key={kind}
-                onClick={() => grantTool(kind)}
-                className="tactile rounded-md border border-[var(--color-border)] bg-[var(--color-surface-warm)] px-2 py-0.5 text-[10px] uppercase tracking-wider hover:bg-[var(--color-surface)]"
-              >
-                {TOOLS[kind].label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </aside>
-  );
 }
 
 function IdentityBadge({
