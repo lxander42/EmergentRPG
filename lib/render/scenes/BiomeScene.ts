@@ -1026,10 +1026,17 @@ export class BiomeScene extends Phaser.Scene {
     if (store.buildMode.active) return;
     const player = world.life.player;
     const wp = this.cameras.main.getWorldPoint(screenX, screenY);
+    // Phaser pointer coords are in canvas-internal pixels (DPR-scaled),
+    // but the React context-menu components position with window.innerWidth
+    // (CSS pixels). Convert before handing the coords off to the store so
+    // the menu lands at the cursor on retina displays instead of clamping
+    // to the bottom-right corner.
+    const cssX = screenX / this.dpr;
+    const cssY = screenY / this.dpr;
     const tappedVisitor = this.hitVisitorAt(wp.x, wp.y);
     if (tappedVisitor) {
       this.flashTapRing(wp.x, wp.y, COLORS.outline);
-      store.openNpcContextMenu(tappedVisitor, screenX, screenY);
+      store.openNpcContextMenu(tappedVisitor, cssX, cssY);
       this.longPressFired = true;
       return;
     }
@@ -1045,7 +1052,7 @@ export class BiomeScene extends Phaser.Scene {
     const kind = obstacleKindAt(interior, lx, ly);
     if (kind) {
       this.flashTapRing(wp.x, wp.y, COLORS.outline);
-      store.openObstacleContextMenu(rx, ry, lx, ly, kind, screenX, screenY, false);
+      store.openObstacleContextMenu(rx, ry, lx, ly, kind, cssX, cssY, false);
       this.longPressFired = true;
       return;
     }
@@ -1059,11 +1066,34 @@ export class BiomeScene extends Phaser.Scene {
         ly,
         placed.id,
         placed.kind,
-        screenX,
-        screenY,
+        cssX,
+        cssY,
       );
       this.longPressFired = true;
+      return;
     }
+    // Right-click on any other game object falls through to the same
+    // action a tap would take so the user always gets feedback. Loot →
+    // walk + pick up; resource → walk + collect; empty visible tile →
+    // walk there. The longPressFired flag suppresses the player-walk that
+    // pointer-up would otherwise also kick off after a right-click.
+    const loot = lootAtLocal(interior, lx, ly);
+    if (loot) {
+      this.flashTapRing(wp.x, wp.y, COLORS.outline);
+      store.pickupLootAt(rx, ry, lx, ly, loot.id);
+      this.longPressFired = true;
+      return;
+    }
+    const resource = resourceAtLocal(interior, lx, ly);
+    if (resource) {
+      this.flashTapRing(wp.x, wp.y, COLORS.outline);
+      store.collectResourceAt(rx, ry, lx, ly, resource.id);
+      this.longPressFired = true;
+      return;
+    }
+    this.flashTapRing(wp.x, wp.y, COLORS.routeDot);
+    store.walkPlayerTo(gx, gy);
+    this.longPressFired = true;
   }
 
   private onPointerUp(pointer: Phaser.Input.Pointer) {
@@ -1146,7 +1176,7 @@ export class BiomeScene extends Phaser.Scene {
           // Player-built structures (workbench today) open the top-right
           // context menu on tap so Craft and Deconstruct are both visible.
           if (kind === "workbench") {
-            store.openObstacleContextMenu(rx, ry, lx, ly, kind, pointer.x, pointer.y, false);
+            store.openObstacleContextMenu(rx, ry, lx, ly, kind, pointer.x / this.dpr, pointer.y / this.dpr, false);
           } else {
             const action = defaultObstacleAction(kind);
             if (action === "harvest" && player) {
@@ -1172,8 +1202,8 @@ export class BiomeScene extends Phaser.Scene {
             ly,
             placed.id,
             placed.kind,
-            pointer.x,
-            pointer.y,
+            pointer.x / this.dpr,
+            pointer.y / this.dpr,
           );
         } else if (loot) {
           store.pickupLootAt(rx, ry, lx, ly, loot.id);
