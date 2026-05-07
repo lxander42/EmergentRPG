@@ -11,6 +11,7 @@ import PlacedStructureContextMenu from "@/components/PlacedStructureContextMenu"
 import BuildModePalette from "@/components/BuildModePalette";
 import RegionPanel from "@/components/panels/RegionPanel";
 import InventoryPanel from "@/components/panels/InventoryPanel";
+import InventoryRowContextMenu from "@/components/panels/InventoryRowContextMenu";
 import DropConfirmModal from "@/components/panels/DropConfirmModal";
 import WorkbenchPanel from "@/components/panels/WorkbenchPanel";
 import PastLivesPanel from "@/components/PastLivesPanel";
@@ -71,6 +72,7 @@ function PlayInner() {
       <BuildModePalette />
       <RegionPanel />
       <InventoryPanel />
+      <InventoryRowContextMenu />
       <DropConfirmModal />
       <WorkbenchPanel />
       <PastLivesPanel />

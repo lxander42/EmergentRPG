@@ -33,6 +33,7 @@ export default function StatusLog() {
       s.workbenchOpen ||
       s.buildMode.active,
   );
+  const popoverBottom = useGameStore((s) => s.popoverBottomPx);
   const scheduledIds = useRef(new Set<number>());
 
   useEffect(() => {
@@ -87,11 +88,15 @@ export default function StatusLog() {
 
   if (messages.length === 0) return null;
 
+  // popoverBottom is the px distance from viewport bottom to the open
+  // panel's top edge; sit a 16px gap above it. While a popover is open but
+  // bounds haven't been measured yet (mount frame), keep the static
+  // bottom-20 fallback so we never flash low.
+  const bottomPx = popoverOpen ? Math.max(80, popoverBottom + 16) : 80;
   return (
     <div
-      className={`pointer-events-none absolute right-2 z-10 flex max-w-[80vw] flex-col items-end gap-1 transition-[bottom] duration-200 ${
-        popoverOpen ? "bottom-[22rem]" : "bottom-20"
-      }`}
+      className="pointer-events-none absolute right-2 z-10 flex max-w-[80vw] flex-col items-end gap-1 transition-[bottom] duration-200"
+      style={{ bottom: bottomPx }}
     >
       {messages.slice(-4).map((m) => (
         <div

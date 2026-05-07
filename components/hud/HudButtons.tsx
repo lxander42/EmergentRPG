@@ -22,6 +22,19 @@ import HudMenu from "@/components/hud/HudMenu";
 // live inside HudMenu now to keep this row to the essentials. Everything
 // here is small enough to fit on a 360px-wide phone.
 
+// When a panel is currently open, the panel uses useOutsideClose with a
+// window-level mousedown listener. Without this, tapping the panel's own
+// toggle button would (1) bubble to window, (2) fire useOutsideClose →
+// close the panel, (3) React re-renders the button, and (4) the synthetic
+// click handler now sees `open === false` and re-opens the panel. Stopping
+// propagation here keeps the close from running so the click handler's
+// "open ? close : open" branch routes correctly.
+function stopIfTogglingOpen(isOpen: boolean) {
+  return (e: React.MouseEvent | React.TouchEvent) => {
+    if (isOpen) e.stopPropagation();
+  };
+}
+
 // Tiny letter badge anchored to the bottom-right of a ribbon button. Hidden
 // on mobile because the keybindings are desktop-only (touch users have no
 // way to type the letter).
@@ -88,6 +101,8 @@ export default function HudButtons() {
             aria-label={buildModeActive ? "Exit build mode" : "Enter build mode"}
             aria-keyshortcuts="b"
             aria-pressed={buildModeActive}
+            onMouseDown={stopIfTogglingOpen(buildModeActive)}
+            onTouchStart={stopIfTogglingOpen(buildModeActive)}
             onClick={buildModeActive ? exitBuildMode : enterBuildMode}
             className={`tactile relative inline-flex h-10 w-10 items-center justify-center rounded-full hover:bg-[var(--color-surface-warm)] ${
               buildModeActive ? "text-[var(--color-accent)]" : "text-[var(--color-fg)]"
@@ -119,6 +134,8 @@ export default function HudButtons() {
           aria-label={inventoryOpen ? "Close inventory" : "Open inventory"}
           aria-keyshortcuts="i"
           aria-pressed={inventoryOpen}
+          onMouseDown={stopIfTogglingOpen(inventoryOpen)}
+          onTouchStart={stopIfTogglingOpen(inventoryOpen)}
           onClick={inventoryOpen ? closeInventory : openInventory}
           className={`tactile relative inline-flex h-10 w-10 items-center justify-center rounded-full hover:bg-[var(--color-surface-warm)] ${
             inventoryOpen
@@ -143,6 +160,8 @@ export default function HudButtons() {
           <button
             aria-label={pastLivesOpen ? "Close past lives" : "Past lives"}
             aria-pressed={pastLivesOpen}
+            onMouseDown={stopIfTogglingOpen(pastLivesOpen)}
+            onTouchStart={stopIfTogglingOpen(pastLivesOpen)}
             onClick={pastLivesOpen ? closePastLives : openPastLives}
             className={`tactile inline-flex h-10 w-10 items-center justify-center rounded-full hover:bg-[var(--color-surface-warm)] ${
               pastLivesOpen

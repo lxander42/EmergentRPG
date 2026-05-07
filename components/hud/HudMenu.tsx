@@ -12,12 +12,14 @@ import {
 } from "@phosphor-icons/react/dist/ssr";
 import { useGameStore } from "@/lib/state/game-store";
 import { useOutsideClose } from "@/lib/ui/use-outside-close";
+import { useReportPopoverBounds } from "@/lib/ui/use-report-popover-bounds";
 
 export default function HudMenu() {
   const open = useGameStore((s) => s.hudMenuOpen);
   const setOpen = useGameStore((s) => s.setHudMenuOpen);
   const close = () => setOpen(false);
   const ref = useOutsideClose(open, close);
+  const popoverBoundsRef = useReportPopoverBounds(open);
   const paused = useGameStore((s) => s.paused);
   const togglePause = useGameStore((s) => s.togglePause);
   const debugMode = useGameStore((s) => s.debugMode);
@@ -41,6 +43,7 @@ export default function HudMenu() {
 
       {open && (
         <div
+          ref={popoverBoundsRef}
           role="menu"
           aria-label="Game menu"
           className="absolute bottom-12 right-0 z-30 w-56 overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-[0_20px_48px_-20px_rgba(44,40,32,0.35)]"

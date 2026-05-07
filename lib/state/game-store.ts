@@ -123,7 +123,19 @@ type GameStore = {
   buildMode: BuildModeState;
   pendingMarker: { rx: number; ry: number } | null;
   pendingDrop: { kind: ResourceKind; max: number } | null;
+  inventoryRowMenu: {
+    kind: ResourceKind;
+    count: number;
+    x: number;
+    y: number;
+  } | null;
   hudMenuOpen: boolean;
+  // Distance in px from the bottom of the viewport to the top edge of the
+  // currently-open right-side popover (inventory / build / past lives /
+  // hud menu / workbench). 0 when nothing is open. StatusLog and other
+  // bottom-anchored UI read this so they can sit just above whatever
+  // panel is showing rather than guessing at a static height.
+  popoverBottomPx: number;
   statusMessages: StatusMessage[];
   // Persistent (capped) ring of every status message ever emitted.
   // statusMessages above is the *visible* toast queue and gets evicted on
@@ -180,8 +192,16 @@ type GameStore = {
   cancelDrop: () => void;
   confirmDrop: (qty: number) => void;
   dropInventoryItem: (kind: ResourceKind, qty: number) => void;
+  openInventoryRowMenu: (
+    kind: ResourceKind,
+    count: number,
+    x: number,
+    y: number,
+  ) => void;
+  closeInventoryRowMenu: () => void;
   setSwallowNextWorldTap: (v: boolean) => void;
   setHudMenuOpen: (v: boolean) => void;
+  setPopoverBottomPx: (px: number) => void;
   debugGrantTool: (kind: ToolKind) => void;
   toggleMapFactions: () => void;
   openNpcContextMenu: (id: string, x: number, y: number) => void;
@@ -280,7 +300,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
   buildMode: { active: false, selectedKind: null, selectedTile: null, rotation: 0 },
   pendingMarker: null,
   pendingDrop: null,
+  inventoryRowMenu: null,
   hudMenuOpen: false,
+  popoverBottomPx: 0,
   statusMessages: [],
   statusLog: [],
   cameraPanned: false,
@@ -783,6 +805,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const label = RESOURCES[kind].label;
     get().pushStatus(`Dropped ${drop} ${label}.`);
   },
+  openInventoryRowMenu: (kind, count, x, y) => {
+    if (count <= 0) return;
+    set({ inventoryRowMenu: { kind, count, x, y } });
+  },
+  closeInventoryRowMenu: () => set({ inventoryRowMenu: null }),
   setSwallowNextWorldTap: (v) => {
     if (get().swallowNextWorldTap === v) return;
     set({ swallowNextWorldTap: v });
@@ -790,6 +817,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setHudMenuOpen: (v) => {
     if (get().hudMenuOpen === v) return;
     set({ hudMenuOpen: v });
+  },
+  setPopoverBottomPx: (px) => {
+    if (get().popoverBottomPx === px) return;
+    set({ popoverBottomPx: px });
   },
   debugGrantTool: (kind) => {
     const current = get().world;

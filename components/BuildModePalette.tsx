@@ -10,6 +10,7 @@ import {
 } from "@/content/recipes";
 import { RESOURCES, type ResourceKind } from "@/content/resources";
 import { affordable } from "@/lib/sim/weapons";
+import { useReportPopoverBounds } from "@/lib/ui/use-report-popover-bounds";
 
 const STRUCTURE_LABEL: Record<StructureKind, string> = {
   workbench: "Workbench",
@@ -34,6 +35,7 @@ export default function BuildModePalette() {
   const exitBuildMode = useGameStore((s) => s.exitBuildMode);
   const confirmPlace = useGameStore((s) => s.confirmPlaceStructure);
   const cycleRotation = useGameStore((s) => s.cycleBuildRotation);
+  const boundsRef = useReportPopoverBounds(buildMode.active);
 
   const structureRecipes = useMemo<Recipe[]>(
     () => RECIPES.filter((r) => r.result.kind === "structure"),
@@ -46,6 +48,7 @@ export default function BuildModePalette() {
 
   return (
     <aside
+      ref={boundsRef}
       role="dialog"
       aria-label="Build mode palette"
       className="pointer-events-auto absolute inset-x-2 bottom-2 z-20 mx-auto flex max-w-[640px] flex-col gap-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-2 shadow-[0_16px_40px_-16px_rgba(44,40,32,0.45)] sm:inset-x-auto sm:left-auto sm:right-3 sm:bottom-16 sm:mx-0 sm:w-[480px]"

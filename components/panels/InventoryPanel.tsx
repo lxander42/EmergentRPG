@@ -1,6 +1,6 @@
 "use client";
 
-import { ForkKnife, Hammer, Knife, Package, Trash, X } from "@phosphor-icons/react/dist/ssr";
+import { DotsThreeVertical, ForkKnife, Hammer, Knife, Package, X } from "@phosphor-icons/react/dist/ssr";
 import { useGameStore } from "@/lib/state/game-store";
 import { RESOURCES, type ResourceKind } from "@/content/resources";
 import TileChip from "@/components/panels/TileChip";
@@ -12,12 +12,9 @@ import { inventoryCapFromBaskets, inventoryTotal } from "@/lib/sim/inventory";
 import { basketCount } from "@/lib/sim/tools";
 import { useEffect, useRef } from "react";
 import { useOutsideClose } from "@/lib/ui/use-outside-close";
+import { useReportPopoverBounds } from "@/lib/ui/use-report-popover-bounds";
 import { useLongPress } from "@/lib/ui/use-long-press";
-
-// Stacks at or above this size open a confirmation modal before dropping.
-// Smaller stacks drop immediately so the typical "drop one stick" path
-// stays one tap.
-const DROP_CONFIRM_THRESHOLD = 5;
+import { mergeRefs } from "@/lib/ui/merge-refs";
 
 export default function InventoryPanel() {
   const open = useGameStore((s) => s.inventoryOpen);
@@ -25,9 +22,25 @@ export default function InventoryPanel() {
   const world = useGameStore((s) => s.world);
   const craftRecipe = useGameStore((s) => s.craftRecipe);
   const eatFood = useGameStore((s) => s.eatFood);
-  const dropInventoryItem = useGameStore((s) => s.dropInventoryItem);
-  const requestDropConfirm = useGameStore((s) => s.requestDropConfirm);
+  const openInventoryRowMenu = useGameStore((s) => s.openInventoryRowMenu);
   const ref = useOutsideClose(open, close);
+  const boundsRef = useReportPopoverBounds(open);
+
+  // Document-level capture-phase listener that backs up the per-row
+  // listener: even if a particular browser dispatches contextmenu in a way
+  // that our row-level handler doesn't see in time, this one catches every
+  // right-click inside the panel before the browser commits to its menu.
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      const root = ref.current;
+      if (!root || !root.contains(e.target as Node)) return;
+      if ((e.target as HTMLElement | null)?.closest("[data-no-drop]")) return;
+      e.preventDefault();
+    };
+    document.addEventListener("contextmenu", handler, { capture: true });
+    return () => document.removeEventListener("contextmenu", handler, { capture: true });
+  }, [open, ref]);
 
   if (!open || !world) return null;
 
@@ -43,18 +56,14 @@ export default function InventoryPanel() {
     (r) => r.station === "hand" && r.result.kind !== "structure",
   );
 
-  const dropOrConfirm = (kind: ResourceKind, count: number) => {
+  const showRowMenu = (kind: ResourceKind, count: number, x: number, y: number) => {
     if (gameOver || !player || count <= 0) return;
-    if (count >= DROP_CONFIRM_THRESHOLD) {
-      requestDropConfirm(kind, count);
-    } else {
-      dropInventoryItem(kind, count);
-    }
+    openInventoryRowMenu(kind, count, x, y);
   };
 
   return (
     <aside
-      ref={ref}
+      ref={mergeRefs(ref, boundsRef)}
       role="dialog"
       aria-label="Inventory"
       className="pointer-events-auto absolute inset-x-2 bottom-2 z-20 max-h-[68dvh] overflow-y-auto rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[0_20px_48px_-20px_rgba(44,40,32,0.25)] sm:inset-x-auto sm:left-auto sm:right-3 sm:bottom-16 sm:w-[420px] sm:max-h-[78dvh]"
@@ -104,7 +113,7 @@ export default function InventoryPanel() {
                   count={count}
                   canEat={Boolean(player) && !gameOver}
                   onEat={() => eatFood(kind)}
-                  onDrop={() => dropOrConfirm(kind, count)}
+                  onContextMenuAt={(x, y) => showRowMenu(kind, count, x, y)}
                 />
               ))}
             </ul>
@@ -246,22 +255,24 @@ function MaterialRow({
   count,
   canEat,
   onEat,
-  onDrop,
+  onContextMenuAt,
 }: {
   kind: ResourceKind;
   count: number;
   canEat: boolean;
   onEat: () => void;
-  onDrop: () => void;
+  onContextMenuAt: (x: number, y: number) => void;
 }) {
   const meta = RESOURCES[kind];
-  const longPress = useLongPress(onDrop);
+  const longPress = useLongPress((x, y) => onContextMenuAt(x, y));
   const liRef = useRef<HTMLLIElement>(null);
-  // Native (non-React-synthetic) contextmenu listener so right-click drop
-  // works in browsers that show the native menu before React's delegated
-  // handler can preventDefault. Skip if a long-press just fired so we
-  // don't double-drop on touch devices that synthesise contextmenu after
-  // a long press.
+  // Native (non-React-synthetic) contextmenu listener — Safari and a few
+  // Chromium configs commit to showing the browser's native menu before
+  // React's delegated synthetic handler runs. Direct DOM listeners catch
+  // the event in the dispatch's normal phase, where preventDefault still
+  // suppresses the browser menu. Skip if a long-press just fired so we
+  // don't double-open on touch devices that synthesise contextmenu after
+  // a successful long press.
   useEffect(() => {
     const el = liRef.current;
     if (!el) return;
@@ -269,14 +280,13 @@ function MaterialRow({
       e.preventDefault();
       e.stopPropagation();
       const target = e.target as HTMLElement | null;
-      // Right-clicking the Eat button shouldn't drop the stack.
       if (target?.closest("[data-no-drop]")) return;
       if (Date.now() - longPress.firedAt.current < 800) return;
-      onDrop();
+      onContextMenuAt(e.clientX, e.clientY);
     };
     el.addEventListener("contextmenu", handler);
     return () => el.removeEventListener("contextmenu", handler);
-  }, [onDrop, longPress.firedAt]);
+  }, [onContextMenuAt, longPress.firedAt]);
   return (
     <li
       ref={liRef}
@@ -314,16 +324,18 @@ function MaterialRow({
         </button>
       )}
       <button
+        data-no-drop
         type="button"
-        aria-label={`Drop ${meta.label}`}
+        aria-label={`${meta.label} options`}
+        title="More options (right-click or long-press also works)"
         onClick={(e) => {
           e.stopPropagation();
-          onDrop();
+          const r = e.currentTarget.getBoundingClientRect();
+          onContextMenuAt(r.left, r.bottom);
         }}
-        onContextMenu={(e) => e.stopPropagation()}
         className="tactile inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-warm)] hover:text-[var(--color-fg)]"
       >
-        <Trash size={12} weight="duotone" />
+        <DotsThreeVertical size={14} weight="bold" />
       </button>
     </li>
   );

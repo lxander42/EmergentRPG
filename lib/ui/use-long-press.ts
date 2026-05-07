@@ -17,14 +17,16 @@ export type LongPress = Handlers & {
   firedAt: React.MutableRefObject<number>;
 };
 
-// Long-press detector for inventory rows. Fires `onLongPress()` after `ms`
-// without moving more than `thresholdPx`. Mouse pointers are ignored — the
-// caller wires a native `contextmenu` listener for desktop right-click
-// instead, since React's onContextMenu prop is unreliable across browsers
-// (Safari + some Chromium configs let the native menu open before React
-// dispatches its synthetic event).
+// Long-press detector for inventory rows. Fires `onLongPress(x, y)` after
+// `ms` without moving more than `thresholdPx`, passing the press's screen
+// coordinates so the caller can open a context menu where the user
+// pressed. Mouse pointers are ignored — the caller wires a native
+// `contextmenu` listener for desktop right-click instead, since React's
+// onContextMenu prop is unreliable across browsers (Safari + some
+// Chromium configs let the native menu open before React dispatches its
+// synthetic event).
 export function useLongPress(
-  onLongPress: () => void,
+  onLongPress: (x: number, y: number) => void,
   opts: { ms?: number; thresholdPx?: number } = {},
 ): LongPress {
   const ms = opts.ms ?? 500;
@@ -48,12 +50,14 @@ export function useLongPress(
     onPointerDown: (e) => {
       if (e.pointerType === "mouse") return;
       cancel();
-      startPos.current = { x: e.clientX, y: e.clientY };
+      const px = e.clientX;
+      const py = e.clientY;
+      startPos.current = { x: px, y: py };
       timer.current = window.setTimeout(() => {
         timer.current = null;
         if (!startPos.current) return;
         firedAt.current = Date.now();
-        onLongPress();
+        onLongPress(px, py);
       }, ms);
     },
     onPointerMove: (e) => {
