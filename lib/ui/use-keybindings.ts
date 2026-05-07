@@ -47,6 +47,13 @@ export function useKeybindings() {
         else store.openInventory();
         return;
       }
+      if (k === "b") {
+        if (store.view !== "biome") return;
+        e.preventDefault();
+        if (store.buildMode.active) store.exitBuildMode();
+        else store.enterBuildMode();
+        return;
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown);

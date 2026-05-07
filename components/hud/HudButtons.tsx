@@ -21,6 +21,21 @@ import HudMenu from "@/components/hud/HudMenu";
 // map-factions (world only), inventory, past-lives, menu. Pause and home
 // live inside HudMenu now to keep this row to the essentials. Everything
 // here is small enough to fit on a 360px-wide phone.
+
+// Tiny letter badge anchored to the bottom-right of a ribbon button. Hidden
+// on mobile because the keybindings are desktop-only (touch users have no
+// way to type the letter).
+function KeyHint({ letter }: { letter: string }) {
+  return (
+    <kbd
+      aria-hidden
+      className="pointer-events-none absolute -bottom-0.5 -right-0.5 hidden h-3.5 w-3.5 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] font-mono text-[8px] font-medium leading-none text-[var(--color-fg-muted)] sm:inline-flex"
+    >
+      {letter}
+    </kbd>
+  );
+}
+
 export default function HudButtons() {
   const view = useGameStore((s) => s.view);
   const setView = useGameStore((s) => s.setView);
@@ -34,6 +49,8 @@ export default function HudButtons() {
   const inventoryOpen = useGameStore((s) => s.inventoryOpen);
   const closeInventory = useGameStore((s) => s.closeInventory);
   const openPastLives = useGameStore((s) => s.openPastLives);
+  const closePastLives = useGameStore((s) => s.closePastLives);
+  const pastLivesOpen = useGameStore((s) => s.pastLivesOpen);
   const legacyCount = useGameStore((s) => s.world?.legacies.length ?? 0);
   const inventory = useGameStore((s) => s.world?.life?.inventory ?? null);
   const tools = useGameStore((s) => s.world?.life?.player.tools ?? null);
@@ -50,9 +67,10 @@ export default function HudButtons() {
         {hasHome && (
           <button
             aria-label={view === "biome" ? "Show world map" : "Return to biome"}
+            aria-keyshortcuts="m"
             aria-pressed={view === "world"}
             onClick={() => setView(view === "biome" ? "world" : "biome")}
-            className={`tactile inline-flex h-10 w-10 items-center justify-center rounded-full hover:bg-[var(--color-surface-warm)] ${
+            className={`tactile relative inline-flex h-10 w-10 items-center justify-center rounded-full hover:bg-[var(--color-surface-warm)] ${
               view === "world" ? "text-[var(--color-accent)]" : "text-[var(--color-fg)]"
             }`}
           >
@@ -61,19 +79,22 @@ export default function HudButtons() {
             ) : (
               <House size={18} weight="duotone" />
             )}
+            <KeyHint letter="M" />
           </button>
         )}
 
         {hasHome && view === "biome" && (
           <button
             aria-label={buildModeActive ? "Exit build mode" : "Enter build mode"}
+            aria-keyshortcuts="b"
             aria-pressed={buildModeActive}
             onClick={buildModeActive ? exitBuildMode : enterBuildMode}
-            className={`tactile inline-flex h-10 w-10 items-center justify-center rounded-full hover:bg-[var(--color-surface-warm)] ${
+            className={`tactile relative inline-flex h-10 w-10 items-center justify-center rounded-full hover:bg-[var(--color-surface-warm)] ${
               buildModeActive ? "text-[var(--color-accent)]" : "text-[var(--color-fg)]"
             }`}
           >
             <Hammer size={18} weight={buildModeActive ? "fill" : "duotone"} />
+            <KeyHint letter="B" />
           </button>
         )}
 
@@ -95,27 +116,41 @@ export default function HudButtons() {
         )}
 
         <button
-          aria-label="Open inventory"
+          aria-label={inventoryOpen ? "Close inventory" : "Open inventory"}
+          aria-keyshortcuts="i"
           aria-pressed={inventoryOpen}
           onClick={inventoryOpen ? closeInventory : openInventory}
-          className="tactile relative inline-flex h-10 w-10 items-center justify-center rounded-full text-[var(--color-fg)] hover:bg-[var(--color-surface-warm)]"
+          className={`tactile relative inline-flex h-10 w-10 items-center justify-center rounded-full hover:bg-[var(--color-surface-warm)] ${
+            inventoryOpen
+              ? "bg-[var(--color-surface-warm)] text-[var(--color-accent)]"
+              : "text-[var(--color-fg)]"
+          }`}
         >
-          <TreasureChest size={20} weight="duotone" />
+          <TreasureChest
+            size={20}
+            weight={inventoryOpen ? "fill" : "duotone"}
+          />
+          <KeyHint letter="I" />
           {inventoryFull && (
             <span
               aria-hidden
-              className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-[var(--color-accent)]"
+              className="absolute -left-0.5 -top-0.5 h-2 w-2 rounded-full bg-[var(--color-accent)]"
             />
           )}
         </button>
 
         {legacyCount > 0 && (
           <button
-            aria-label="Past lives"
-            onClick={openPastLives}
-            className="tactile inline-flex h-10 w-10 items-center justify-center rounded-full text-[var(--color-fg)] hover:bg-[var(--color-surface-warm)]"
+            aria-label={pastLivesOpen ? "Close past lives" : "Past lives"}
+            aria-pressed={pastLivesOpen}
+            onClick={pastLivesOpen ? closePastLives : openPastLives}
+            className={`tactile inline-flex h-10 w-10 items-center justify-center rounded-full hover:bg-[var(--color-surface-warm)] ${
+              pastLivesOpen
+                ? "bg-[var(--color-surface-warm)] text-[var(--color-accent)]"
+                : "text-[var(--color-fg)]"
+            }`}
           >
-            <Skull size={18} weight="duotone" />
+            <Skull size={18} weight={pastLivesOpen ? "fill" : "duotone"} />
           </button>
         )}
 

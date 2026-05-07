@@ -10,6 +10,7 @@ import { RECIPES, type Recipe } from "@/content/recipes";
 import { affordable } from "@/lib/sim/weapons";
 import { inventoryCapFromBaskets, inventoryTotal } from "@/lib/sim/inventory";
 import { basketCount } from "@/lib/sim/tools";
+import { useEffect, useRef } from "react";
 import { useOutsideClose } from "@/lib/ui/use-outside-close";
 import { useLongPress } from "@/lib/ui/use-long-press";
 
@@ -255,15 +256,31 @@ function MaterialRow({
 }) {
   const meta = RESOURCES[kind];
   const longPress = useLongPress(onDrop);
+  const liRef = useRef<HTMLLIElement>(null);
+  // Native (non-React-synthetic) contextmenu listener so right-click drop
+  // works in browsers that show the native menu before React's delegated
+  // handler can preventDefault. Skip if a long-press just fired so we
+  // don't double-drop on touch devices that synthesise contextmenu after
+  // a long press.
+  useEffect(() => {
+    const el = liRef.current;
+    if (!el) return;
+    const handler = (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const target = e.target as HTMLElement | null;
+      // Right-clicking the Eat button shouldn't drop the stack.
+      if (target?.closest("[data-no-drop]")) return;
+      if (Date.now() - longPress.firedAt.current < 800) return;
+      onDrop();
+    };
+    el.addEventListener("contextmenu", handler);
+    return () => el.removeEventListener("contextmenu", handler);
+  }, [onDrop, longPress.firedAt]);
   return (
     <li
+      ref={liRef}
       className="flex items-center gap-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-warm)] px-3 py-2 select-none"
-      onContextMenu={(e) => {
-        longPress.onContextMenu(e);
-        if (e.defaultPrevented) return;
-        e.preventDefault();
-        onDrop();
-      }}
       onPointerDown={longPress.onPointerDown}
       onPointerMove={longPress.onPointerMove}
       onPointerUp={longPress.onPointerUp}
@@ -284,11 +301,11 @@ function MaterialRow({
       </span>
       {meta.food && (
         <button
+          data-no-drop
           onClick={(e) => {
             e.stopPropagation();
             onEat();
           }}
-          onContextMenu={(e) => e.stopPropagation()}
           disabled={!canEat}
           className="tactile inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg)] disabled:opacity-50"
         >

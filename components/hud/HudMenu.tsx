@@ -30,7 +30,11 @@ export default function HudMenu() {
         aria-label={open ? "Close menu" : "Open menu"}
         aria-expanded={open}
         onClick={() => setOpen(!open)}
-        className="tactile inline-flex h-10 w-10 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-fg)] shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
+        className={`tactile inline-flex h-10 w-10 items-center justify-center rounded-full border bg-[var(--color-surface)] shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)] ${
+          open
+            ? "border-[var(--color-accent)] text-[var(--color-accent)]"
+            : "border-[var(--color-border)] text-[var(--color-fg)]"
+        }`}
       >
         {open ? <X size={18} weight="bold" /> : <List size={18} weight="bold" />}
       </button>

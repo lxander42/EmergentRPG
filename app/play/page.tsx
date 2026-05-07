@@ -16,7 +16,6 @@ import WorkbenchPanel from "@/components/panels/WorkbenchPanel";
 import PastLivesPanel from "@/components/PastLivesPanel";
 import TutorialModal from "@/components/TutorialModal";
 import RecenterButton from "@/components/RecenterButton";
-import EncounterFeed from "@/components/EncounterFeed";
 import FactionLegend from "@/components/FactionLegend";
 import StatusLog from "@/components/StatusLog";
 import MarkerNameModal from "@/components/MarkerNameModal";
@@ -75,7 +74,6 @@ function PlayInner() {
       <DropConfirmModal />
       <WorkbenchPanel />
       <PastLivesPanel />
-      <EncounterFeed />
       <StatusLog />
       <MarkerNameModal />
       <TutorialModal />

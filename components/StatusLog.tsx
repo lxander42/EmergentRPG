@@ -25,7 +25,14 @@ const ENTRY_TTL_MS = 5000;
 export default function StatusLog() {
   const messages = useGameStore((s) => s.statusMessages);
   const dismiss = useGameStore((s) => s.dismissStatus);
-  const hudMenuOpen = useGameStore((s) => s.hudMenuOpen);
+  const popoverOpen = useGameStore(
+    (s) =>
+      s.hudMenuOpen ||
+      s.inventoryOpen ||
+      s.pastLivesOpen ||
+      s.workbenchOpen ||
+      s.buildMode.active,
+  );
   const scheduledIds = useRef(new Set<number>());
 
   useEffect(() => {
@@ -83,7 +90,7 @@ export default function StatusLog() {
   return (
     <div
       className={`pointer-events-none absolute right-2 z-10 flex max-w-[80vw] flex-col items-end gap-1 transition-[bottom] duration-200 ${
-        hudMenuOpen ? "bottom-[22rem]" : "bottom-32 sm:bottom-24"
+        popoverOpen ? "bottom-[22rem]" : "bottom-20"
       }`}
     >
       {messages.slice(-4).map((m) => (
