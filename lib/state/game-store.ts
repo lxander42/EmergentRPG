@@ -125,6 +125,10 @@ type GameStore = {
   pendingDrop: { kind: ResourceKind; max: number } | null;
   hudMenuOpen: boolean;
   statusMessages: StatusMessage[];
+  // Persistent (capped) ring of every status message ever emitted.
+  // statusMessages above is the *visible* toast queue and gets evicted on
+  // a 5s TTL; statusLog is the transcript shown in the debug overlay.
+  statusLog: StatusMessage[];
   cameraPanned: boolean;
   // One-shot guard: when an overlay is dismissed by tapping outside it, the
   // same DOM tap would otherwise reach Phaser's pointerup handler and walk
@@ -226,6 +230,7 @@ type GameStore = {
   removeMapMarker: (id: string) => void;
   pushStatus: (text: string) => void;
   dismissStatus: (id: number) => void;
+  clearStatusLog: () => void;
   collectResourceAt: (
     rx: number,
     ry: number,
@@ -276,6 +281,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   pendingDrop: null,
   hudMenuOpen: false,
   statusMessages: [],
+  statusLog: [],
   cameraPanned: false,
   swallowNextWorldTap: false,
 
@@ -1095,12 +1101,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   pushStatus: (text) => {
     const id = Date.now() + Math.floor(Math.random() * 1000);
-    const next = [...get().statusMessages, { id, text, addedAt: Date.now() }];
-    set({ statusMessages: next.slice(-6) });
+    const entry = { id, text, addedAt: Date.now() };
+    const visible = [...get().statusMessages, entry];
+    const log = [...get().statusLog, entry];
+    set({
+      statusMessages: visible.slice(-6),
+      statusLog: log.slice(-200),
+    });
   },
   dismissStatus: (id) => {
     set({ statusMessages: get().statusMessages.filter((m) => m.id !== id) });
   },
+  clearStatusLog: () => set({ statusLog: [] }),
 
   collectResourceAt: (rx, ry, lx, ly, resourceId) => {
     const current = get().world;

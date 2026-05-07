@@ -82,7 +82,7 @@ export default function StatusLog() {
   return (
     <div
       className={`pointer-events-none absolute right-2 z-10 flex max-w-[80vw] flex-col items-end gap-1 transition-[bottom] duration-200 ${
-        hudMenuOpen ? "bottom-72 sm:bottom-72" : "bottom-20 sm:bottom-12"
+        hudMenuOpen ? "bottom-[22rem]" : "bottom-32 sm:bottom-24"
       }`}
     >
       {messages.slice(-4).map((m) => (

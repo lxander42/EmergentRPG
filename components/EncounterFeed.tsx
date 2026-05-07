@@ -10,9 +10,12 @@ const NO_EVENTS: readonly WorldEvent[] = [];
 export default function EncounterFeed() {
   const events = useGameStore((s) => s.world?.recentEvents ?? NO_EVENTS);
   const debugMode = useGameStore((s) => s.debugMode);
+  const hudMenuOpen = useGameStore((s) => s.hudMenuOpen);
   const [open, setOpen] = useState(false);
 
   if (!debugMode || events.length === 0) return null;
+
+  const bottomCls = hudMenuOpen ? "bottom-72" : "bottom-20";
 
   if (!open) {
     const latest = events[0]!;
@@ -20,7 +23,7 @@ export default function EncounterFeed() {
       <button
         onClick={() => setOpen(true)}
         aria-label="Open encounter feed"
-        className="tactile pointer-events-auto absolute bottom-2 right-2 z-10 inline-flex max-w-[60vw] items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)]"
+        className={`tactile pointer-events-auto absolute right-2 z-10 inline-flex max-w-[60vw] items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 shadow-[0_4px_12px_-6px_rgba(44,40,32,0.18)] transition-[bottom] duration-200 ${bottomCls}`}
       >
         <Newspaper size={14} weight="duotone" className="shrink-0 text-[var(--color-fg-muted)]" />
         <span className="truncate text-xs text-[var(--color-fg)]">
@@ -35,7 +38,7 @@ export default function EncounterFeed() {
     <aside
       role="log"
       aria-label="Encounter feed"
-      className="pointer-events-auto absolute bottom-2 right-2 z-10 flex w-72 max-w-[80vw] flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-[0_16px_40px_-16px_rgba(44,40,32,0.45)]"
+      className={`pointer-events-auto absolute right-2 z-10 flex w-72 max-w-[80vw] flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-[0_16px_40px_-16px_rgba(44,40,32,0.45)] transition-[bottom] duration-200 ${bottomCls}`}
     >
       <header className="mb-2 flex items-center justify-between gap-3">
         <span className="font-mono text-[11px] uppercase tracking-wider text-[var(--color-fg-muted)]">
