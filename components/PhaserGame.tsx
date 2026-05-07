@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useGameStore } from "@/lib/state/game-store";
 
 export default function PhaserGame() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -83,11 +84,25 @@ export default function PhaserGame() {
       window.addEventListener("resize", onResize);
       window.addEventListener("orientationchange", onResize);
 
-      // Even with the Canvas renderer, the page can be evicted from memory
-      // on iOS, so resize on visibility return as a safety net.
+      // Browsers throttle requestAnimationFrame on hidden tabs, which freezes
+      // the Phaser update loop and stalls every world tick (smelt timers,
+      // NPC moves). Track the wall-clock window the tab was hidden and
+      // catch up the missed ticks on resume so long-running things like
+      // smelting don't appear to pause when the player isn't watching.
+      // Also resize: the page can be evicted from memory on iOS.
+      let hiddenAtMs: number | null = null;
+      if (document.visibilityState === "hidden") hiddenAtMs = Date.now();
       const onVisibility = () => {
-        if (document.visibilityState !== "visible") return;
+        if (document.visibilityState !== "visible") {
+          if (hiddenAtMs == null) hiddenAtMs = Date.now();
+          return;
+        }
         sizeCanvas();
+        if (hiddenAtMs != null) {
+          const elapsed = Date.now() - hiddenAtMs;
+          hiddenAtMs = null;
+          useGameStore.getState().catchUpFromBackground(elapsed);
+        }
       };
       document.addEventListener("visibilitychange", onVisibility);
 

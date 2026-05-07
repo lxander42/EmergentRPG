@@ -207,6 +207,7 @@ type GameStore = {
   tick: () => void;
   togglePause: () => void;
   setSpeed: (s: number) => void;
+  catchUpFromBackground: (elapsedMs: number) => void;
   selectNpc: (id: string | null) => void;
   selectRegion: (region: SelectedRegion | null) => void;
 
@@ -477,6 +478,25 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   togglePause: () => set({ paused: !get().paused }),
   setSpeed: (s) => set({ speed: s }),
+  catchUpFromBackground: (elapsedMs) => {
+    if (elapsedMs <= 0) return;
+    const state = get();
+    if (state.paused) return;
+    if (!state.world || state.world.life?.gameOver) return;
+    const TICK_MS = 250;
+    const MAX_CATCH_UP_TICKS = 1200;
+    const speed = Math.max(1, state.speed);
+    const ticks = Math.min(
+      MAX_CATCH_UP_TICKS,
+      Math.floor((elapsedMs * speed) / TICK_MS),
+    );
+    for (let i = 0; i < ticks; i++) {
+      const cur = get();
+      if (cur.paused) break;
+      if (cur.world?.life?.gameOver) break;
+      cur.tick();
+    }
+  },
 
   selectNpc: (id) => {
     set({

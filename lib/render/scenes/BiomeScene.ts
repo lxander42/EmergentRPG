@@ -536,7 +536,36 @@ export class BiomeScene extends Phaser.Scene {
         sprite.setOrigin(0, 0);
         sprite.setPosition(s.lx * CELL, s.ly * CELL);
         sprite.setDisplaySize(CELL, CELL);
+        if (s.kind === "furnace" && s.smelt) {
+          sprite.setTint(s.smelt.ready ? 0xffe0a0 : 0xffb070);
+        }
         container.add(sprite);
+        if (s.kind === "furnace" && s.smelt && !s.smelt.ready) {
+          const phase = s.smelt.elapsed % 6;
+          const baseX = s.lx * CELL + CELL * 0.5;
+          const baseY = s.ly * CELL;
+          // Two small grey puffs rising from the furnace mouth. Their
+          // vertical offset and alpha advance with smelt.elapsed so the
+          // chunk's per-tick repaint reads as a slow upward drift.
+          const puffA = this.add.ellipse(
+            baseX - 2,
+            baseY - phase * 1.2,
+            CELL * 0.32,
+            CELL * 0.22,
+            0x9a8a78,
+            0.55 - phase * 0.06,
+          );
+          const puffB = this.add.ellipse(
+            baseX + 4,
+            baseY - 4 - ((phase + 3) % 6) * 1.2,
+            CELL * 0.26,
+            CELL * 0.18,
+            0xb6a591,
+            0.45 - ((phase + 3) % 6) * 0.05,
+          );
+          container.add(puffA);
+          container.add(puffB);
+        }
       } else {
         // Fallback marker until the per-kind atlas frame ships in a later
         // sub-issue. Keeps placement visible without blocking on art.
