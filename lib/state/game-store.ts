@@ -248,6 +248,7 @@ type GameStore = {
   setHudMenuOpen: (v: boolean) => void;
   setPopoverBottomPx: (px: number) => void;
   debugGrantTool: (kind: ToolKind) => void;
+  debugGrantResource: (kind: ResourceKind, qty: number) => void;
   toggleMapFactions: () => void;
   openNpcContextMenu: (id: string, x: number, y: number) => void;
   closeNpcContextMenu: () => void;
@@ -879,6 +880,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
       tools: [...life.player.tools, makeTool(kind)],
     };
     set({ world: { ...current, life: { ...life, player } } });
+  },
+  debugGrantResource: (kind, qty) => {
+    if (qty <= 0) return;
+    const current = get().world;
+    if (!current?.life || current.life.gameOver) return;
+    const life = current.life;
+    const have = life.inventory[kind] ?? 0;
+    const inventory = { ...life.inventory, [kind]: have + qty };
+    set({ world: { ...current, life: { ...life, inventory } } });
   },
   toggleMapFactions: () => set({ mapShowFactions: !get().mapShowFactions }),
 

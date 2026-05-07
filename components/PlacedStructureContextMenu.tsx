@@ -1,6 +1,6 @@
 "use client";
 
-import { Eye, Hammer } from "@phosphor-icons/react/dist/ssr";
+import { Eye, Flame, Hammer } from "@phosphor-icons/react/dist/ssr";
 import { useMemo, useRef, useState } from "react";
 import { useGameStore } from "@/lib/state/game-store";
 import type { StructureKind } from "@/content/recipes";
@@ -33,6 +33,7 @@ export default function PlacedStructureContextMenu() {
   const interact = useGameStore((s) => s.interactWithPlacedStructure);
   const examineKind = useGameStore((s) => s.examineKind);
   const examined = useGameStore((s) => s.world?.examinedKinds ?? null);
+  const pushToast = useGameStore((s) => s.pushToast);
 
   const ref = useRef<HTMLDivElement | null>(null);
   const closeRef = useOutsideClose(Boolean(ctx), close);
@@ -124,10 +125,28 @@ export default function PlacedStructureContextMenu() {
       {isExamined && (
         <>
           <p className="px-2.5 pb-1 pt-0.5 text-xs leading-snug text-[var(--color-fg-muted)]">
-            A structure you built. Deconstruct to recover half of its materials.
+            A structure you built. Deconstruct to recover its materials.
           </p>
           <div className="my-0.5 h-px bg-[var(--color-border)]" aria-hidden />
         </>
+      )}
+      {kind === "furnace" && (
+        <button
+          type="button"
+          onClick={() => {
+            pushToast("Smelting will arrive with the smelt loop.");
+            close();
+          }}
+          className="tactile inline-flex items-center gap-2 rounded-xl px-2 py-2 text-left text-sm text-[var(--color-fg)] hover:bg-[var(--color-surface-warm)]"
+        >
+          <Flame size={14} weight="duotone" className="text-[var(--color-accent)]" />
+          <span className="min-w-0 flex-1">
+            <span className="block leading-tight">Smelt</span>
+            <span className="mt-0.5 block font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
+              coming soon
+            </span>
+          </span>
+        </button>
       )}
       <button
         type="button"
@@ -148,7 +167,7 @@ export default function PlacedStructureContextMenu() {
         <span className="min-w-0 flex-1">
           <span className="block leading-tight">Deconstruct</span>
           <span className="mt-0.5 block font-mono text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">
-            recover half materials
+            recover full materials
           </span>
         </span>
       </button>

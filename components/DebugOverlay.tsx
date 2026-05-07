@@ -10,7 +10,11 @@ import {
 import { useGameStore } from "@/lib/state/game-store";
 import { globalToLocal } from "@/lib/sim/biome-interior";
 import { TOOL_KINDS, TOOLS, type ToolKind } from "@/lib/sim/tools";
+import { RESOURCES, type ResourceKind } from "@/content/resources";
 import type { StatusMessage } from "@/lib/state/game-store";
+
+const RESOURCE_KINDS: ResourceKind[] = Object.keys(RESOURCES) as ResourceKind[];
+const RESOURCE_GRANT_QTY = 5;
 
 const BUBBLE_SIZE = 44;
 const PANEL_WIDTH = 300;
@@ -226,6 +230,7 @@ function DebugPanel({
 }) {
   const world = useGameStore((s) => s.world);
   const grantTool = useGameStore((s) => s.debugGrantTool);
+  const grantResource = useGameStore((s) => s.debugGrantResource);
   const log = useGameStore((s) => s.statusLog);
   const clearLog = useGameStore((s) => s.clearStatusLog);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
@@ -317,6 +322,31 @@ function DebugPanel({
                 className="tactile rounded-md border border-[var(--color-border)] bg-[var(--color-surface-warm)] px-2 py-0.5 text-[10px] uppercase tracking-wider hover:bg-[var(--color-surface)]"
               >
                 {TOOLS[kind].label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {player && (
+        <div className="mt-1 border-t border-[var(--color-border)] pt-1">
+          <div className="text-[var(--color-fg-muted)] uppercase tracking-wider mb-1">
+            grant resource (+{RESOURCE_GRANT_QTY})
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {RESOURCE_KINDS.map((kind) => (
+              <button
+                key={kind}
+                type="button"
+                onClick={() => grantResource(kind, RESOURCE_GRANT_QTY)}
+                className="tactile inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-warm)] px-2 py-0.5 text-[10px] uppercase tracking-wider hover:bg-[var(--color-surface)]"
+              >
+                <span
+                  aria-hidden
+                  className="inline-block h-2 w-2 rounded-sm border border-[var(--color-border-strong)]"
+                  style={{ background: RESOURCES[kind].swatch }}
+                />
+                {RESOURCES[kind].label}
               </button>
             ))}
           </div>
