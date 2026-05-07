@@ -18,20 +18,24 @@ import { bus } from "@/lib/render/bus";
 import type { WorldEvent } from "@/lib/sim/events";
 import { gainPlayerRep } from "@/lib/sim/faction";
 import {
+  addLoot,
   findAdjacentPassable,
   findWorkbenchTile,
   globalToLocal,
   isLocalObstacle,
   localToGlobal,
+  lootAtLocal,
   obstacleKindAt,
   placeObstacle,
   placedStructureAt,
   placedStructureById,
   regionCenterGlobal,
   regionKey,
+  removeLoot,
   tileOccupied,
   INTERIOR_W,
   INTERIOR_H,
+  type LootPile,
   type ObstacleKind,
   type Rotation,
 } from "@/lib/sim/biome-interior";
@@ -111,14 +115,79 @@ type GameStore = {
   tutorialOpen: boolean;
   debugMode: boolean;
   debugMinimized: boolean;
+  debugBubblePos: { x: number; y: number } | null;
   mapShowFactions: boolean;
   npcContextMenu: NpcContextMenu | null;
   obstacleContextMenu: ObstacleContextMenuState | null;
   placedStructureContextMenu: PlacedStructureContextMenuState | null;
   buildMode: BuildModeState;
   pendingMarker: { rx: number; ry: number } | null;
+  pendingDrop: { kind: ResourceKind; max: number } | null;
+  inventoryRowMenu: {
+    kind: ResourceKind;
+    count: number;
+    x: number;
+    y: number;
+  } | null;
+  // In-world right-click menu for tiles that don't have a dedicated entity
+  // menu (loot pile, resource pickup, or empty walkable ground).
+  tileContextMenu:
+    | {
+        kind: "loot";
+        rx: number;
+        ry: number;
+        lx: number;
+        ly: number;
+        gx: number;
+        gy: number;
+        lootId: string;
+        items: Array<[ResourceKind, number]>;
+        x: number;
+        y: number;
+      }
+    | {
+        kind: "resource";
+        rx: number;
+        ry: number;
+        lx: number;
+        ly: number;
+        gx: number;
+        gy: number;
+        resourceId: string;
+        resourceKind: ResourceKind;
+        x: number;
+        y: number;
+      }
+    | {
+        kind: "empty";
+        rx: number;
+        ry: number;
+        lx: number;
+        ly: number;
+        gx: number;
+        gy: number;
+        x: number;
+        y: number;
+      }
+    | null;
+  hudMenuOpen: boolean;
+  // Distance in px from the bottom of the viewport to the top edge of the
+  // currently-open right-side popover (inventory / build / past lives /
+  // hud menu / workbench). 0 when nothing is open. StatusLog and other
+  // bottom-anchored UI read this so they can sit just above whatever
+  // panel is showing rather than guessing at a static height.
+  popoverBottomPx: number;
   statusMessages: StatusMessage[];
+  // Persistent (capped) ring of every status message ever emitted.
+  // statusMessages above is the *visible* toast queue and gets evicted on
+  // a 5s TTL; statusLog is the transcript shown in the debug overlay.
+  statusLog: StatusMessage[];
   cameraPanned: boolean;
+  // One-shot guard: when an overlay is dismissed by tapping outside it, the
+  // same DOM tap would otherwise reach Phaser's pointerup handler and walk
+  // the player. The outside-close hook sets this true; BiomeScene/WorldScene
+  // consume it on the next pointerup.
+  swallowNextWorldTap: boolean;
 
   startNew: () => void;
   loadFromDisk: (slot: string) => Promise<void>;
@@ -157,7 +226,27 @@ type GameStore = {
   openTutorial: () => void;
   closeTutorial: () => void;
   toggleDebug: () => void;
+  setDebugMode: (on: boolean) => void;
   toggleDebugMinimized: () => void;
+  setDebugBubblePos: (x: number, y: number) => void;
+  requestDropConfirm: (kind: ResourceKind, max: number) => void;
+  cancelDrop: () => void;
+  confirmDrop: (qty: number) => void;
+  dropInventoryItem: (kind: ResourceKind, qty: number) => void;
+  openInventoryRowMenu: (
+    kind: ResourceKind,
+    count: number,
+    x: number,
+    y: number,
+  ) => void;
+  closeInventoryRowMenu: () => void;
+  openTileContextMenu: (
+    menu: NonNullable<GameStore["tileContextMenu"]>,
+  ) => void;
+  closeTileContextMenu: () => void;
+  setSwallowNextWorldTap: (v: boolean) => void;
+  setHudMenuOpen: (v: boolean) => void;
+  setPopoverBottomPx: (px: number) => void;
   debugGrantTool: (kind: ToolKind) => void;
   toggleMapFactions: () => void;
   openNpcContextMenu: (id: string, x: number, y: number) => void;
@@ -205,7 +294,9 @@ type GameStore = {
   addMapMarker: (rx: number, ry: number, name: string) => void;
   removeMapMarker: (id: string) => void;
   pushStatus: (text: string) => void;
+  pushToast: (text: string) => void;
   dismissStatus: (id: number) => void;
+  clearStatusLog: () => void;
   collectResourceAt: (
     rx: number,
     ry: number,
@@ -245,15 +336,23 @@ export const useGameStore = create<GameStore>((set, get) => ({
   pastLivesOpen: false,
   tutorialOpen: false,
   debugMode: false,
-  debugMinimized: false,
+  debugMinimized: true,
+  debugBubblePos: null,
   mapShowFactions: true,
   npcContextMenu: null,
   obstacleContextMenu: null,
   placedStructureContextMenu: null,
   buildMode: { active: false, selectedKind: null, selectedTile: null, rotation: 0 },
   pendingMarker: null,
+  pendingDrop: null,
+  inventoryRowMenu: null,
+  tileContextMenu: null,
+  hudMenuOpen: false,
+  popoverBottomPx: 0,
   statusMessages: [],
+  statusLog: [],
   cameraPanned: false,
+  swallowNextWorldTap: false,
 
   startNew: () => {
     const fresh = createWorld();
@@ -319,6 +418,24 @@ export const useGameStore = create<GameStore>((set, get) => ({
       patch.pastLivesOpen = false;
       patch.npcContextMenu = null;
       patch.obstacleContextMenu = null;
+    }
+    // Append any new world events (kills, encounters, faction topics) to
+    // the persistent debug log. recentEvents is newest-first and capped at
+    // 8; iterate it in reverse so the log stays chronological.
+    const prevIds = new Set(current.recentEvents.map((e) => e.id));
+    const fresh: WorldEvent[] = [];
+    for (const e of world.recentEvents) {
+      if (prevIds.has(e.id)) break;
+      fresh.push(e);
+    }
+    if (fresh.length > 0) {
+      const now = Date.now();
+      const log = [...get().statusLog];
+      for (let i = fresh.length - 1; i >= 0; i--) {
+        const e = fresh[i]!;
+        log.push({ id: now + i, text: e.context, addedAt: now });
+      }
+      patch.statusLog = log.slice(-200);
     }
     set(patch);
     if (world.ticks % AUTOSAVE_EVERY_TICKS === 0) {
@@ -667,7 +784,92 @@ export const useGameStore = create<GameStore>((set, get) => ({
   openTutorial: () => set({ tutorialOpen: true }),
   closeTutorial: () => set({ tutorialOpen: false }),
   toggleDebug: () => set({ debugMode: !get().debugMode }),
+  setDebugMode: (on) => {
+    if (get().debugMode === on) return;
+    set({ debugMode: on });
+  },
   toggleDebugMinimized: () => set({ debugMinimized: !get().debugMinimized }),
+  setDebugBubblePos: (x, y) => set({ debugBubblePos: { x, y } }),
+
+  requestDropConfirm: (kind, max) => {
+    if (max <= 0) return;
+    set({ pendingDrop: { kind, max } });
+  },
+  cancelDrop: () => set({ pendingDrop: null }),
+  confirmDrop: (qty) => {
+    const pending = get().pendingDrop;
+    if (!pending) return;
+    set({ pendingDrop: null });
+    get().dropInventoryItem(pending.kind, qty);
+  },
+  dropInventoryItem: (kind, qty) => {
+    if (qty <= 0) return;
+    const current = get().world;
+    if (!current?.life || current.life.gameOver) return;
+    const life = current.life;
+    const have = life.inventory[kind] ?? 0;
+    if (have <= 0) return;
+    const drop = Math.min(qty, have);
+    const remainder = have - drop;
+    const inventory = { ...life.inventory };
+    if (remainder > 0) inventory[kind] = remainder;
+    else delete inventory[kind];
+
+    const here = globalToLocal(life.player.gx, life.player.gy);
+    let world = ensureInteriorsForRegion(current, here.rx, here.ry);
+    const interior = world.biomeInteriors[regionKey(here.rx, here.ry)];
+    if (!interior) return;
+    const existing = lootAtLocal(interior, here.lx, here.ly);
+    let nextInterior;
+    if (existing) {
+      const merged: LootPile = {
+        ...existing,
+        items: { ...existing.items, [kind]: (existing.items[kind] ?? 0) + drop },
+      };
+      const without = removeLoot(interior, existing.id);
+      nextInterior = addLoot(without, merged);
+    } else {
+      const id = `drop-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      const pile: LootPile = {
+        id,
+        lx: here.lx,
+        ly: here.ly,
+        items: { [kind]: drop },
+      };
+      nextInterior = addLoot(interior, pile);
+    }
+    world = {
+      ...world,
+      biomeInteriors: {
+        ...world.biomeInteriors,
+        [regionKey(here.rx, here.ry)]: nextInterior,
+      },
+    };
+    set({
+      world: { ...world, life: { ...life, inventory } },
+    });
+    const label = RESOURCES[kind].label;
+    get().pushStatus(`Dropped ${drop} ${label}.`);
+  },
+  openInventoryRowMenu: (kind, count, x, y) => {
+    if (count <= 0) return;
+    set({ inventoryRowMenu: { kind, count, x, y } });
+  },
+  closeInventoryRowMenu: () => set({ inventoryRowMenu: null }),
+  openTileContextMenu: (menu) => set({ tileContextMenu: menu }),
+  closeTileContextMenu: () => set({ tileContextMenu: null }),
+  setSwallowNextWorldTap: (v) => {
+    if (get().swallowNextWorldTap === v) return;
+    set({ swallowNextWorldTap: v });
+  },
+  setHudMenuOpen: (v) => {
+    if (get().hudMenuOpen === v) return;
+    set({ hudMenuOpen: v });
+  },
+  setPopoverBottomPx: (px) => {
+    if (get().popoverBottomPx === px) return;
+    set({ popoverBottomPx: px });
+  },
   debugGrantTool: (kind) => {
     const current = get().world;
     if (!current?.life || current.life.gameOver) return;
@@ -997,12 +1199,23 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   pushStatus: (text) => {
     const id = Date.now() + Math.floor(Math.random() * 1000);
-    const next = [...get().statusMessages, { id, text, addedAt: Date.now() }];
-    set({ statusMessages: next.slice(-6) });
+    const entry = { id, text, addedAt: Date.now() };
+    const visible = [...get().statusMessages, entry];
+    const log = [...get().statusLog, entry];
+    set({
+      statusMessages: visible.slice(-6),
+      statusLog: log.slice(-200),
+    });
+  },
+  pushToast: (text) => {
+    const id = Date.now() + Math.floor(Math.random() * 1000);
+    const visible = [...get().statusMessages, { id, text, addedAt: Date.now() }];
+    set({ statusMessages: visible.slice(-6) });
   },
   dismissStatus: (id) => {
     set({ statusMessages: get().statusMessages.filter((m) => m.id !== id) });
   },
+  clearStatusLog: () => set({ statusLog: [] }),
 
   collectResourceAt: (rx, ry, lx, ly, resourceId) => {
     const current = get().world;

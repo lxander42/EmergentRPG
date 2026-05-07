@@ -14,6 +14,8 @@ import {
 } from "@/lib/sim/biome-interior";
 import { chebyshev } from "@/lib/sim/combat";
 import { useOutsideClose } from "@/lib/ui/use-outside-close";
+import { useReportPopoverBounds } from "@/lib/ui/use-report-popover-bounds";
+import { mergeRefs } from "@/lib/ui/merge-refs";
 
 export default function WorkbenchPanel() {
   const open = useGameStore((s) => s.workbenchOpen);
@@ -21,6 +23,7 @@ export default function WorkbenchPanel() {
   const world = useGameStore((s) => s.world);
   const craftRecipe = useGameStore((s) => s.craftRecipe);
   const ref = useOutsideClose(open, close);
+  const boundsRef = useReportPopoverBounds(open);
 
   if (!open || !world?.life) return null;
 
@@ -35,10 +38,10 @@ export default function WorkbenchPanel() {
 
   return (
     <aside
-      ref={ref}
+      ref={mergeRefs(ref, boundsRef)}
       role="dialog"
       aria-label="Workbench"
-      className="pointer-events-auto absolute inset-x-2 bottom-2 z-20 max-h-[68dvh] overflow-y-auto rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[0_20px_48px_-20px_rgba(44,40,32,0.25)]"
+      className="pointer-events-auto absolute inset-x-2 bottom-2 z-20 max-h-[68dvh] overflow-y-auto rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[0_20px_48px_-20px_rgba(44,40,32,0.25)] sm:inset-x-auto sm:left-auto sm:right-3 sm:bottom-16 sm:w-[420px] sm:max-h-[78dvh]"
     >
       <div className="mx-auto max-w-2xl">
         <header className="mb-4 flex items-start justify-between gap-3">

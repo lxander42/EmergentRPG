@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { bus } from "@/lib/render/bus";
 import { useGameStore } from "@/lib/state/game-store";
+import { keysAllowed } from "@/lib/render/keys-allowed";
 import { biomeAt } from "@/lib/sim/biome";
 import { MAP_W, MAP_H, type MapMarker } from "@/lib/sim/world";
 import { FACTIONS } from "@/content/factions";
@@ -74,6 +75,12 @@ export class WorldScene extends Phaser.Scene {
   private readonly tickStepMs = 250;
   private lastDrawnTick = -1;
   private dpr = 1;
+  private panKeys: {
+    W: Phaser.Input.Keyboard.Key;
+    A: Phaser.Input.Keyboard.Key;
+    S: Phaser.Input.Keyboard.Key;
+    D: Phaser.Input.Keyboard.Key;
+  } | null = null;
   // Trail of recent regions the player crossed through, oldest first.
   // Drawn as fading accent dots so the user can see where they came from
   // when watching from the world map.
@@ -130,6 +137,13 @@ export class WorldScene extends Phaser.Scene {
     this.input.on("pointerup", this.onPointerUp, this);
     this.input.on("wheel", this.onWheel, this);
 
+    this.panKeys = this.input.keyboard?.addKeys("W,A,S,D", false) as {
+      W: Phaser.Input.Keyboard.Key;
+      A: Phaser.Input.Keyboard.Key;
+      S: Phaser.Input.Keyboard.Key;
+      D: Phaser.Input.Keyboard.Key;
+    } | null;
+
     bus.on("npc:deselected", this.clearSelection);
     this.scale.on("resize", this.handleResize, this);
     this.game.events.on("dprchange", this.onDprChange, this);
@@ -165,6 +179,8 @@ export class WorldScene extends Phaser.Scene {
         bus.emit("world:tick", { ticks: useGameStore.getState().world?.ticks ?? 0 });
       }
     }
+
+    this.applyKeyboardPan(delta, store);
 
     const world = store.world;
     if (!world) return;
@@ -826,6 +842,16 @@ export class WorldScene extends Phaser.Scene {
       return;
     }
 
+    if (useGameStore.getState().swallowNextWorldTap) {
+      useGameStore.getState().setSwallowNextWorldTap(false);
+      this.cancelLongPress();
+      this.dragStart = null;
+      this.dragMoved = false;
+      this.longPressFired = false;
+      this.pinchInitial = null;
+      return;
+    }
+
     const moved = Phaser.Math.Distance.Between(
       this.pointerDownPos.x,
       this.pointerDownPos.y,
@@ -877,6 +903,20 @@ export class WorldScene extends Phaser.Scene {
   private onWheel(_p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) {
     const zoom = Phaser.Math.Clamp(this.cameras.main.zoom - dy * 0.001, 0.25 * this.dpr, 2.0 * this.dpr);
     this.cameras.main.setZoom(zoom);
+  }
+
+  private applyKeyboardPan(delta: number, store: ReturnType<typeof useGameStore.getState>) {
+    const keys = this.panKeys;
+    if (!keys) return;
+    if (!keysAllowed(store)) return;
+    const ax = (keys.D.isDown ? 1 : 0) - (keys.A.isDown ? 1 : 0);
+    const ay = (keys.S.isDown ? 1 : 0) - (keys.W.isDown ? 1 : 0);
+    if (ax === 0 && ay === 0) return;
+    const cam = this.cameras.main;
+    const screenPxPerSec = 1500;
+    const step = (screenPxPerSec * delta) / 1000 / cam.zoom;
+    cam.scrollX += ax * step;
+    cam.scrollY += ay * step;
   }
 
   private handleResize = (gameSize: Phaser.Structs.Size) => {

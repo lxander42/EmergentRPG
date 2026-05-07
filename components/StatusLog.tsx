@@ -25,6 +25,15 @@ const ENTRY_TTL_MS = 5000;
 export default function StatusLog() {
   const messages = useGameStore((s) => s.statusMessages);
   const dismiss = useGameStore((s) => s.dismissStatus);
+  const popoverOpen = useGameStore(
+    (s) =>
+      s.hudMenuOpen ||
+      s.inventoryOpen ||
+      s.pastLivesOpen ||
+      s.workbenchOpen ||
+      s.buildMode.active,
+  );
+  const popoverBottom = useGameStore((s) => s.popoverBottomPx);
   const scheduledIds = useRef(new Set<number>());
 
   useEffect(() => {
@@ -55,8 +64,9 @@ export default function StatusLog() {
           );
           const here = player ? globalToLocal(player.gx, player.gy) : null;
           if (npc && here && npc.rx === here.rx && npc.ry === here.ry) {
+            // Toast only — the event is already in statusLog via tick().
             const text = latestEvent.context;
-            queueMicrotask(() => useGameStore.getState().pushStatus(text));
+            queueMicrotask(() => useGameStore.getState().pushToast(text));
           }
         }
       }
@@ -78,8 +88,16 @@ export default function StatusLog() {
 
   if (messages.length === 0) return null;
 
+  // popoverBottom is the px distance from viewport bottom to the open
+  // panel's top edge; sit a 16px gap above it. While a popover is open but
+  // bounds haven't been measured yet (mount frame), keep the static
+  // bottom-20 fallback so we never flash low.
+  const bottomPx = popoverOpen ? Math.max(80, popoverBottom + 16) : 80;
   return (
-    <div className="pointer-events-none absolute bottom-20 right-2 z-10 flex max-w-[80vw] flex-col items-end gap-1 sm:bottom-12">
+    <div
+      className="pointer-events-none absolute right-2 z-10 flex max-w-[80vw] flex-col items-end gap-1 transition-[bottom] duration-200"
+      style={{ bottom: bottomPx }}
+    >
       {messages.slice(-4).map((m) => (
         <div
           key={m.id}

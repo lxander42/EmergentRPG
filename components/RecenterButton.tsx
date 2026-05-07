@@ -15,7 +15,7 @@ export default function RecenterButton() {
     <button
       aria-label="Recenter on player"
       onClick={() => setCameraPanned(false)}
-      className="tactile pointer-events-auto absolute bottom-4 right-4 z-20 inline-flex h-12 w-12 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-fg)] shadow-[0_8px_20px_-8px_rgba(44,40,32,0.35)]"
+      className="tactile pointer-events-auto absolute top-2 right-2 z-20 inline-flex h-12 w-12 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-fg)] shadow-[0_8px_20px_-8px_rgba(44,40,32,0.35)]"
     >
       <CrosshairSimple size={22} weight="duotone" />
     </button>

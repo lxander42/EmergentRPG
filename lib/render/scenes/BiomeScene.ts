@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { useGameStore } from "@/lib/state/game-store";
+import { keysAllowed } from "@/lib/render/keys-allowed";
 import {
   globalToLocal,
   INTERIOR_W,
@@ -137,6 +138,12 @@ export class BiomeScene extends Phaser.Scene {
   private dpr = 1;
   private longPressTimer: Phaser.Time.TimerEvent | null = null;
   private longPressFired = false;
+  private panKeys: {
+    W: Phaser.Input.Keyboard.Key;
+    A: Phaser.Input.Keyboard.Key;
+    S: Phaser.Input.Keyboard.Key;
+    D: Phaser.Input.Keyboard.Key;
+  } | null = null;
 
   constructor() {
     super("Biome");
@@ -209,6 +216,13 @@ export class BiomeScene extends Phaser.Scene {
     this.input.on("wheel", this.onWheel, this);
     this.scale.on("resize", this.handleResize, this);
     this.game.events.on("dprchange", this.onDprChange, this);
+
+    this.panKeys = this.input.keyboard?.addKeys("W,A,S,D", false) as {
+      W: Phaser.Input.Keyboard.Key;
+      A: Phaser.Input.Keyboard.Key;
+      S: Phaser.Input.Keyboard.Key;
+      D: Phaser.Input.Keyboard.Key;
+    } | null;
   }
 
   shutdown() {
@@ -245,7 +259,23 @@ export class BiomeScene extends Phaser.Scene {
         store.tick();
       }
     }
+    this.applyKeyboardPan(delta, store);
     this.renderFrame();
+  }
+
+  private applyKeyboardPan(delta: number, store: ReturnType<typeof useGameStore.getState>) {
+    const keys = this.panKeys;
+    if (!keys) return;
+    if (!keysAllowed(store)) return;
+    const ax = (keys.D.isDown ? 1 : 0) - (keys.A.isDown ? 1 : 0);
+    const ay = (keys.S.isDown ? 1 : 0) - (keys.W.isDown ? 1 : 0);
+    if (ax === 0 && ay === 0) return;
+    const cam = this.cameras.main;
+    const screenPxPerSec = 1500;
+    const step = (screenPxPerSec * delta) / 1000 / cam.zoom;
+    cam.scrollX += ax * step;
+    cam.scrollY += ay * step;
+    if (!store.cameraPanned) store.setCameraPanned(true);
   }
 
   private renderFrame() {
@@ -907,6 +937,17 @@ export class BiomeScene extends Phaser.Scene {
       this.dragStart = null;
       return;
     }
+    // Right-click is the desktop equivalent of a touch long-press: open
+    // the in-world context menu immediately at the cursor and short-circuit
+    // the normal "tap = move player" path. The native browser context
+    // menu is suppressed in PhaserGame.tsx via canvas.oncontextmenu.
+    if (pointer.rightButtonDown()) {
+      this.openContextMenuAt(pointer.x, pointer.y);
+      this.longPressFired = true;
+      this.dragStart = null;
+      this.dragMoved = false;
+      return;
+    }
     this.dragStart = { x: pointer.x, y: pointer.y };
     this.dragMoved = false;
     this.pointerDownAt = this.time.now;
@@ -985,10 +1026,17 @@ export class BiomeScene extends Phaser.Scene {
     if (store.buildMode.active) return;
     const player = world.life.player;
     const wp = this.cameras.main.getWorldPoint(screenX, screenY);
+    // Phaser pointer coords are in canvas-internal pixels (DPR-scaled),
+    // but the React context-menu components position with window.innerWidth
+    // (CSS pixels). Convert before handing the coords off to the store so
+    // the menu lands at the cursor on retina displays instead of clamping
+    // to the bottom-right corner.
+    const cssX = screenX / this.dpr;
+    const cssY = screenY / this.dpr;
     const tappedVisitor = this.hitVisitorAt(wp.x, wp.y);
     if (tappedVisitor) {
       this.flashTapRing(wp.x, wp.y, COLORS.outline);
-      store.openNpcContextMenu(tappedVisitor, screenX, screenY);
+      store.openNpcContextMenu(tappedVisitor, cssX, cssY);
       this.longPressFired = true;
       return;
     }
@@ -1004,7 +1052,7 @@ export class BiomeScene extends Phaser.Scene {
     const kind = obstacleKindAt(interior, lx, ly);
     if (kind) {
       this.flashTapRing(wp.x, wp.y, COLORS.outline);
-      store.openObstacleContextMenu(rx, ry, lx, ly, kind, screenX, screenY, false);
+      store.openObstacleContextMenu(rx, ry, lx, ly, kind, cssX, cssY, false);
       this.longPressFired = true;
       return;
     }
@@ -1018,17 +1066,86 @@ export class BiomeScene extends Phaser.Scene {
         ly,
         placed.id,
         placed.kind,
-        screenX,
-        screenY,
+        cssX,
+        cssY,
       );
       this.longPressFired = true;
+      return;
     }
+    // Right-click on any other game object opens a tile context menu so
+    // the user always gets a list of actions instead of being immediately
+    // walked or pickedup-from. Loot piles list "Pick up" / "Walk here";
+    // resource pickups list "Gather" / "Walk here"; empty tiles list
+    // "Walk here" only.
+    const loot = lootAtLocal(interior, lx, ly);
+    if (loot) {
+      this.flashTapRing(wp.x, wp.y, COLORS.outline);
+      const items = (Object.entries(loot.items) as Array<[ResourceKind, number]>)
+        .filter(([, n]) => (n ?? 0) > 0);
+      store.openTileContextMenu({
+        kind: "loot",
+        rx,
+        ry,
+        lx,
+        ly,
+        gx,
+        gy,
+        lootId: loot.id,
+        items,
+        x: cssX,
+        y: cssY,
+      });
+      this.longPressFired = true;
+      return;
+    }
+    const resource = resourceAtLocal(interior, lx, ly);
+    if (resource) {
+      this.flashTapRing(wp.x, wp.y, COLORS.outline);
+      store.openTileContextMenu({
+        kind: "resource",
+        rx,
+        ry,
+        lx,
+        ly,
+        gx,
+        gy,
+        resourceId: resource.id,
+        resourceKind: resource.kind,
+        x: cssX,
+        y: cssY,
+      });
+      this.longPressFired = true;
+      return;
+    }
+    this.flashTapRing(wp.x, wp.y, COLORS.routeDot);
+    store.openTileContextMenu({
+      kind: "empty",
+      rx,
+      ry,
+      lx,
+      ly,
+      gx,
+      gy,
+      x: cssX,
+      y: cssY,
+    });
+    this.longPressFired = true;
   }
 
   private onPointerUp(pointer: Phaser.Input.Pointer) {
     if (this.gameOver()) {
       this.dragStart = null;
       this.dragMoved = false;
+      this.pinchInitial = null;
+      return;
+    }
+
+    if (useGameStore.getState().swallowNextWorldTap) {
+      useGameStore.getState().setSwallowNextWorldTap(false);
+      this.cancelLongPress();
+      this.dragStart = null;
+      this.dragMoved = false;
+      this.longPressFired = false;
       this.pinchInitial = null;
       return;
     }
@@ -1048,9 +1165,10 @@ export class BiomeScene extends Phaser.Scene {
       const gy = Math.floor(world.y / CELL);
       const { rx, ry, lx, ly } = globalToLocal(gx, gy);
 
-      // Build-mode taps only ever pick a target tile. Player movement,
-      // harvest, pickup, and context menus are all suppressed until the
-      // player exits build mode or confirms placement.
+      // Build-mode taps either pick a target tile (when a recipe is
+      // selected) or back out of build mode (tap-outside to dismiss).
+      // Player movement, harvest, pickup, and context menus are all
+      // suppressed in build mode.
       if (store.buildMode.active) {
         const player = store.world?.life?.player;
         const dxp = player ? gx - player.gx : 0;
@@ -1059,6 +1177,8 @@ export class BiomeScene extends Phaser.Scene {
         const visible = player ? dxp * dxp + dyp * dyp <= perception * perception : false;
         if (visible && store.buildMode.selectedKind) {
           store.selectBuildTile(rx, ry, lx, ly);
+        } else if (!store.buildMode.selectedKind) {
+          store.exitBuildMode();
         }
         this.cancelLongPress();
         this.dragStart = null;
@@ -1092,7 +1212,7 @@ export class BiomeScene extends Phaser.Scene {
           // Player-built structures (workbench today) open the top-right
           // context menu on tap so Craft and Deconstruct are both visible.
           if (kind === "workbench") {
-            store.openObstacleContextMenu(rx, ry, lx, ly, kind, pointer.x, pointer.y, false);
+            store.openObstacleContextMenu(rx, ry, lx, ly, kind, pointer.x / this.dpr, pointer.y / this.dpr, false);
           } else {
             const action = defaultObstacleAction(kind);
             if (action === "harvest" && player) {
@@ -1118,8 +1238,8 @@ export class BiomeScene extends Phaser.Scene {
             ly,
             placed.id,
             placed.kind,
-            pointer.x,
-            pointer.y,
+            pointer.x / this.dpr,
+            pointer.y / this.dpr,
           );
         } else if (loot) {
           store.pickupLootAt(rx, ry, lx, ly, loot.id);

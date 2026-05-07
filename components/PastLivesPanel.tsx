@@ -8,6 +8,8 @@ import ShapeBadge from "@/components/panels/ShapeBadge";
 import type { Legacy } from "@/lib/sim/legacy";
 import type { GameOverReason } from "@/lib/sim/world";
 import { useOutsideClose } from "@/lib/ui/use-outside-close";
+import { useReportPopoverBounds } from "@/lib/ui/use-report-popover-bounds";
+import { mergeRefs } from "@/lib/ui/merge-refs";
 
 const NO_LEGACIES: readonly Legacy[] = [];
 
@@ -17,6 +19,7 @@ export default function PastLivesPanel() {
   const legacies = useGameStore((s) => s.world?.legacies ?? NO_LEGACIES);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const ref = useOutsideClose(open, close);
+  const boundsRef = useReportPopoverBounds(open);
 
   if (!open) return null;
 
@@ -24,10 +27,10 @@ export default function PastLivesPanel() {
 
   return (
     <aside
-      ref={ref}
+      ref={mergeRefs(ref, boundsRef)}
       role="dialog"
       aria-label="Past lives"
-      className="pointer-events-auto absolute inset-x-2 bottom-2 z-20 max-h-[68dvh] overflow-y-auto rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[0_20px_48px_-20px_rgba(44,40,32,0.25)]"
+      className="pointer-events-auto absolute inset-x-2 bottom-2 z-20 max-h-[68dvh] overflow-y-auto rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[0_20px_48px_-20px_rgba(44,40,32,0.25)] sm:inset-x-auto sm:left-auto sm:right-3 sm:bottom-16 sm:w-[420px] sm:max-h-[78dvh]"
     >
       <div className="mx-auto max-w-2xl">
         <header className="mb-4 flex items-start justify-between gap-3">

@@ -1,9 +1,11 @@
 "use client";
 
 import { Eye, Sword } from "@phosphor-icons/react/dist/ssr";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useGameStore } from "@/lib/state/game-store";
 import { findNpc } from "@/lib/sim/world";
+import { useOutsideClose } from "@/lib/ui/use-outside-close";
+import { mergeRefs } from "@/lib/ui/merge-refs";
 
 const MENU_WIDTH = 180;
 const MENU_HEIGHT_EST = 152;
@@ -17,6 +19,7 @@ export default function NpcContextMenu() {
   const selectNpc = useGameStore((s) => s.selectNpc);
   const world = useGameStore((s) => s.world);
   const ref = useRef<HTMLDivElement | null>(null);
+  const closeRef = useOutsideClose(Boolean(ctx), close);
   const dragOffset = useRef<{ dx: number; dy: number } | null>(null);
   const [drag, setDrag] = useState<{ left: number; top: number } | null>(null);
 
@@ -29,24 +32,6 @@ export default function NpcContextMenu() {
       Promise.resolve().then(() => setDrag(null));
     }
   }
-
-  useEffect(() => {
-    if (!ctx) return;
-    const handler = (e: MouseEvent | TouchEvent) => {
-      if (!ref.current) return;
-      if (ref.current.contains(e.target as Node)) return;
-      close();
-    };
-    const t = window.setTimeout(() => {
-      window.addEventListener("mousedown", handler);
-      window.addEventListener("touchstart", handler);
-    }, 0);
-    return () => {
-      window.clearTimeout(t);
-      window.removeEventListener("mousedown", handler);
-      window.removeEventListener("touchstart", handler);
-    };
-  }, [ctx, close]);
 
   const pos = useMemo(() => {
     if (!ctx) return null;
@@ -99,7 +84,7 @@ export default function NpcContextMenu() {
 
   return (
     <div
-      ref={ref}
+      ref={mergeRefs(ref, closeRef)}
       role="menu"
       aria-label={`${npc.name} actions`}
       onPointerDown={onPointerDown}
